@@ -1,0 +1,25 @@
+{
+  "task": "fib.py'de fibonacci fonksiyonu ve pytest testi",
+  "created": "2026-09-03T12:00:00",
+  "steps": [
+    {
+      "id": 1,
+      "title": "fib fonksiyonu yaz",
+      "verify": [
+        {"type": "file_exists", "path": "fib.py"},
+        {"type": "regex", "path": "fib.py", "pattern": "def\\s+fib\\s*\\("},
+        {"type": "run", "cmd": "python -c \"from fib import fib; assert fib(10)==55; assert fib(1)==1\"", "expect_exit": 0}
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "title": "pytest testi yaz ve geçir",
+      "verify": [
+        {"type": "file_exists", "path": "test_fib.py"},
+        {"type": "pytest", "args": "test_fib.py -q"}
+      ],
+      "status": "pending"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.plan-auditor/evidence.jsonl
+.plan-auditor/*.tmp
+.plan-auditor/archive/
