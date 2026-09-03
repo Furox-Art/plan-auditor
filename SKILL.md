@@ -3,7 +3,7 @@ name: plan-auditor
 description: Katı plan + bağımsız denetçi iş akışı — verilen görevi makineyle doğrulanabilir adımlara böler, her adımı gerçek komut çıktısıyla (kanıtla) test eder, ajanın kendi "yaptım" sözüne asla güvenmez ve görev ancak tam denetim geçilirse bitmiş sayılır. Kullanıcı bir şeyi yaptırırken işin yarım kalmamasını istiyorsa, "planla", "denetle", "yarım bırakma", "gerçekten yaptın mı" derse veya /plan-auditor çağrılırsa kullan.
 argument-hint: "<görev metni>"
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Plan-Auditor: Net Plan + Bağımsız Denetçi
@@ -27,20 +27,22 @@ Sen bu iş akışında İKİ rol oynarsın ve rolleri asla karıştırmazsın:
 - Kanıt: `<proje>/.plan-auditor/evidence.jsonl` (script yazar, append-only, hash zincirli)
 - Denetçi scripti: bu skill dizinindeki `scripts/audit_check.py`
 
-Scripti her seferinde TAM YOLLA çağır (`~` senin shell'de açılabilir):
+Scripti her seferinde skill dizinine GÖRE çağır — bu SKILL.md'nin bulunduğu klasör `<skill-dizini>`dir, tam yol kurulumdan kuralluma değişir:
 
 ```
-python ~/.commandcode/skills/plan-auditor/scripts/audit_check.py <mod> <proje-dizini> [id id ...]
+python <skill-dizini>/scripts/audit_check.py <mod> <proje-dizini> [id id ...]
 ```
 
-Modlar: `validate` (şema kontrolü) · `run` (bekleyen — veya `run <dir> 1 2` gibi verilen id'li — adımları denetle) · `audit` (TÜM adımları yeniden denetle, final gate) · `status` (tablo, çalıştırmadan). Dizin adı `id`'lerden ÖNCE gelir.
+Modlar: `validate` (şema kontrolü) · `run` (bekleyen — veya `run <dir> 1 2` gibi verilen id'li — adımları denetle) · `audit` (TÜM adımları yeniden denetle, final gate) · `status` (tablo, çalıştırmadan) · `snapshot` / `rollback` (dosya anlık görüntüsü al / geri yükle). Dizin adı `id`'lerden ÖNCE gelir.
+
+Ek seçenekler: `--plan <ad>` (çoklu plan: `.plan-auditor/plans/<ad>.json`; varsayılan `plan.json`) · `run --force` (3 deneme sınırını aşılmaya zorla — istisnai durumda, kullanıcı istediyse).
 
 ## İş akışı
 
 ### 1. PLAN
 - Görevi al, `references/plan-format.md`'deki şemaya göre `<proje>/.plan-auditor/plan.json` yaz.
 - Her adımın `verify` listesi SOMUT ve makineyle çalıştırılabilir olmalı: komut + beklenen exit kodu, dosya varlığı, regex, pytest. "Düzgün çalışıyor" gibi ölçüsüz kriter YOK.
-- Yeni görev başlatırken eski plan varsa `.plan-auditor/archive/<tarih>-<slug>.json`'a taşı.
+- Yeni görev başlatırken eski plan varsa iki seçenek: artık işi yoksa `.plan-auditor/archive/<tarih>-<slug>.json`'a taşı; HÂLÂ aktifse yeni görevi `--plan <ad>` ile ayrı dosyada tut (`.plan-auditor/plans/<ad>.json`).
 - Yazınca `validate` çalıştır; hata varsa düzelt ve tekrar çalıştır. Planı kullanıcıya kısaca özetle.
 
 ### 2. YÜRÜT + HER ADIMDA KANITLA + KURTARMA DÖNGÜSÜ

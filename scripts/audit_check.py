@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-"""audit_check.py — PlanGuard bağımsız denetleyici.
+"""audit_check.py — PlanGuard bağımsız denetleyici (v1.1.0).
 
 Kanıt tabanlı adım denetimi: ajanın raporuna güvenmez, yalnızca komut
 çıktısı / dosya durumu gibi somut kanıtlara bakar. Kanıt kaydı append-only
 ve SHA-256 hash zincirlidir; sonradan değiştirilirse uyarır ve denetimi
-düşürür.
+düşürür. Büyük loglar otomatik arşivlenir (rotasyon).
+
+v1.1 yenilikleri:
+  --plan <ad>        çoklu plan desteği (.plan-auditor/plans/<ad>.json)
+  run --force        3 deneme sınırını zorla aşma (varsayılan: reddeder)
+  snapshot/rollback  planın "snapshot" listesindeki dosyaların yedeğini
+                     al / geri yükle (liste boşsa git ls-files)
 
 Modlar:
   validate <dir>            plan.json şema kontrolü
   run <dir> [id id ...]     bekleyen (veya verilen) adımları denetle
   audit <dir>               TÜM adımları yeniden denetle (final gate)
   status <dir>              tablo (hiçbir şey çalıştırmadan)
+  snapshot <dir>            dosya anlık görüntüsü al
+  rollback <dir>            son (veya --to ile verilen) anlık görüntüyü geri yükle
 
-Exit kodları: 0 = geçti, 1 = en az bir adım doğrulanamadı, 2 = kayıt zinciri kurcalanmış.
+Exit kodları: 0 = geçti, 1 = en az bir adım doğrulanamadı / sınır aşıldı,
+2 = kayıt zinciri kurcalanmış.
 """
 import argparse
 import datetime
@@ -22,9 +31,13 @@ import os
 import re
 import subprocess
 import sys
+import zipfile
 
 PG_DIR = ".plan-auditor"
 CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
+MAX_ATTEMPTS = 3
+ROTATE_BYTES = 2_000_000
+SNAPSHOT_DIR = "snapshots"
 
 
 def canonical(obj):
@@ -33,20 +46,42 @@ def canonical(obj):
 
 # ---------------------------------------------------------------- plan io
 
-def plan_path(base):
+def plan_path(base, name=None):
+    if name:
+        return os.path.join(base, PG_DIR, "plans", name + ".json")
     return os.path.join(base, PG_DIR, "plan.json")
 
 
-def load_plan(base):
-    p = plan_path(base)
+def plan_key(name=None):
+    return name if name else "default"
+
+
+def all_plan_paths(base):
+    """Varsayılan plan + plans/ altındaki tüm planlar."""
+    paths = []
+    default = plan_path(base)
+    if os.path.isfile(default):
+        paths.append((None, default))
+    plans_dir = os.path.join(base, PG_DIR, "plans")
+    if os.path.isdir(plans_dir):
+        for f in sorted(os.listdir(plans_dir)):
+            if f.endswith(".json"):
+                paths.append((f[:-5], os.path.join(plans_dir, f)))
+    return paths
+
+
+def load_plan(base, name=None):
+    p = plan_path(base, name)
     if not os.path.isfile(p):
-        sys.exit("HATA: %s yok — önce /plan-auditor ile plan yazılmalı." % p)
+        where = p if not name else "%s (--plan %s)" % (p, name)
+        sys.exit("HATA: plan yok: %s" % where)
     with open(p, encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_plan(base, plan):
-    p = plan_path(base)
+def save_plan(base, plan, name=None):
+    p = plan_path(base, name)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(plan, f, ensure_ascii=False, indent=2)
@@ -61,6 +96,8 @@ def validate_plan(data):
         errs.append("task: boş olmayan string olmalı")
     if not isinstance(data.get("created"), str) or not data["created"].strip():
         errs.append("created: ISO zaman damgası olmalı")
+    if "snapshot" in data and not isinstance(data["snapshot"], list):
+        errs.append("snapshot: dosya yolu listesi olmalı (opsiyonel)")
     steps = data.get("steps")
     if not isinstance(steps, list) or not steps:
         errs.append("steps: boş olmayan liste olmalı")
@@ -85,7 +122,7 @@ def validate_plan(data):
         behavioral = [c for c in checks
                       if isinstance(c, dict) and c.get("type") in ("run", "pytest", "exec")]
         if not behavioral:
-            errs.append("adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest) zorunlu — "
+            errs.append("adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest/exec) zorunlu — "
                         "yalnızca file_exists/regex ile adım doğrulanamaz" % sid)
         for c in checks:
             if not isinstance(c, dict) or c.get("type") not in CHECK_TYPES:
@@ -156,29 +193,21 @@ def evidence_path(base):
     return os.path.join(base, PG_DIR, "evidence.jsonl")
 
 
-def count_failed_attempts(base, step_id, mode="run"):
-    """Bir adımın önceki başarısız deneme sayısı (evidence logdan)."""
+def maybe_rotate(base):
+    """Log 2 MB'ı aşınca arşive taşı, taze zincirle devam et."""
     path = evidence_path(base)
-    n = 0
-    if not os.path.isfile(path):
-        return n
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if (rec.get("mode") == mode and rec.get("step") == step_id
-                    and rec.get("status") != "verified"):
-                n += 1
-    return n
+    if not os.path.isfile(path) or os.path.getsize(path) < ROTATE_BYTES:
+        return
+    archive_dir = os.path.join(base, PG_DIR, "archive")
+    os.makedirs(archive_dir, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    os.replace(path, os.path.join(archive_dir, "evidence-%s.jsonl" % ts))
+    print("NOT: evidence log arşivlendi (rotasyon) — evidence-%s.jsonl" % ts)
 
 
 def append_evidence(base, rec):
     path = evidence_path(base)
+    maybe_rotate(base)
     prev = "GENESIS"
     if os.path.isfile(path):
         with open(path, encoding="utf-8") as f:
@@ -197,6 +226,28 @@ def append_evidence(base, rec):
     with open(path, "a", encoding="utf-8") as f:
         f.write(canonical(rec) + "\n")
     return rec["hash"]
+
+
+def count_failed_attempts(base, step_id, plan="default", mode="run"):
+    """Bir adımın önceki başarısız deneme sayısı (evidence logdan)."""
+    path = evidence_path(base)
+    n = 0
+    if not os.path.isfile(path):
+        return n
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (rec.get("mode") == mode and rec.get("step") == step_id
+                    and rec.get("plan", "default") == plan
+                    and rec.get("status") != "verified"):
+                n += 1
+    return n
 
 
 def verify_chain(base):
@@ -227,9 +278,68 @@ def verify_chain(base):
     return True, n, ""
 
 
+# ---------------------------------------------------------------- snapshot
+
+def snapshot_sources(base, plan):
+    files = list(plan.get("snapshot") or [])
+    if not files and os.path.isdir(os.path.join(base, ".git")):
+        try:
+            out = subprocess.run("git ls-files", shell=True, cwd=base,
+                                 capture_output=True, text=True, timeout=60)
+            files = [l for l in (out.stdout or "").splitlines() if l.strip()]
+        except Exception:
+            files = []
+    return [f for f in files if os.path.isfile(os.path.join(base, f))]
+
+
+def snapshots_dir(base):
+    return os.path.join(base, PG_DIR, SNAPSHOT_DIR)
+
+
+def make_snapshot(base, plan, label="snapshot"):
+    src = snapshot_sources(base, plan)
+    if not src:
+        print("ANLIK GÖRÜNTÜ YOK: plan 'snapshot' listesi boş ve git deposu bulunamadı.")
+        return None
+    os.makedirs(snapshots_dir(base), exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    zpath = os.path.join(snapshots_dir(base), "%s-%s.zip" % (label, ts))
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in src:
+            z.write(os.path.join(base, f), f)
+    rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
+           "mode": label, "step": 0, "results": [],
+           "status": "verified", "files": len(src), "archive": os.path.basename(zpath)}
+    append_evidence(base, rec)
+    print("ANLIK GÖRÜNTÜ: %s (%s dosya)" % (os.path.basename(zpath), len(src)))
+    return zpath
+
+
+def restore_snapshot(base, zpath):
+    with zipfile.ZipFile(zpath) as z:
+        names = z.namelist()
+        z.extractall(base)
+    rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
+           "mode": "rollback", "step": 0, "results": [],
+           "status": "verified", "files": len(names),
+           "archive": os.path.basename(zpath)}
+    append_evidence(base, rec)
+    print("GERİ YÜKLEME: %s → %s dosya proje üzerine yazıldı." % (os.path.basename(zpath), len(names)))
+
+
+def latest_snapshot(base):
+    d = snapshots_dir(base)
+    if not os.path.isdir(d):
+        return None
+    zips = sorted(f for f in os.listdir(d) if f.endswith(".zip"))
+    return os.path.join(d, zips[-1]) if zips else None
+
+
 # ---------------------------------------------------------------- output
 
-def print_table(plan):
+def print_table(plan, name=None):
+    if name:
+        print("PLAN: %s" % name)
     print("%-4s %-42s %-9s %s" % ("ID", "ADIM", "DURUM", "KONTROL"))
     print("-" * 70)
     for s in plan["steps"]:
@@ -239,17 +349,24 @@ def print_table(plan):
                                       "%s kontrol" % len(checks)))
 
 
-def audit_steps(base, plan, ids=None, mode="run"):
+def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
     target = [s for s in plan["steps"] if ids is None or s["id"] in ids]
     if ids is not None and not target:
         sys.exit("HATA: verilen id'ler planda yok: %s" % ids)
     if mode == "audit":
         target = plan["steps"]
+    key = plan_key(name)
     all_ok = True
     for s in target:
         attempt = 1
         if mode == "run":
-            attempt = count_failed_attempts(base, s["id"]) + 1
+            attempt = count_failed_attempts(base, s["id"], plan=key) + 1
+            if attempt > MAX_ATTEMPTS and not force:
+                print("[ATLADI] adım %s: %s önceki deneme — %s sınırı aşıldı. "
+                      "Kontrolü gevşetme; kullanıcıya rapor ver veya --force ile zorla."
+                      % (s["id"], s.get("title", ""), MAX_ATTEMPTS))
+                all_ok = False
+                continue
         results = []
         ok_all = True
         for c in s.get("verify", []):
@@ -261,7 +378,7 @@ def audit_steps(base, plan, ids=None, mode="run"):
         s["status"] = "verified" if ok_all else "failed"
         all_ok = all_ok and ok_all
         rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
-               "mode": mode, "step": s["id"], "results": results,
+               "mode": mode, "plan": key, "step": s["id"], "results": results,
                "status": s["status"]}
         if mode == "run":
             rec["attempt"] = attempt
@@ -269,24 +386,25 @@ def audit_steps(base, plan, ids=None, mode="run"):
         mark = "OK " if ok_all else "FAIL"
         label = "adım %s: %s" % (s["id"], s.get("title", ""))
         if mode == "run":
-            label += " (deneme %s/3)" % attempt
+            label += " (deneme %s/%s)" % (min(attempt, MAX_ATTEMPTS), MAX_ATTEMPTS)
         print("[%s] %s" % (mark, label))
         for r in results:
             print("       - %s | %s" % ("geçti" if r["passed"] else "KALDI",
                                         r["detail"]))
             if not r["passed"] and r["output_tail"]:
                 print("         çıktı: %s" % r["output_tail"][-400:].replace("\n", " | "))
-        if mode == "run" and not ok_all and attempt >= 3:
-            print("       ! ESKALASYON: 3 deneme tamamlandı — kontrolü gevşetmeden "
-                  "kullanıcıya kanıtla rapor ver ve nasıl devam edileceğini sor.")
-    save_plan(base, plan)
+        if mode == "run" and not ok_all and attempt >= MAX_ATTEMPTS:
+            print("       ! ESKALASYON: %s deneme tamamlandı — kontrolü gevşetmeden "
+                  "kullanıcıya kanıtla rapor ver ve nasıl devam edileceğini sor. "
+                  "Geri almak istersen: snapshot/rollback." % MAX_ATTEMPTS)
+    save_plan(base, plan, name)
     return all_ok
 
 
 # ---------------------------------------------------------------- commands
 
 def cmd_validate(args):
-    plan = load_plan(args.dir)
+    plan = load_plan(args.dir, args.plan)
     errs = validate_plan(plan)
     if errs:
         for e in errs:
@@ -301,13 +419,15 @@ def cmd_run(args):
     if not ok:
         print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
         return 2
-    plan = load_plan(args.dir)
+    plan = load_plan(args.dir, args.plan)
     ids = args.ids or None
-    target_ids = ids or [s["id"] for s in plan["steps"] if s.get("status") != "verified"]
-    all_ok = audit_steps(args.dir, plan, ids=target_ids, mode="run")
-    if not all_ok:
-        return 1
-    return 0
+    if ids is None:
+        target_ids = [s["id"] for s in plan["steps"] if s.get("status") != "verified"]
+    else:
+        target_ids = ids
+    all_ok = audit_steps(args.dir, plan, ids=target_ids, mode="run",
+                         name=args.plan, force=args.force)
+    return 0 if all_ok else 1
 
 
 def cmd_audit(args):
@@ -315,11 +435,11 @@ def cmd_audit(args):
     if not ok:
         print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
         return 2
-    plan = load_plan(args.dir)
+    plan = load_plan(args.dir, args.plan)
     print("TAM DENETİM: tüm adımlar taze kabukta yeniden test ediliyor...\n")
-    all_ok = audit_steps(args.dir, plan, ids=None, mode="audit")
+    all_ok = audit_steps(args.dir, plan, ids=None, mode="audit", name=args.plan)
     print()
-    print_table(plan)
+    print_table(plan, args.plan)
     if not all_ok:
         print("\nSONUÇ: audit KALDI — görev bitmiş sayılmaz.")
         return 1
@@ -329,8 +449,8 @@ def cmd_audit(args):
 
 def cmd_status(args):
     ok, n, problem = verify_chain(args.dir)
-    plan = load_plan(args.dir)
-    print_table(plan)
+    plan = load_plan(args.dir, args.plan)
+    print_table(plan, args.plan)
     print("\nevidence kaydı: %s" % (n if ok else "ZİNCİR KOPUK"))
     if not ok:
         print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
@@ -340,25 +460,60 @@ def cmd_status(args):
     return 0
 
 
+def cmd_snapshot(args):
+    ok, n, problem = verify_chain(args.dir)
+    if not ok:
+        print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
+        return 2
+    plan = load_plan(args.dir, args.plan)
+    zpath = make_snapshot(args.dir, plan)
+    return 0 if zpath else 1
+
+
+def cmd_rollback(args):
+    ok, n, problem = verify_chain(args.dir)
+    if not ok:
+        print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
+        return 2
+    if args.to:
+        zpath = os.path.join(snapshots_dir(args.dir), args.to)
+        if not os.path.isfile(zpath):
+            zpath = args.to if os.path.isfile(args.to) else None
+        if not zpath:
+            sys.exit("HATA: anlık görüntü bulunamadı: %s" % args.to)
+    else:
+        zpath = latest_snapshot(args.dir)
+        if not zpath:
+            sys.exit("HATA: anlık görüntü yok — önce 'snapshot' çalıştır.")
+    restore_snapshot(args.dir, zpath)
+    return 0
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
-    ap = argparse.ArgumentParser(description="PlanGuard bağımsız denetleyici")
+    ap = argparse.ArgumentParser(description="PlanGuard bağımsız denetleyici v1.1.0")
     sub = ap.add_subparsers(dest="mode", required=True)
-    for name in ("validate", "run", "audit", "status"):
+    for name in ("validate", "run", "audit", "status", "snapshot", "rollback"):
         p = sub.add_parser(name)
         p.add_argument("dir", nargs="?", default=".", help="proje dizini")
+        p.add_argument("--plan", help="plan adı (.plan-auditor/plans/<ad>.json); varsayılan: plan.json")
         if name == "run":
             p.add_argument("ids", nargs="*", type=int, help="denetlenecek adım id'leri (boş: verified olmayanlar)")
+            p.add_argument("--force", action="store_true",
+                           help="%s deneme sınırını zorla aş" % MAX_ATTEMPTS)
+        if name == "rollback":
+            p.add_argument("--to", help="geri yüklenecek zip (dosya adı veya tam yol); varsayılan: en yenisi")
     args = ap.parse_args()
     args.dir = os.path.abspath(args.dir)
     if not os.path.isdir(args.dir):
         sys.exit("HATA: dizin yok: %s" % args.dir)
-    sys.exit({"validate": cmd_validate, "run": cmd_run,
-              "audit": cmd_audit, "status": cmd_status}[args.mode](args))
+    sys.exit({"validate": cmd_validate, "run": cmd_run, "audit": cmd_audit,
+              "status": cmd_status, "snapshot": cmd_snapshot,
+              "rollback": cmd_rollback}[args.mode](args))
 
 
 if __name__ == "__main__":

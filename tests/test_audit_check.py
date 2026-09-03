@@ -184,3 +184,85 @@ def test_audit_steps_verifies_and_records(tmp_path):
     assert plan["steps"][0]["status"] == "verified"
     ok, n, problem = ac.verify_chain(base)
     assert ok and n == 1
+
+
+# ------------------------------------------------- v1.1: multi-plan / cap
+
+def test_plan_path_named_and_default(tmp_path):
+    assert ac.plan_path(str(tmp_path)).endswith("plan.json")
+    p = ac.plan_path(str(tmp_path), "yan-gorev")
+    assert "plans" in p and p.endswith("yan-gorev.json")
+
+
+def test_all_plan_paths(tmp_path):
+    base = str(tmp_path)
+    make_plan(tmp_path, valid_plan())
+    ac.save_plan(base, valid_plan(task="ikinci"), "ikinci")
+    names = [n for n, _ in ac.all_plan_paths(base)]
+    assert names == [None, "ikinci"]
+
+
+def test_attempt_cap_blocks_fourth_run(tmp_path):
+    base = str(tmp_path)
+    make_plan(tmp_path, valid_plan())
+    for i in range(3):
+        ac.append_evidence(base, {"ts": "t%d" % i, "mode": "run", "plan": "default",
+                                  "step": 1, "status": "failed", "results": []})
+    plan = ac.load_plan(base)
+    ok = ac.audit_steps(base, plan, ids=[1], mode="run")  # 4. deneme: reddedilmeli
+    assert not ok
+    assert plan["steps"][0]["status"] == "pending"  # hiç çalıştırılmadı
+
+
+def test_attempt_cap_respects_force(tmp_path):
+    base = str(tmp_path)
+    make_plan(tmp_path, valid_plan(verify=[
+        {"type": "file_exists", "path": "fib.py"}]))
+    (tmp_path / "fib.py").write_text("x", encoding="utf-8")
+    for i in range(3):
+        ac.append_evidence(base, {"ts": "t%d" % i, "mode": "run", "plan": "default",
+                                  "step": 1, "status": "failed", "results": []})
+    plan = ac.load_plan(base)
+    ok = ac.audit_steps(base, plan, ids=[1], mode="run", force=True)
+    assert ok and plan["steps"][0]["status"] == "verified"
+
+
+def test_attempts_are_scoped_per_plan(tmp_path):
+    base = str(tmp_path)
+    make_plan(tmp_path, valid_plan())
+    ac.save_plan(base, valid_plan(task="yan is"), "yan")
+    for i in range(3):
+        ac.append_evidence(base, {"ts": "t%d" % i, "mode": "run", "plan": "yan",
+                                  "step": 1, "status": "failed", "results": []})
+    # varsayılan plan için attempt = 1 ("yan" planın kayıtları sayılmaz)
+    assert ac.count_failed_attempts(base, 1, plan="default") == 0
+    assert ac.count_failed_attempts(base, 1, plan="yan") == 3
+
+
+def test_evidence_rotation(tmp_path):
+    base = str(tmp_path)
+    pg = tmp_path / ".plan-auditor"
+    pg.mkdir()
+    big = '{"x":"' + "a" * (ac.ROTATE_BYTES + 10) + '"}\n'
+    (pg / "evidence.jsonl").write_text(big, encoding="utf-8")
+    ac.append_evidence(base, {"ts": "t", "mode": "run", "plan": "default",
+                              "step": 1, "status": "verified", "results": []})
+    archive = pg / "archive"
+    assert list(archive.glob("evidence-*.jsonl"))
+    ok, n, problem = ac.verify_chain(base)
+    assert ok and n == 1  # taze zincir GENESIS'ten başlar
+
+
+def test_snapshot_and_rollback_roundtrip(tmp_path):
+    base = str(tmp_path)
+    (tmp_path / "kod.txt").write_text("v1", encoding="utf-8")
+    plan = valid_plan()
+    plan["snapshot"] = ["kod.txt"]
+    ac.make_snapshot(base, plan)
+    (tmp_path / "kod.txt").write_text("bozuldu", encoding="utf-8")
+    zpath = ac.latest_snapshot(base)
+    assert zpath
+    ac.restore_snapshot(base, zpath)
+    assert (tmp_path / "kod.txt").read_text(encoding="utf-8") == "v1"
+    ok, n, problem = ac.verify_chain(base)
+    assert ok and n == 2  # snapshot + rollback kaydı tek zincirde

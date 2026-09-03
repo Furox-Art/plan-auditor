@@ -40,6 +40,8 @@ One skill package, every agent: copy the `plan-auditor/` folder into the skills 
 | **Claude Code** | `~/.claude/skills/plan-auditor/` | `.claude/skills/plan-auditor/` | `/plan-auditor <task>` |
 | **Codex CLI** | `~/.codex/skills/plan-auditor/` | `.codex/skills/plan-auditor/` | `$plan-auditor <task>` (auto-loads by description, `/skills` to verify) |
 | **OpenCode** | `~/.config/opencode/skills/plan-auditor/` | `.opencode/skills/plan-auditor/` | `/plan-auditor <task>` (auto-loads by description) |
+| **Cursor** | `~/.cursor/skills/plan-auditor/` (or `.agents/skills/`) | `.cursor/skills/plan-auditor/` | `/plan-auditor` (Cursor also reads `.claude`/`.codex` skill dirs) |
+| **Grok Build** | `~/.grok/skills/plan-auditor/` | `.grok/skills/plan-auditor/` | auto-loads by description (also reads Claude/Cursor dirs) |
 
 The same `SKILL.md` works everywhere — it follows the [Agent Skills](https://agentskills.io) standard. See [`docs/integrations.md`](docs/integrations.md) for optional extras (e.g. an unskippable Stop-hook gate for Command Code).
 
@@ -51,14 +53,19 @@ Invoke the skill with a task (`/plan-auditor "build the login form"`). The agent
 2. Works the steps one at a time, running the auditor after each:
 
    ```bash
-   python ~/.commandcode/skills/plan-auditor/scripts/audit_check.py run <project-dir>
+   python <skill-dir>/scripts/audit_check.py run <project-dir>
    ```
 
 3. Finishes only after a full re-verification:
 
    ```bash
-   python ~/.commandcode/skills/plan-auditor/scripts/audit_check.py audit <project-dir>
+   python <skill-dir>/scripts/audit_check.py audit <project-dir>
    ```
+
+Extras (v1.1):
+- **Hard attempt cap** — a step that failed 3 times is refused on the 4th `run`; the agent must escalate to the user (or pass `--force` explicitly).
+- **Multi-plan** — `--plan <name>` runs parallel plans from `.plan-auditor/plans/<name>.json`.
+- **Snapshot / rollback** — `snapshot` archives the plan's `snapshot` file list (or `git ls-files`); `rollback` restores the latest snapshot.
 
 ### Auditor modes & exit codes
 
