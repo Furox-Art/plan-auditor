@@ -32,17 +32,16 @@ examples/fib/             # worked example: fibonacci task
 
 ## Install
 
-Copy (or symlink) the skill directory into any Agent-Skills-compatible tool:
+One skill package, every agent: copy the `plan-auditor/` folder into the skills directory of whichever tool you use. No config, no build — the folder is the install.
 
-```bash
-# Command Code (user scope, every project)
-cp -r plan-auditor ~/.commandcode/skills/plan-auditor
+| Tool | User-level path (every project) | Project-level path | Invoke |
+|---|---|---|---|
+| **Command Code** | `~/.commandcode/skills/plan-auditor/` | `.commandcode/skills/plan-auditor/` | `/plan-auditor <task>` |
+| **Claude Code** | `~/.claude/skills/plan-auditor/` | `.claude/skills/plan-auditor/` | `/plan-auditor <task>` |
+| **Codex CLI** | `~/.codex/skills/plan-auditor/` | `.codex/skills/plan-auditor/` | `$plan-auditor <task>` (auto-loads by description, `/skills` to verify) |
+| **OpenCode** | `~/.config/opencode/skills/plan-auditor/` | `.opencode/skills/plan-auditor/` | `/plan-auditor <task>` (auto-loads by description) |
 
-# Claude Code
-cp -r plan-auditor ~/.claude/skills/plan-auditor
-```
-
-Or point your agent at the skill and let it follow `SKILL.md`.
+The same `SKILL.md` works everywhere — it follows the [Agent Skills](https://agentskills.io) standard. See [`docs/integrations.md`](docs/integrations.md) for optional extras (e.g. an unskippable Stop-hook gate for Command Code).
 
 ## Usage
 
