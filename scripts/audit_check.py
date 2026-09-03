@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 PG_DIR = ".plan-auditor"
-CHECK_TYPES = {"run", "file_exists", "regex", "pytest"}
+CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
 
 
 def canonical(obj):
@@ -83,7 +83,7 @@ def validate_plan(data):
             errs.append("adım %s: verify boş olamaz" % sid)
             continue
         behavioral = [c for c in checks
-                      if isinstance(c, dict) and c.get("type") in ("run", "pytest")]
+                      if isinstance(c, dict) and c.get("type") in ("run", "pytest", "exec")]
         if not behavioral:
             errs.append("adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest) zorunlu — "
                         "yalnızca file_exists/regex ile adım doğrulanamaz" % sid)
@@ -96,16 +96,20 @@ def validate_plan(data):
                 errs.append("adım %s: %s kontrolü 'path' ister" % (sid, t))
             if t == "regex" and not c.get("pattern"):
                 errs.append("adım %s: regex kontrolü 'pattern' ister" % sid)
-            if t == "run" and not c.get("cmd"):
-                errs.append("adım %s: run kontrolü 'cmd' ister" % sid)
+            if t in ("run", "exec") and not c.get("cmd"):
+                errs.append("adım %s: %s kontrolü 'cmd' ister" % (sid, t))
     return errs
 
 
 def norm_check(c):
-    if c["type"] == "pytest":
-        return {"type": "run",
-                "cmd": ("python -m pytest " + c.get("args", "")).strip(),
-                "expect_exit": 0}
+    if c["type"] in ("pytest", "exec"):
+        if c["type"] == "pytest":
+            return {"type": "run",
+                    "cmd": ("python -m pytest " + c.get("args", "")).strip(),
+                    "expect_exit": 0}
+        # exec: harici denetçi (derlenmiş C++/Rust ikilisi, jar, betik...)
+        return {"type": "run", "cmd": c["cmd"],
+                "expect_exit": c.get("expect_exit", 0)}
     return c
 
 

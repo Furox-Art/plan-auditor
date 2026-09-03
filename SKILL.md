@@ -60,6 +60,10 @@ Modlar: `validate` (şema kontrolü) · `run` (bekleyen — veya `run <dir> 1 2`
 - Tablo halinde bildir: adım, kontrol sayısı, durum, kanıt özeti (komut çıktılarından alıntı).
 - "Yaptım" deme; "audit geçti, kanıtlar şunlar" de.
 
+## Zorunlu denetim (hook)
+
+Command Code tarafında kullanıcı `Stop` hook'una bu skill'in `scripts/stop_gate.py`'sini bağladıysa: aktif planda doğrulanmamış adım varken tur KAPATILAMAZ — hook exit 2 ile seni denetime geri iter. Bu, atlanamaz katmandır; hook'un varlığına güvenme ama varken onunla çelişme. Polyglot kontroller için `exec` tipi: kullanıcının derlenmiş ikilisi (C++/Rust/Java/jar) plana `{"type": "exec", "cmd": "..."}` olarak girer, exit kodu kanıt sayılır.
+
 ## Örnek
 
 Görev: "fib.py'de fibonacci yaz, testi olsun."

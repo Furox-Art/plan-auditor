@@ -27,6 +27,7 @@ Yer: `<proje>/.plan-auditor/plan.json` · UTF-8 · `validate` modu şemayı zoru
 | `file_exists` | `path` | Dosya mevcut olmalı (proje dizinine göre) |
 | `regex` | `path`, `pattern` | Dosya içeriğinde regex eşleşmeli |
 | `pytest` | `args` (ops) | `python -m pytest <args>` çalışır, exit 0 beklenir (`run`'a normalize edilir) |
+| `exec` | `cmd`, `expect_exit` (vars 0) | Harici denetçi çalıştırır — derlenmiş C++/Rust ikilisi, jar, betik... Dil fark etmez; exit kodu kanıttır |
 
 ## Kural örnekleri
 
