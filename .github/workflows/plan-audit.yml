@@ -1,0 +1,19 @@
+name: plan-audit gate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate plan schema
+        run: python scripts/audit_check.py validate .
+      - name: Independent audit (gate)
+        run: python scripts/audit_check.py audit .

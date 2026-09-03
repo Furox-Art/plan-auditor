@@ -156,6 +156,27 @@ def evidence_path(base):
     return os.path.join(base, PG_DIR, "evidence.jsonl")
 
 
+def count_failed_attempts(base, step_id, mode="run"):
+    """Bir adımın önceki başarısız deneme sayısı (evidence logdan)."""
+    path = evidence_path(base)
+    n = 0
+    if not os.path.isfile(path):
+        return n
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (rec.get("mode") == mode and rec.get("step") == step_id
+                    and rec.get("status") != "verified"):
+                n += 1
+    return n
+
+
 def append_evidence(base, rec):
     path = evidence_path(base)
     prev = "GENESIS"
@@ -172,6 +193,7 @@ def append_evidence(base, rec):
     rec["hash"] = hashlib.sha256(
         canonical({k: v for k, v in rec.items() if k != "hash"}).encode("utf-8")
     ).hexdigest()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(canonical(rec) + "\n")
     return rec["hash"]
@@ -225,6 +247,9 @@ def audit_steps(base, plan, ids=None, mode="run"):
         target = plan["steps"]
     all_ok = True
     for s in target:
+        attempt = 1
+        if mode == "run":
+            attempt = count_failed_attempts(base, s["id"]) + 1
         results = []
         ok_all = True
         for c in s.get("verify", []):
@@ -238,14 +263,22 @@ def audit_steps(base, plan, ids=None, mode="run"):
         rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
                "mode": mode, "step": s["id"], "results": results,
                "status": s["status"]}
+        if mode == "run":
+            rec["attempt"] = attempt
         append_evidence(base, rec)
         mark = "OK " if ok_all else "FAIL"
-        print("[%s] adım %s: %s" % (mark, s["id"], s.get("title", "")))
+        label = "adım %s: %s" % (s["id"], s.get("title", ""))
+        if mode == "run":
+            label += " (deneme %s/3)" % attempt
+        print("[%s] %s" % (mark, label))
         for r in results:
             print("       - %s | %s" % ("geçti" if r["passed"] else "KALDI",
                                         r["detail"]))
             if not r["passed"] and r["output_tail"]:
                 print("         çıktı: %s" % r["output_tail"][-400:].replace("\n", " | "))
+        if mode == "run" and not ok_all and attempt >= 3:
+            print("       ! ESKALASYON: 3 deneme tamamlandı — kontrolü gevşetmeden "
+                  "kullanıcıya kanıtla rapor ver ve nasıl devam edileceğini sor.")
     save_plan(base, plan)
     return all_ok
 

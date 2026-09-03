@@ -1,5 +1,7 @@
 # plan-auditor
 
+[![plan-audit gate](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml/badge.svg)](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml)
+
 **A strict plan + independent auditor workflow as an [Agent Skill](https://agentskills.io).**
 
 AI coding agents routinely leave work half-done or claim "done" when it isn't. Root cause: no explicit, machine-checkable plan, and nobody verifying the claims. **plan-auditor** fixes both:
@@ -21,10 +23,12 @@ AI coding agents routinely leave work half-done or claim "done" when it isn't. R
 SKILL.md                  # agent-facing workflow (the skill)
 references/plan-format.md # plan.json schema
 scripts/audit_check.py    # the independent auditor (stdlib-only, no deps)
+scripts/stop_gate.py      # optional Stop-hook gate for Command Code
+tests/                    # unit test suite for the auditor itself
 examples/fib/             # worked example: fibonacci task
 ```
 
-`audit_check.py` uses only the Python standard library — no pip installs.
+`audit_check.py` uses only the Python standard library — no pip installs. The repo **dogfoods**: its own `.plan-auditor/plan.json` verifies the test suite on every push via the `plan-audit gate` workflow.
 
 ## Install
 
