@@ -82,6 +82,11 @@ def validate_plan(data):
         if not isinstance(checks, list) or not checks:
             errs.append("adım %s: verify boş olamaz" % sid)
             continue
+        behavioral = [c for c in checks
+                      if isinstance(c, dict) and c.get("type") in ("run", "pytest")]
+        if not behavioral:
+            errs.append("adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest) zorunlu — "
+                        "yalnızca file_exists/regex ile adım doğrulanamaz" % sid)
         for c in checks:
             if not isinstance(c, dict) or c.get("type") not in CHECK_TYPES:
                 errs.append("adım %s: geçersiz kontrol %r" % (sid, c))

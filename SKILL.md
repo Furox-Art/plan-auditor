@@ -43,9 +43,13 @@ Modlar: `validate` (şema kontrolü) · `run` (bekleyen — veya `run <dir> 1 2`
 - Yeni görev başlatırken eski plan varsa `.plan-auditor/archive/<tarih>-<slug>.json`'a taşı.
 - Yazınca `validate` çalıştır; hata varsa düzelt ve tekrar çalıştır. Planı kullanıcıya kısaca özetle.
 
-### 2. YÜRÜT + HER ADIMDA KANITLA
+### 2. YÜRÜT + HER ADIMDA KANITLA + KURTARMA DÖNGÜSÜ
 - Adımları sırayla yap. Her adımın işi bittiğinde HEMEN `run <id>` çalıştır.
-- `verified` değilse: adım bitmemiştir. Düzelt, `run <id>` tekrar. Asla "sanırım oldu" ile geçme.
+- `verified` değilse: adım bitmemiştir. Kurtarma döngüsü:
+  1. evidence çıktısındaki KALDI satırlarından teşhis koy (hangi kontrol, neden düştü).
+  2. Kök nedeni düzelt (semptomu değil — test sahte geçiyorsa testi gevşetmek YASAK, ürünü düzelt).
+  3. Aynı adım için `run <id>` tekrar.
+- Adım başına en fazla **3 kurtarma denemesi**. 3 denemeden sonra hâlâ `verified` değilse DUR: kullanıcıya kanıt çıktısıyla rapor ver ve nasıl devam edileceğini sor. Asla kontrolü gevşeterek, adımı atlayarak veya "yeterince iyi" diyerek geçme.
 - Sonraki adıma yalnızca önceki adım `verified` olduktan sonra geç.
 
 ### 3. TAM DENETİM

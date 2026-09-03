@@ -37,6 +37,8 @@ Yer: `<proje>/.plan-auditor/plan.json` · UTF-8 · `validate` modu şemayı zoru
 Kötü — ölçüsüz, reddedilir mantık olarak:
 - "kod düzgün çalışıyor" · "test edildi" · "görsel olarak doğru"
 
+**Zorunlu:** Her adım en az bir DAVRANIŞSAL kontrol içermelidir (`run` veya `pytest`). Yalnızca `file_exists`/`regex` kombinasyonu bir adımı doğrulayamaz — dosyanın var olması işin *doğru* olduğu anlamına gelmez.
+
 ## Notlar
 
 - `verify` listesi iş başladıktan sonra gevşetilemez; yalnızca sıkılaştırılabilir/eklenebilir.
