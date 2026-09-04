@@ -17,14 +17,33 @@ from supervisor.daemon import (
 )
 
 
-def _wait_for_state(workspace: Path, expected: str, timeout: float = 4.0) -> dict:
+def _write_fast_config(workspace: Path) -> None:
+    pg = runtime_dir(workspace)
+    pg.mkdir(parents=True, exist_ok=True)
+    (pg / "supervisor.json").write_text(
+        json.dumps({"heartbeat_sec": 1}), encoding="utf-8"
+    )
+
+
+def _wait_for_state(
+    workspace: Path,
+    expected: str,
+    timeout: float = 4.0,
+    *,
+    pid: int | None = None,
+) -> dict:
     deadline = time.time() + timeout
+    last = None
     while time.time() < deadline:
         state = read_state(workspace)
+        last = state
         if state and state.get("state") == expected:
-            return state
+            if pid is None or state.get("pid") == pid:
+                return state
         time.sleep(0.05)
-    raise AssertionError(f"daemon did not reach state {expected!r}")
+    raise AssertionError(
+        f"daemon did not reach state {expected!r} with pid={pid!r}; last={last!r}"
+    )
 
 
 def _start_thread(workspace: Path) -> threading.Thread:
@@ -65,20 +84,22 @@ def test_read_state_missing_or_invalid_is_none(tmp_path: Path) -> None:
 
 
 def test_daemon_writes_running_state_and_stops_cleanly(tmp_path: Path) -> None:
+    _write_fast_config(tmp_path)
     thread = _start_thread(tmp_path)
-    running = _wait_for_state(tmp_path, "running")
-    assert running["pid"] == os.getpid()
+    running = _wait_for_state(tmp_path, "running", pid=os.getpid())
     assert running["workspace"] == str(tmp_path.resolve())
     assert running["profile"] == "standard"
     assert running["mode"] == "serial"
 
+    started = time.monotonic()
     _request_stop(tmp_path)
-    thread.join(timeout=4.0)
+    thread.join(timeout=2.0)
     assert not thread.is_alive()
+    assert time.monotonic() - started < 2.0
 
-    stopped = _wait_for_state(tmp_path, "stopped")
-    assert stopped["pid"] == os.getpid()
+    stopped = _wait_for_state(tmp_path, "stopped", pid=os.getpid())
     assert not stop_path(tmp_path).exists()
+    assert stopped["state"] == "stopped"
 
 
 def test_duplicate_running_daemon_is_rejected(tmp_path: Path) -> None:
@@ -92,38 +113,47 @@ def test_duplicate_running_daemon_is_rejected(tmp_path: Path) -> None:
 
 
 def test_stale_running_state_is_replaced(tmp_path: Path) -> None:
+    _write_fast_config(tmp_path)
     path = state_path(tmp_path)
-    path.parent.mkdir(parents=True)
     path.write_text(
         json.dumps({"state": "running", "pid": 99999999}),
         encoding="utf-8",
     )
 
     thread = _start_thread(tmp_path)
-    running = _wait_for_state(tmp_path, "running")
+    running = _wait_for_state(tmp_path, "running", pid=os.getpid())
     assert running["pid"] == os.getpid()
 
     _request_stop(tmp_path)
-    thread.join(timeout=4.0)
+    thread.join(timeout=2.0)
     assert not thread.is_alive()
-    assert _wait_for_state(tmp_path, "stopped")["state"] == "stopped"
+    assert _wait_for_state(tmp_path, "stopped", pid=os.getpid())["state"] == "stopped"
 
 
 def test_daemon_records_workspace_events(tmp_path: Path) -> None:
+    _write_fast_config(tmp_path)
     thread = _start_thread(tmp_path)
-    _wait_for_state(tmp_path, "running")
+    _wait_for_state(tmp_path, "running", pid=os.getpid())
 
     observed = tmp_path / "observed.txt"
     observed.write_text("first", encoding="utf-8")
 
     events_path = runtime_dir(tmp_path) / "watchdog.jsonl"
-    deadline = time.time() + 4.0
-    while time.time() < deadline and not events_path.exists():
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        if events_path.exists():
+            records = [
+                json.loads(line)
+                for line in events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            if any(record.get("path") == "observed.txt" for record in records):
+                break
         time.sleep(0.05)
+    else:
+        _request_stop(tmp_path)
+        thread.join(timeout=2.0)
+        raise AssertionError("watchdog did not record observed.txt")
 
     _request_stop(tmp_path)
-    thread.join(timeout=4.0)
+    thread.join(timeout=2.0)
     assert not thread.is_alive()
-    assert events_path.exists()
-    records = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
-    assert any(record.get("path") == "observed.txt" for record in records)
