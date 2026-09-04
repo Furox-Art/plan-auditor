@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
-"""Platform-agnostic audit gate hook.
+"""Platform-agnostic Plan Auditor completion hook.
 
-Reads the current workspace state and runs the completion gate. Prints a
-structured verdict (BLOCKED / PASS / UNKNOWN) plus human-readable detail.
+Unlike the old hook, this does not trust ``status=verified`` by itself and does
+not fabricate seal/evidence validity. It runs the integrated supervisor
+assessment and only returns PASS when the current plan has matching fresh
+full-audit evidence plus valid integrity state.
 
-Designed to be called by platform-specific hooks:
-
-  - Claude Code / Cursor / Grok : hook command (output fed to model)
-  - Codex CLI                    : notify hook (writes warning file)
-  - OpenCode                     : plugin hook (injects context)
-
-Usage:
-  python hooks/gate_hook.py <workspace-dir> [--format text|json] [--warn-file <path>]
-
-Exit codes mirror the gate: 0 = PASS, 1 = BLOCKED, 3 = UNKNOWN.
+Exit codes: 0 = PASS/NO_PLAN, 1 = FAIL/BLOCKED, 3 = UNKNOWN.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -23,57 +18,42 @@ from pathlib import Path
 
 
 def run_gate(workspace_dir: str):
-    """Run the completion gate. Returns (outcome, report_dict)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from supervisor.orchestrator import evaluate_workspace
 
-    from supervisor.config import load_config
-    from supervisor.gate import CompletionGate
-    from supervisor.policies import default_engine
-    from supervisor.sealing import MonotonicCheck
-
-    cfg = load_config(workspace_dir)
-    plan_path = Path(cfg.pg_path) / "plan.json"
-    if not plan_path.exists():
-        return "NO_PLAN", {"outcome": "NO_PLAN", "message": "no active plan.json"}
-
+    root = os.path.abspath(workspace_dir)
     try:
-        plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        return "UNKNOWN", {"outcome": "UNKNOWN", "message": "plan.json unreadable: %s" % e}
-
-    steps = plan.get("steps", [])
-    pending = [s["id"] for s in steps if s.get("status") != "verified"]
-
-    engine = default_engine()
-    gate = CompletionGate(engine)
-    workspace_ctx = {
-        "plan_steps": steps,
-        "evidence_valid": True,
-        "logs": [],
-        "missing_required_tools": [],
-    }
-    report = gate.evaluate(
-        deterministic_passed=len(pending) == 0,
-        pending_steps=pending,
-        workspace_context=workspace_ctx,
-        seal_check=MonotonicCheck(ok=True, violations=[], improvements=[]),
-    )
-    return report.outcome, report.as_dict()
+        report = evaluate_workspace(root)
+    except Exception as exc:
+        return "UNKNOWN", {
+            "outcome": "UNKNOWN",
+            "message": f"integrated supervisor assessment failed: {type(exc).__name__}: {exc}",
+        }
+    return str(report.get("outcome", "UNKNOWN")), report
 
 
 def format_text(outcome: str, report: dict, workspace_dir: str) -> str:
     if outcome == "NO_PLAN":
         return "[plan-auditor] No active plan.json — verification skipped."
     if outcome == "PASS":
-        return "[plan-auditor] PASS — all plan steps verified."
-    pending = report.get("pending_steps", [])
-    lines = ["[plan-auditor] %s — completion BLOCKED." % outcome]
+        return "[plan-auditor] PASS — sealed current plan has fresh deterministic full-audit evidence."
+
+    gate = report.get("gate", {}) if isinstance(report, dict) else {}
+    notes = gate.get("notes", []) if isinstance(gate, dict) else []
+    pending = gate.get("pending_steps", []) if isinstance(gate, dict) else []
+    fresh = report.get("fresh_audit", {}) if isinstance(report, dict) else {}
+    seal = report.get("seal", {}) if isinstance(report, dict) else {}
+
+    lines = [f"[plan-auditor] {outcome} — completion BLOCKED."]
     if pending:
         lines.append("  Pending/unverified steps: %s" % pending)
-    if report.get("notes"):
-        for n in report["notes"]:
-            lines.append("  - %s" % n)
-    lines.append("  Run: python audit/plan-auditor/scripts/audit_check.py run .")
+    if seal and not seal.get("ok", False):
+        lines.append("  Seal: invalid/missing — %s" % seal.get("violations", []))
+    if fresh and not fresh.get("valid", False):
+        lines.append("  Fresh audit: %s" % fresh.get("reason", "missing"))
+    for note in notes:
+        lines.append("  - %s" % note)
+    lines.append("  Run final gate: plan-auditor plan verify . && plan-auditor audit .")
     return "\n".join(lines)
 
 
@@ -81,29 +61,25 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dir", default=".", nargs="?", help="workspace directory")
     ap.add_argument("--format", choices=["text", "json"], default="text")
-    ap.add_argument("--warn-file", help="also write verdict to this file (Codex notify)")
+    ap.add_argument("--warn-file", help="also write verdict to this file")
     args = ap.parse_args()
 
     outcome, report = run_gate(os.path.abspath(args.dir))
-
-    if args.format == "json":
-        out = json.dumps({"outcome": outcome, "report": report}, ensure_ascii=False)
-    else:
-        out = format_text(outcome, report, args.dir)
-
+    payload = {"outcome": outcome, "report": report}
+    out = json.dumps(payload, ensure_ascii=False) if args.format == "json" else format_text(outcome, report, args.dir)
     print(out)
 
     if args.warn_file:
         try:
             Path(args.warn_file).parent.mkdir(parents=True, exist_ok=True)
             Path(args.warn_file).write_text(
-                json.dumps({"outcome": outcome, "report": report}, ensure_ascii=False, indent=2),
+                json.dumps(payload, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
         except OSError:
             pass
 
-    if outcome == "PASS":
+    if outcome in {"PASS", "NO_PLAN"}:
         return 0
     if outcome == "UNKNOWN":
         return 3
