@@ -1,24 +1,22 @@
 """Integrated supervisor assessment pipeline.
 
-This module is the wiring layer: it combines the previously independent L0-L14
-components into one fail-closed assessment. It does not execute implementation
-commands itself; L10 remains ``scripts.audit_check`` and the CLI/hook decides
-when to request a fresh full audit.
+This module wires the previously independent L0-L14 components into one
+fail-closed assessment. L10 remains ``scripts.audit_check``; freshness is
+proven by deterministic plan/workspace fingerprints written by a full audit,
+not by filesystem mtimes.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from scripts import audit_check as core
 
 from .adversarial import AdversarialReport, run_adversarial_review
 from .agents import MultiAgentRegistry
-from .config import Config, Profile, load_config
+from .config import Profile, load_config
 from .events import EventBus
 from .gate import CompletionGate
 from .goals import Beliefs, Desires, GoalModel, Intentions
@@ -86,80 +84,82 @@ def _read_evidence_records(root: Path) -> List[Dict[str, Any]]:
     return records
 
 
-def _parse_ts(value: Any) -> Optional[float]:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
-        return parsed.timestamp()
-    except ValueError:
-        return None
-
-
-def _workspace_newer_than(root: Path, when: float) -> Optional[str]:
-    """Return the first product/source file modified after the audit."""
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in {".git", ".plan-auditor", "__pycache__", ".pytest_cache"}]
-        for name in filenames:
-            path = Path(dirpath) / name
-            try:
-                # Small tolerance for coarse filesystem timestamp resolution.
-                if path.stat().st_mtime > when + 0.05:
-                    return str(path.relative_to(root))
-            except OSError:
-                continue
-    return None
-
-
 def _checks_match(step: Dict[str, Any], record: Dict[str, Any]) -> bool:
-    expected = [core.norm_check(c) for c in step.get("verify", []) if isinstance(c, dict)]
+    expected = [core.norm_check(check) for check in step.get("verify", []) if isinstance(check, dict)]
     results = record.get("results", [])
     if len(results) != len(expected):
         return False
-    actual = [r.get("check") for r in results if isinstance(r, dict)]
-    return actual == expected and all(r.get("passed") is True for r in results if isinstance(r, dict))
+    actual = [result.get("check") for result in results if isinstance(result, dict)]
+    return actual == expected and all(
+        result.get("passed") is True for result in results if isinstance(result, dict)
+    )
 
 
 def fresh_full_audit_proof(root: str | Path, plan: Dict[str, Any]) -> FreshAuditProof:
-    """Prove that the current plan contract had a complete fresh L10 audit.
+    """Prove the current plan/workspace exactly matches a completed L10 audit.
 
-    A mere ``status=verified`` is insufficient. The last N audit records must
-    correspond exactly to every current step/check and no workspace source file
-    may have changed after the audit records were written.
+    ``status=verified`` is never sufficient. A valid proof requires:
+    - the active evidence chain to verify,
+    - a final ``audit_complete`` marker,
+    - exact plan-contract fingerprint equality,
+    - exact workspace-content fingerprint equality,
+    - matching successful per-step audit records immediately preceding the
+      latest completion marker.
     """
     root_path = Path(root).resolve()
     chain_ok, _count, problem = core.verify_chain(str(root_path))
     if not chain_ok:
         return FreshAuditProof(False, f"active evidence chain invalid: {problem}")
 
-    steps = [s for s in plan.get("steps", []) if isinstance(s, dict)]
+    steps = [step for step in plan.get("steps", []) if isinstance(step, dict)]
     if not steps:
         return FreshAuditProof(False, "plan has no steps")
-    records = [
-        r for r in _read_evidence_records(root_path)
-        if r.get("mode") == "audit" and r.get("plan", "default") == "default"
+
+    records = _read_evidence_records(root_path)
+    marker_index: Optional[int] = None
+    marker: Optional[Dict[str, Any]] = None
+    for index in range(len(records) - 1, -1, -1):
+        record = records[index]
+        if record.get("mode") == "audit_complete" and record.get("plan", "default") == "default":
+            marker_index = index
+            marker = record
+            break
+    if marker is None or marker_index is None:
+        return FreshAuditProof(False, "no complete full-audit fingerprint evidence")
+    if marker.get("status") != "verified":
+        return FreshAuditProof(False, "latest full audit did not pass")
+
+    current_plan_fp = core.plan_contract_fingerprint(plan)
+    if marker.get("plan_fingerprint") != current_plan_fp:
+        return FreshAuditProof(False, "plan contract changed after audit")
+
+    current_workspace_fp = core.workspace_fingerprint(str(root_path))
+    if marker.get("workspace_fingerprint") != current_workspace_fp:
+        return FreshAuditProof(False, "workspace content changed after audit")
+
+    audit_records = [
+        record for record in records[:marker_index]
+        if record.get("mode") == "audit" and record.get("plan", "default") == "default"
     ]
-    if len(records) < len(steps):
-        return FreshAuditProof(False, "no complete full-audit evidence")
+    if len(audit_records) < len(steps):
+        return FreshAuditProof(False, "full-audit marker lacks complete step evidence")
+    candidate = audit_records[-len(steps):]
+    expected_ids = [step.get("id") for step in steps]
+    if [record.get("step") for record in candidate] != expected_ids:
+        return FreshAuditProof(False, "latest audit evidence does not cover current step sequence")
+    for step, record in zip(steps, candidate):
+        if record.get("status") != "verified" or not _checks_match(step, record):
+            return FreshAuditProof(
+                False,
+                f"audit evidence does not match current checks for step {step.get('id')}",
+            )
 
-    candidate = records[-len(steps):]
-    expected_ids = [s.get("id") for s in steps]
-    if [r.get("step") for r in candidate] != expected_ids:
-        return FreshAuditProof(False, "latest audit evidence does not cover the current step sequence")
-    for step, rec in zip(steps, candidate):
-        if rec.get("status") != "verified" or not _checks_match(step, rec):
-            return FreshAuditProof(False, f"audit evidence does not match current checks for step {step.get('id')}")
-
-    audited_ts = _parse_ts(candidate[-1].get("ts"))
-    if audited_ts is None:
-        return FreshAuditProof(False, "latest audit timestamp is invalid")
-    changed = _workspace_newer_than(root_path, audited_ts)
-    if changed:
-        return FreshAuditProof(False, f"workspace changed after audit: {changed}")
-    return FreshAuditProof(True, "current plan has matching fresh full-audit evidence",
-                           str(candidate[-1].get("ts")), len(steps))
+    return FreshAuditProof(
+        True,
+        "current plan and workspace match deterministic full-audit fingerprints",
+        str(marker.get("ts")),
+        len(steps),
+    )
 
 
 def _tail_logs(root: Path, limit: int = 200) -> List[str]:
@@ -178,8 +178,8 @@ def _tail_logs(root: Path, limit: int = 200) -> List[str]:
 def _agent_conflicts(registry: MultiAgentRegistry) -> List[Dict[str, str]]:
     active = registry.active_agents()
     conflicts: List[Dict[str, str]] = []
-    for i, left in enumerate(active):
-        for right in active[i + 1:]:
+    for index, left in enumerate(active):
+        for right in active[index + 1:]:
             for path in sorted(left.owned_files & right.owned_files):
                 conflicts.append({"file": path, "owner": left.agent_id, "accessor": right.agent_id})
     return conflicts
@@ -187,29 +187,31 @@ def _agent_conflicts(registry: MultiAgentRegistry) -> List[Dict[str, str]]:
 
 def _lifecycle_for(plan_ok: bool, seal_ok: bool, pending: List[int], proof: FreshAuditProof,
                    outcome: str) -> TaskLifecycle:
-    lc = TaskLifecycle(task_id="default")
-    for state in (States.DISCOVERED, States.ANALYZING, States.REQUIREMENTS_READY,
-                  States.PLAN_PROPOSED, States.PLAN_REVIEW):
-        lc.transition(state, operator="supervisor")
+    lifecycle = TaskLifecycle(task_id="default")
+    for state in (
+        States.DISCOVERED, States.ANALYZING, States.REQUIREMENTS_READY,
+        States.PLAN_PROPOSED, States.PLAN_REVIEW,
+    ):
+        lifecycle.transition(state, operator="supervisor")
     if not plan_ok:
-        lc.transition(States.REVISION_REQUIRED, operator="plan_verifier")
-        return lc
-    lc.transition(States.PLAN_APPROVED, operator="plan_verifier")
+        lifecycle.transition(States.REVISION_REQUIRED, operator="plan_verifier")
+        return lifecycle
+    lifecycle.transition(States.PLAN_APPROVED, operator="plan_verifier")
     if not seal_ok:
-        return lc
-    lc.transition(States.SEALED, operator="sealing")
-    lc.transition(States.IMPLEMENTING, operator="workspace")
+        return lifecycle
+    lifecycle.transition(States.SEALED, operator="sealing")
+    lifecycle.transition(States.IMPLEMENTING, operator="workspace")
     if pending:
-        return lc
-    lc.transition(States.VERIFYING, operator="deterministic_core")
-    lc.transition(States.FINAL_AUDIT, operator="deterministic_core")
+        return lifecycle
+    lifecycle.transition(States.VERIFYING, operator="deterministic_core")
+    lifecycle.transition(States.FINAL_AUDIT, operator="deterministic_core")
     if proof.valid and outcome == "PASS":
-        lc.transition(States.PASSED, operator="completion_gate")
+        lifecycle.transition(States.PASSED, operator="completion_gate")
     elif outcome == "UNKNOWN":
-        lc.transition(States.UNKNOWN, operator="completion_gate")
+        lifecycle.transition(States.UNKNOWN, operator="completion_gate")
     elif outcome == "FAIL":
-        lc.transition(States.FAILED, operator="completion_gate")
-    return lc
+        lifecycle.transition(States.FAILED, operator="completion_gate")
+    return lifecycle
 
 
 def evaluate_workspace(workspace: str, profile: str | None = None,
@@ -261,8 +263,8 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
         seal_ok = seal_check.ok
 
     proof = fresh_full_audit_proof(root, plan)
-    pending = [s.get("id") for s in plan.get("steps", []) if s.get("status") != "verified"]
-    pending = [int(i) for i in pending if isinstance(i, int)]
+    pending = [step.get("id") for step in plan.get("steps", []) if step.get("status") != "verified"]
+    pending = [int(value) for value in pending if isinstance(value, int)]
 
     registry = MultiAgentRegistry(str(root), owner_timeout=cfg.owner_timeout_sec)
     released = registry.release_stale_ownership()
@@ -277,13 +279,12 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
         )
 
     engine = default_engine()
-    # LIGHT intentionally omits L8; remove the default seal rule in that profile.
     if cfg.profile == Profile.LIGHT:
-        engine.rules = [r for r in engine.rules if r.rule_id != "SEAL_INTACT"]
+        engine.rules = [rule for rule in engine.rules if rule.rule_id != "SEAL_INTACT"]
     for directory in (root / cfg.policies_dir, root / ".plan-auditor" / "policies"):
         engine.extend(load_policy_rules_from_dir(str(directory)))
 
-    ctx: Dict[str, Any] = {
+    context: Dict[str, Any] = {
         "plan_steps": plan.get("steps", []),
         "evidence_valid": evidence_valid,
         "evidence_count": evidence_count,
@@ -301,7 +302,7 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
     report = gate.evaluate(
         deterministic_passed=deterministic_passed,
         pending_steps=pending,
-        workspace_context=ctx,
+        workspace_context=context,
         seal_check=seal_check,
         adversarial_findings=adversarial.findings,
     )
@@ -309,14 +310,14 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
     goals = GoalModel(
         beliefs=Beliefs(
             repository_state=workspace_state.to_dict(),
-            requirements=[r.__dict__ for r in requirements],
-            failures=[{"detail": n} for n in report.notes],
+            requirements=[requirement.__dict__ for requirement in requirements],
+            failures=[{"detail": note} for note in report.notes],
             agent_state={"active": len(registry.active_agents()), "conflicts": conflicts},
             tool_availability=workspace_state.available_tools,
         ),
         desires=Desires(user_goals=[str(plan.get("task", ""))]),
         intentions=Intentions(
-            verification_steps=[{"step": i} for i in pending],
+            verification_steps=[{"step": step_id} for step_id in pending],
             active_strategy="recovery" if report.outcome == "FAIL" else "exhaustive",
         ),
     )
@@ -329,14 +330,14 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
         "mode": cfg.mode,
         "active_layers": cfg.active_layers(),
         "schema_errors": schema_errors,
-        "requirements": [r.__dict__ for r in requirements],
+        "requirements": [requirement.__dict__ for requirement in requirements],
         "plan": {
             "verdict": plan_analysis.verdict,
             "rationale": plan_analysis.rationale,
             "weakest_verification": plan_analysis.weakest_verification,
         },
         "workspace_state": workspace_state.to_dict(),
-        "events": [repr(e) for e in events],
+        "events": [repr(event) for event in events],
         "seal": {
             "present": seal is not None,
             "ok": seal_ok,
@@ -352,14 +353,18 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
         "adversarial": {
             "used_llm": adversarial.used_llm,
             "findings": [
-                {"id": f.check_id, "severity": f.severity, "description": f.description,
-                 "suggested_check": f.suggested_check}
-                for f in adversarial.findings
+                {
+                    "id": finding.check_id,
+                    "severity": finding.severity,
+                    "description": finding.description,
+                    "suggested_check": finding.suggested_check,
+                }
+                for finding in adversarial.findings
             ],
             "proposed_checks": adversarial.proposed_checks,
         },
         "agents": {
-            "active": [a.to_dict() for a in registry.active_agents()],
+            "active": [agent.to_dict() for agent in registry.active_agents()],
             "released_stale": released,
             "conflicts": conflicts,
             "registry_valid": registry_ok,
