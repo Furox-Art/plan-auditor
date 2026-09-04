@@ -161,6 +161,48 @@ the install.
 | Cursor | `~/.cursor/skills/plan-auditor/` | `/plan-auditor` |
 | Grok Build | `~/.grok/skills/plan-auditor/` | auto-loads by description |
 
+## How it auto-activates (no extra setup)
+
+This works like **any other skill the agent already has**. Two activation paths:
+
+### 1. Automatic via description matching (all tools)
+
+Every tool reads `SKILL.md`'s `description` field. When the user's request
+matches it, the skill loads automatically — the agent never needs to be
+told to use it. The current description triggers on phrases like
+"build X", "implement Y", "add a feature", "plan it",
+"don't leave it half-done", "did you actually do it".
+
+Example flow:
+
+```
+You: "Build the login form with tests"
+   │
+   ▼ (Claude Code / Codex / Cursor / Grok / OpenCode sees the request
+     matches the skill's description → loads ~/.../skills/plan-auditor/SKILL.md)
+   │
+   ▼ (Agent follows SKILL.md)
+   │  1. Writes .plan-auditor/plan.json with concrete verify checks
+   │  2. Implements each step
+   │  3. After each step runs: python .../audit_check.py run <dir>
+   │  4. Only finishes when: python .../audit_check.py audit <dir> exits 0
+   │
+   ▼
+Agent: "audit PASSED — all steps verified"   ← not just "done"
+```
+
+No `/plan-auditor` invocation needed — it self-loads. You can also call it
+explicitly (`/plan-auditor "build the login"`) for a one-shot task.
+
+### 2. Platform hook (Command Code — unskippable)
+
+Command Code additionally wires `scripts/stop_gate.py` as a `Stop` hook.
+At every turn-end, if any active plan has unverified steps, the turn is
+**blocked** and the model is told to run the auditor. The agent cannot
+finish, skip the audit, or relax a failed check. See
+[`docs/integrations.md`](docs/integrations.md) for the one-block
+`settings.json`.
+
 ---
 
 ## CLI (Supervisor Mode)
