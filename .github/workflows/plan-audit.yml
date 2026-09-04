@@ -13,23 +13,44 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install test dependency
-        run: python -m pip install pytest
+      - name: Install package and test dependency
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pytest
       - name: Validate plan schema
         run: python scripts/audit_check.py validate .
       - name: Independent audit (gate)
         run: python scripts/audit_check.py audit .
-      - name: Supervisor self-audit (layers L0-L14 + CLI)
+      - name: Supervisor self-audit (layers + CLI)
         run: python -m pytest tests/ -q
+      - name: Installed CLI smoke test
+        run: |
+          plan-auditor --help
+          plan-auditor doctor .
+          plan-auditor task list .
+          plan-auditor agents list .
 
-  supervisor-status:
+  supervisor-runtime:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Supervisor doctor
-        run: python -m supervisor.cli doctor .
+      - name: Install package
+        run: python -m pip install .
+      - name: Start real background supervisor
+        run: plan-auditor supervisor start --profile standard --mode serial .
+      - name: Require running status
+        run: plan-auditor supervisor status .
+      - name: Stop supervisor cleanly
+        run: plan-auditor supervisor stop .
+      - name: Require stopped status
+        shell: bash
+        run: |
+          if plan-auditor supervisor status .; then
+            echo "ERROR: supervisor still reports running after stop"
+            exit 1
+          fi
       - name: Evidence anchor check
-        run: python -m supervisor.cli evidence verify .
+        run: plan-auditor evidence verify .
