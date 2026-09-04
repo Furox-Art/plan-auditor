@@ -2,97 +2,228 @@
 
 [![plan-audit gate](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml/badge.svg)](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml)
 
-**A strict plan + independent auditor workflow as an [Agent Skill](https://agentskills.io).**
+**An independent, multi-layered verification supervisor for AI coding agents.**
 
-AI coding agents routinely leave work half-done or claim "done" when it isn't. Root cause: no explicit, machine-checkable plan, and nobody verifying the claims. **plan-auditor** fixes both:
+AI coding agents routinely leave work half-done or claim "done" when it
+isn't. Root cause: no explicit, machine-checkable plan, and nobody
+verifying the claims. `plan-auditor` fixes both — and goes further: it
+runs **independently** of the main AI, seals plan criteria against
+weakening, watches execution in real time, and refuses to count
+unverified work as done. It supports **parallel / concurrent agents**.
 
-1. **Planner** — turns a task into a plan file where every step has machine-checkable done criteria (commands, exit codes, file existence, regex, pytest).
-2. **Independent auditor** — a deterministic Python script that tests the agent's work with real command output. It never trusts the agent's own report.
+---
 
-## The strictness rules
+## Two modes
 
-- **No evidence = not done.** A step is `verified` only when the auditor script passes all of its checks.
-- **The agent is a judge that can only downgrade.** If the agent suspects a step despite passing checks, it must *add a stricter check and re-run* — it can never relax a failed check into a pass.
-- **Unverifiable = failed.**
-- **Append-only evidence log** with a SHA-256 hash chain — editing history is detected (`exit 2`).
-- **Final audit gate.** The task is finished only when `audit` re-verifies *every* step in fresh shells and exits 0.
+| Mode | What it is | How you use it |
+|---|---|---|
+| **Skill Mode** | The original Agent Skill (unchanged v1.1 behavior). Copy the folder; the agent follows `SKILL.md`. | Copy to your tool's skills directory. |
+| **Supervisor Mode** | The new layered verification daemon. Independent process, 14 layers, parallel-agent aware. | `plan-auditor supervisor start --profile standard` then `plan-auditor audit <dir>`. |
 
-## What's in the box
+---
+
+## Architecture
 
 ```
-SKILL.md                  # agent-facing workflow (the skill)
-references/plan-format.md # plan.json schema
-scripts/audit_check.py    # the independent auditor (stdlib-only, no deps)
-scripts/stop_gate.py      # optional Stop-hook gate for Command Code
-tests/                    # unit test suite for the auditor itself
-examples/fib/             # worked example: fibonacci task
+User Task
+   │
+   ▼
+Main AI Agent ──────────────► proposes plan
+   │                              │
+   │                              ▼
+   │                 ┌──────────────────────────────┐
+   └───────────────► │  Independent Supervisor       │
+                     │  (separate process / daemon)  │
+                     └──────────────┬───────────────┘
+                                    │
+              ┌─────────────────────┼──────────────────────────┐
+              ▼                     ▼                          ▼
+     L0 Event Layer        L1 Requirements           L5 STRIPS-like
+     (pattern detect)      (structured reqs)         Plan Verifier
+              │                     │                          │
+              ▼                     ▼                          ▼
+     L2 World Model        L3 Policy Engine          L9 Watchdog
+     (workspace state)     (deterministic rules)     (runtime observe)
+              │                     │                          │
+              └─────────────────────┼──────────────────────────┘
+                                    ▼
+                     L10 Deterministic Core (audit_check.py)
+                                    │
+                                    ▼
+                     L8 Sealing + Monotonic Verification
+                                    │
+                                    ▼
+                     L13 Completion Gate ──► PASS / FAIL / UNKNOWN
+                                    │
+                                    ▼
+                     L12 Adversarial AI (optional semantic review)
 ```
 
-`audit_check.py` uses only the Python standard library — no pip installs. The repo **dogfoods**: its own `.plan-auditor/plan.json` verifies the test suite on every push via the `plan-audit gate` workflow.
+See [`docs/architecture.md`](docs/architecture.md) for the full data flow
+and layer responsibilities.
+
+---
+
+## Layers
+
+| Layer | Responsibility | LLM? |
+|---|---|---|
+| **L0** Event / pattern detection — ELIZA-like. Detects "done", config changes, repeated failures, security signals. Only triggers; never judges. | no |
+| **L1** Requirement interpretation — structured requirements with acceptance criteria and ambiguity flags. | optional |
+| **L2** Workspace / world model — SHRDLU-inspired structured repo state (git, files, tools, agents). | no |
+| **L3** Policy engine — MYCIN/expert-system IF/THEN rules, fail-closed, testable. | no |
+| **L4** BDI goal model — Beliefs/Desires/Intention state container driving audit order. | no |
+| **L5** STRIPS-like plan verifier — preconditions/effects/coverage/contradiction analysis. | optional |
+| **L6** Soar-like lifecycle — task state machine (NEW → … → PASSED/FAILED/UNKNOWN). | no |
+| **L7** Subsumption priority — lower safety layers **override** higher AI judgment. | no |
+| **L8** Plan sealing + monotonic verification — criteria can only tighten, never weaken. | no |
+| **L9** Execution watchdog — fs/git/build/test monitoring, best-effort per platform. | no |
+| **L10** Deterministic core — real checks via fresh subprocess (pytest, build, lint, exit codes). **Only** source of `verified`. | no |
+| **L11** Evidence / integrity — cross-archive anchored, tamper-evident chain. | no |
+| **L12** Adversarial AI — optional second-pass semantic review; proposes new deterministic checks only. | optional |
+| **L13** Completion gate — **only** component that emits PASS/FAIL/UNKNOWN. | no |
+| **L14** Multi-agent orchestrator — parallel agents, file ownership, conflict detection, locking. | no |
+
+### Subsumption priority (authoritative)
+
+```
+LEVEL 0  process / system safety        (supervisor alive, no deadlocks)
+LEVEL 1  plan integrity                 (seal unchanged, monotonic)
+LEVEL 2  deterministic verification     (L10 core, real checks)
+LEVEL 3  security policy               (L3 rules: secrets, injection)
+LEVEL 4  requirement coverage           (all reqs checked)
+LEVEL 5  AI semantic / adversarial judgment (L12)
+```
+
+A failure at level **N** cannot be overridden by a PASS from any level
+**> N**.
+
+---
+
+## Why independent verification?
+
+An LLM auditing its own work with prose can hallucinate a pass. The
+evidence engine here is **deterministic code**: subprocess exit codes,
+filesystem facts, regex matches, pytest results. The main AI's judgment
+can only *tighten* the gate, never loosen it.
+
+---
+
+## Parallel / multi-agent support
+
+The supervisor is **not** single-agent. Multiple agents can work on the
+same workspace concurrently:
+
+- Each plan step declares file ownership (`owns`, inferred from `verify`
+  paths if absent).
+- Overlap -> conflict warning (or block in STRICT profile).
+- Heartbeats track liveness; stale ownership auto-releases.
+- Lock files + append-only hashed registry coordinate agents.
+
+Modes: `serial` | `parallel-warn` | `parallel-strict`.
+
+---
+
+## Local-first / hardware-adaptive
+
+| Tier | What runs | Requirements |
+|---|---|---|
+| TIER 1 — NO LLM | L0-L11, L13, L14 fully | any modern box, no GPU |
+| TIER 2 — SMALL LOCAL | + L12 adversarial (1B-4B quantized) | ~4-8 GB RAM |
+| TIER 3 — STRONG LOCAL | + L1 + L5 (7B-14B+) | capable workstation |
+| TIER 4 — REMOTE | user-provided API model | internet |
+
+Core verification **never** requires an LLM. The supervisor is fully
+useful in TIER 1.
+
+## Profiles
+
+| Profile | Use case |
+|---|---|
+| LIGHT | small tasks, low overhead |
+| STANDARD | normal repo/coding work |
+| STRICT | bounty / production / security-sensitive |
+
+---
 
 ## Install
 
-One skill package, every agent: copy the `plan-auditor/` folder into the skills directory of whichever tool you use. No config, no build — the folder is the install.
+One package, every agent. Copy the `plan-auditor/` folder into the skills
+directory of whichever tool you use. No config, no build — the folder is
+the install.
 
-| Tool | User-level path (every project) | Project-level path | Invoke |
-|---|---|---|---|
-| **Command Code** | `~/.commandcode/skills/plan-auditor/` | `.commandcode/skills/plan-auditor/` | `/plan-auditor <task>` |
-| **Claude Code** | `~/.claude/skills/plan-auditor/` | `.claude/skills/plan-auditor/` | `/plan-auditor <task>` |
-| **Codex CLI** | `~/.codex/skills/plan-auditor/` | `.codex/skills/plan-auditor/` | `$plan-auditor <task>` (auto-loads by description, `/skills` to verify) |
-| **OpenCode** | `~/.config/opencode/skills/plan-auditor/` | `.opencode/skills/plan-auditor/` | `/plan-auditor <task>` (auto-loads by description) |
-| **Cursor** | `~/.cursor/skills/plan-auditor/` (or `.agents/skills/`) | `.cursor/skills/plan-auditor/` | `/plan-auditor` (Cursor also reads `.claude`/`.codex` skill dirs) |
-| **Grok Build** | `~/.grok/skills/plan-auditor/` | `.grok/skills/plan-auditor/` | auto-loads by description (also reads Claude/Cursor dirs) |
-
-The same `SKILL.md` works everywhere — it follows the [Agent Skills](https://agentskills.io) standard. See [`docs/integrations.md`](docs/integrations.md) for optional extras (e.g. an unskippable Stop-hook gate for Command Code).
-
-## Usage
-
-Invoke the skill with a task (`/plan-auditor "build the login form"`). The agent then:
-
-1. Writes `<project>/.plan-auditor/plan.json` — steps with concrete `verify` checks.
-2. Works the steps one at a time, running the auditor after each:
-
-   ```bash
-   python <skill-dir>/scripts/audit_check.py run <project-dir>
-   ```
-
-3. Finishes only after a full re-verification:
-
-   ```bash
-   python <skill-dir>/scripts/audit_check.py audit <project-dir>
-   ```
-
-Extras (v1.1):
-- **Hard attempt cap** — a step that failed 3 times is refused on the 4th `run`; the agent must escalate to the user (or pass `--force` explicitly).
-- **Multi-plan** — `--plan <name>` runs parallel plans from `.plan-auditor/plans/<name>.json`.
-- **Snapshot / rollback** — `snapshot` archives the plan's `snapshot` file list (or `git ls-files`); `rollback` restores the latest snapshot.
-
-### Auditor modes & exit codes
-
-| Mode | What it does | Exit |
+| Tool | User-level path | Invoke |
 |---|---|---|
-| `validate <dir>` | validate plan.json schema | 0 / 1 |
-| `run <dir> [ids...]` | audit pending (or given) steps, append evidence | 0 if all passed, 1 otherwise |
-| `audit <dir>` | re-verify **all** steps in fresh shells (final gate) | 0 / 1 |
-| `status <dir>` | print the step table without running anything | 0 / 2 |
-| any mode | evidence hash chain broken (tampering) | **2** |
+| Command Code | `~/.commandcode/skills/plan-auditor/` | `/plan-auditor` |
+| Claude Code | `~/.claude/skills/plan-auditor/` | `/plan-auditor` |
+| Codex CLI | `~/.codex/skills/plan-auditor/` | `$plan-auditor` |
+| OpenCode | `~/.config/opencode/skills/plan-auditor/` | `/plan-auditor` |
+| Cursor | `~/.cursor/skills/plan-auditor/` | `/plan-auditor` |
+| Grok Build | `~/.grok/skills/plan-auditor/` | auto-loads by description |
 
-### Check types
+---
 
-| Type | Fields | Meaning |
-|---|---|---|
-| `run` | `cmd`, `expect_exit` (default 0), `output_regex` (opt) | run in a fresh shell; exit code (and optional output regex) must match |
-| `file_exists` | `path` | file must exist |
-| `regex` | `path`, `pattern` | file content must match the regex |
-| `pytest` | `args` (opt) | `python -m pytest <args>` must exit 0 |
+## CLI (Supervisor Mode)
 
-## Why a script and not just "an auditor prompt"?
+```
+plan-auditor supervisor start  [--profile LIGHT|STANDARD|STRICT]
+                               [--mode serial|parallel-warn|parallel-strict]
+plan-auditor supervisor stop
+plan-auditor supervisor status
+plan-auditor task list | inspect <id>
+plan-auditor plan verify <dir> | inspect <dir>
+plan-auditor audit <dir>
+plan-auditor evidence verify <dir>
+plan-auditor doctor <dir>
+plan-auditor agents list
+```
 
-Because an LLM auditing its own work with prose can hallucinate a pass. The evidence engine here is deterministic code: subprocess exit codes, file system facts, regex matches, pytest results. The LLM's judgment can only *tighten* the gate, never loosen it.
+The existing `audit_check.py` subcommands (`validate`, `run`, `audit`,
+`status`, `snapshot`, `rollback`) remain for Skill Mode.
 
-## Example
+---
 
-See [`examples/fib/`](examples/fib/) — a two-step plan (write `fib`, pass pytest) with the full negative/partial/positive test flow.
+## Threat model
+
+See [`docs/threat-model.md`](docs/threat-model.md). Key points:
+
+- **Main AI is untrusted.** The supervisor verifies independently.
+- **Same-user limitation.** The supervisor cannot kernel-isolate from a
+  malicious same-user agent. This is a documented limitation, not a
+  guarantee. Use OS-level isolation for high-assurance cases.
+- **Fail-closed.** Anything unknown resolves to FAIL or UNKNOWN, never
+  PASS.
+- **Honest language.** The project uses "tamper-evident",
+  "fail-closed where supported", and "best-effort isolation" — never
+  "unbreakable" or "immutable".
+
+---
+
+## Guarantees
+
+| Claim | Level |
+|---|---|
+| Deterministic check -> real pass/fail | guaranteed |
+| Evidence tamper *detection* | tamper-evident (best-effort protection) |
+| Plan criteria weakening blocked (same run) | guaranteed |
+| Completion claim blocked (platform hook present) | guaranteed |
+| Completion claim blocked (no platform hook) | supervisor state BLOCKED (best-effort) |
+| Malicious same-user agent fully contained | **not guaranteed** |
+
+---
+
+## What's new in v2.0
+
+- 14-layer supervisor architecture (L0-L14).
+- Subsumption priority model.
+- Plan sealing + monotonic verification.
+- Multi-agent parallel support.
+- Profiles (LIGHT/STANDARD/STRICT) and hardware tiers (TIER 1-4).
+- Cross-archive evidence anchoring.
+- 117 automated tests including 30 failure-injection / security scenarios.
+- Full backward compatibility with Skill Mode.
+
+---
 
 ## License
 

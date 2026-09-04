@@ -19,3 +19,17 @@ jobs:
         run: python scripts/audit_check.py validate .
       - name: Independent audit (gate)
         run: python scripts/audit_check.py audit .
+      - name: Supervisor self-audit (layers L0-L14 + CLI)
+        run: python -m pytest tests/ -q
+
+  supervisor-status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Supervisor doctor
+        run: python -m supervisor.cli doctor .
+      - name: Evidence anchor check
+        run: python -m supervisor.cli evidence verify .
