@@ -1,17 +1,17 @@
-"""L2 — SHRDLU-inspired workspace / world model.
+"""L2 — side-effect-free workspace / world model.
 
-Maintains a structured, queryable view of the repository / task
-environment. Read-mostly snapshot model; it observes but does not
-decide.
+Captures repository, filesystem, language and tool state without mutating the
+workspace being observed.
 """
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
-import json
-import os
-import subprocess
 
 
 @dataclass
@@ -54,11 +54,12 @@ class WorkspaceState:
 
 def _run(cmd: str, cwd: str, timeout: int = 30) -> Optional[str]:
     try:
-        p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True,
-                           text=True, timeout=timeout)
-        if p.returncode != 0:
+        process = subprocess.run(
+            cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+        )
+        if process.returncode != 0:
             return None
-        return p.stdout.strip()
+        return process.stdout.strip()
     except Exception:
         return None
 
@@ -71,67 +72,74 @@ def _detect_language(root: str) -> Optional[str]:
         "go": ["go.mod"],
         "java": ["pom.xml", "build.gradle"],
     }
-    files = {f.name.lower() for f in Path(root).glob("*") if f.is_file()}
-    for lang, names in markers.items():
-        if any(n.lower() in files for n in names):
-            return lang
+    files = {path.name.lower() for path in Path(root).glob("*") if path.is_file()}
+    for language, names in markers.items():
+        if any(name.lower() in files for name in names):
+            return language
     return None
 
 
-def _detect_tools(root: str) -> Dict[str, bool]:
-    tools = ["git", "python", "python3", "node", "npm", "cargo", "go",
-             "pytest", "make", "docker", "gcc", "clang"]
-    out: Dict[str, bool] = {}
-    for t in tools:
-        res = subprocess.run(
-            "where %s 2>nul" % t, shell=True, capture_output=True,
-            text=True, cwd=root)
-        if res.returncode != 0 or not res.stdout.strip():
-            res = subprocess.run(
-                "command -v %s 2>/dev/null" % t, shell=True,
-                capture_output=True, text=True, cwd=root)
-        out[t] = bool(res.returncode == 0 and res.stdout.strip())
-    return out
+def _detect_tools(_root: str) -> Dict[str, bool]:
+    """Detect executables without shell redirections or workspace writes."""
+    tools = [
+        "git", "python", "python3", "node", "npm", "cargo", "go",
+        "pytest", "make", "docker", "gcc", "clang",
+    ]
+    return {tool: shutil.which(tool) is not None for tool in tools}
+
+
+def _inventory_files(root: Path) -> Set[str]:
+    ignored = {".git", ".plan-auditor", "__pycache__", ".pytest_cache"}
+    files: Set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name not in ignored]
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            try:
+                files.add(path.relative_to(root).as_posix())
+            except ValueError:
+                continue
+    return files
 
 
 def capture_workspace(root: str) -> WorkspaceState:
-    """Capture a point-in-time snapshot of the workspace."""
+    """Capture a point-in-time, read-only snapshot of the workspace."""
     root_path = Path(root).resolve()
     state = WorkspaceState(repository_root=str(root_path))
 
     git_dir = root_path / ".git"
     if git_dir.exists():
         state.git.is_repo = True
-        state.git.branch = _run("git rev-parse --HEAD", str(root_path))
-        if state.git.branch is None:
-            state.git.branch = _run("git rev-parse --abbrev-ref HEAD", str(root_path))
+        state.git.branch = _run("git rev-parse --abbrev-ref HEAD", str(root_path))
         state.git.head_sha = _run("git rev-parse HEAD", str(root_path))
         status = _run("git status --porcelain", str(root_path)) or ""
-        for line in status.splitlines():
-            line = line.strip()
-            if not line:
+        for raw_line in status.splitlines():
+            if not raw_line:
                 continue
-            code, _, path = line.partition(" ")
+            code = raw_line[:2]
+            path = raw_line[3:].strip() if len(raw_line) > 3 else ""
             if code == "??":
-                state.git.untracked.append(path.strip())
-            else:
-                state.git.dirty_files.append(path.strip())
+                state.git.untracked.append(path)
+            elif path:
+                state.git.dirty_files.append(path)
 
+    state.exists_files = _inventory_files(root_path)
     state.language = _detect_language(str(root_path))
     state.available_tools = _detect_tools(str(root_path))
     return state
 
 
 def diff_workspaces(before: WorkspaceState, after: WorkspaceState) -> Dict:
-    """Structural diff between two workspace snapshots."""
     return {
         "created_files": sorted(after.exists_files - before.exists_files),
         "deleted_files": sorted(before.exists_files - after.exists_files),
         "new_dirty": sorted(set(after.git.dirty_files) - set(before.git.dirty_files)),
         "branch_changed": before.git.branch != after.git.branch,
-        "tools_changed": {k: (before.available_tools.get(k), after.available_tools.get(k))
-                          for k in set(before.available_tools) | set(after.available_tools)
-                          if before.available_tools.get(k) != after.available_tools.get(k)},
+        "tools_changed": {
+            key: (before.available_tools.get(key), after.available_tools.get(key))
+            for key in set(before.available_tools) | set(after.available_tools)
+            if before.available_tools.get(key) != after.available_tools.get(key)
+        },
     }
 
 

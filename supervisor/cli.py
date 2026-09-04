@@ -41,7 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_sub = plan.add_subparsers(dest="action", required=True)
     plan_verify = plan_sub.add_parser("verify")
     plan_verify.add_argument("dir", nargs="?", default=".")
-    plan_verify.add_argument("--reseal", action="store_true", help="explicitly replace a reviewed legacy seal")
+    plan_verify.add_argument("--reseal", action="store_true")
     plan_inspect = plan_sub.add_parser("inspect")
     plan_inspect.add_argument("dir", nargs="?", default=".")
 
@@ -50,12 +50,29 @@ def _build_parser() -> argparse.ArgumentParser:
     evidence_verify = evidence_sub.add_parser("verify")
     evidence_verify.add_argument("dir", nargs="?", default=".")
 
-    agents = sub.add_parser("agents", help="inspect the persisted multi-agent registry")
+    agents = sub.add_parser("agents", help="persistent multi-agent registry")
     agents_sub = agents.add_subparsers(dest="action", required=True)
     agents_list = agents_sub.add_parser("list")
     agents_list.add_argument("dir", nargs="?", default=".")
+    agents_register = agents_sub.add_parser("register")
+    agents_register.add_argument("agent_id")
+    agents_register.add_argument("--task-id", default="default")
+    agents_register.add_argument("--plan-id", default="default")
+    agents_register.add_argument("--pid", type=int)
+    agents_register.add_argument("--dir", default=".")
+    agents_heartbeat = agents_sub.add_parser("heartbeat")
+    agents_heartbeat.add_argument("agent_id")
+    agents_heartbeat.add_argument("--action-text", default="")
+    agents_heartbeat.add_argument("--dir", default=".")
+    agents_claim = agents_sub.add_parser("claim")
+    agents_claim.add_argument("agent_id")
+    agents_claim.add_argument("files", nargs="+")
+    agents_claim.add_argument("--dir", default=".")
+    agents_release = agents_sub.add_parser("release")
+    agents_release.add_argument("agent_id")
+    agents_release.add_argument("--dir", default=".")
 
-    audit = sub.add_parser("audit", help="run the fresh deterministic final gate")
+    audit = sub.add_parser("audit", help="run the integrated final gate")
     audit.add_argument("dir", nargs="?", default=".")
     doctor = sub.add_parser("doctor", help="environment and supervisor capability report")
     doctor.add_argument("dir", nargs="?", default=".")
@@ -194,15 +211,17 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> int:
 
 
 def cmd_supervisor_status(args: argparse.Namespace) -> int:
-    from .daemon import pid_alive, read_state
+    from .daemon import pid_alive, read_assessment, read_state
     root = _root(args.dir)
     state = read_state(root)
     if not state:
-        _json({"state": "stopped", "workspace": str(root), "running": False})
+        _json({"state": "stopped", "workspace": str(root), "running": False,
+               "assessment": read_assessment(root)})
         return 1
     running = state.get("state") == "running" and pid_alive(state.get("pid"))
     state = dict(state)
     state["running"] = running
+    state["assessment"] = read_assessment(root)
     if not running and state.get("state") == "running":
         state["state"] = "stale"
     _json(state)
@@ -210,20 +229,26 @@ def cmd_supervisor_status(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    from .daemon import pid_alive, read_state
+    from .daemon import pid_alive, read_assessment, read_state
+    from .orchestrator import evaluate_workspace
     from .workspace import capture_workspace
     root = _root(args.dir)
     ws = capture_workspace(str(root))
     state = read_state(root)
+    assessment = read_assessment(root) or evaluate_workspace(str(root))
     _json({
         "workspace": ws.to_dict(),
-        "supervisor": {"running": bool(state and state.get("state") == "running" and pid_alive(state.get("pid"))), "state": state},
+        "supervisor": {
+            "running": bool(state and state.get("state") == "running" and pid_alive(state.get("pid"))),
+            "state": state,
+        },
+        "assessment": assessment,
         "deterministic_core": str(_core_script()) if _core_script() else "module:scripts.audit_check",
     })
     return 0
 
 
-def _existing_seal_plan(root: Path) -> tuple[Any, dict[str, Any] | None]:
+def _existing_seal_plan(root: Path):
     from .sealing import load_seal
     seal = load_seal(str(root / ".plan-auditor" / "seal.json"))
     return seal, seal.as_plan() if seal else None
@@ -240,28 +265,32 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
         return 1
     analysis = verify_plan(plan)
     output = {
-        "verdict": analysis.verdict, "rationale": analysis.rationale,
+        "verdict": analysis.verdict,
+        "rationale": analysis.rationale,
         "weakest_verification": analysis.weakest_verification,
-        "steps": [{"id": item.step_id, "behavioral": item.has_behavioral_verification, "risks": item.risks} for item in analysis.step_analyses],
+        "steps": [{"id": s.step_id, "behavioral": s.has_behavioral_verification, "risks": s.risks}
+                  for s in analysis.step_analyses],
     }
     if analysis.verdict != "PASS":
         _json(output)
         return 1
     seal, before = _existing_seal_plan(root)
     if seal and seal.format_version < 2 and not args.reseal:
-        output["seal"] = {"status": "legacy", "error": "legacy seal lacks exact verification contents; review and rerun with --reseal"}
+        output["seal"] = {"status": "legacy", "error": "legacy seal requires --reseal"}
         _json(output)
         return 2
     if seal and before and not args.reseal:
         monotonic = check_monotonic(before, plan)
         if not monotonic.ok:
-            output["seal"] = {"status": "rejected", "violations": monotonic.violations, "improvements": monotonic.improvements}
+            output["seal"] = {"status": "rejected", "violations": monotonic.violations,
+                              "improvements": monotonic.improvements}
             _json(output)
             return 2
     plan_id = str(plan.get("id") or plan.get("task") or "default")
-    new_seal = seal_plan(plan, plan_id=plan_id, sealed_at=_dt.datetime.now(_dt.timezone.utc).isoformat())
+    new_seal = seal_plan(plan, plan_id, _dt.datetime.now(_dt.timezone.utc).isoformat())
     save_seal(new_seal, str(root / ".plan-auditor" / "seal.json"))
-    output["seal"] = {"status": "sealed", "format_version": new_seal.format_version, "criteria_count": new_seal.criteria_count, "plan_hash": new_seal.plan_hash}
+    output["seal"] = {"status": "sealed", "format_version": new_seal.format_version,
+                      "criteria_count": new_seal.criteria_count, "plan_hash": new_seal.plan_hash}
     _json(output)
     return 0
 
@@ -284,8 +313,11 @@ def cmd_evidence_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
+    from .config import load_config
     from .evidence import verify_anchor_chain
+    from .orchestrator import evaluate_workspace
     from .sealing import check_monotonic, load_seal
+
     root = _root(args.dir)
     try:
         plan = _load_plan(root)
@@ -294,10 +326,10 @@ def cmd_audit(args: argparse.Namespace) -> int:
         return 1
     seal = load_seal(str(root / ".plan-auditor" / "seal.json"))
     if not seal:
-        print("ERROR: plan is not sealed; run 'plan-auditor plan verify <dir>' before execution", file=sys.stderr)
+        print("ERROR: plan is not sealed; run 'plan-auditor plan verify <dir>' first", file=sys.stderr)
         return 2
     if seal.format_version < 2:
-        print("ERROR: legacy seal cannot prove exact criteria; review and reseal explicitly", file=sys.stderr)
+        print("ERROR: legacy seal requires explicit reseal", file=sys.stderr)
         return 2
     monotonic = check_monotonic(seal.as_plan(), plan)
     if not monotonic.ok:
@@ -308,14 +340,23 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if not anchors["anchored"]:
         _json({"outcome": "FAIL", "reason": "archive anchor chain broken", **anchors})
         return 2
+
     rc = _forward_core(["audit", str(root)])
     if rc != 0:
         return rc
-    anchors_after = verify_anchor_chain(str(archive_dir))
-    if not anchors_after["anchored"]:
-        _json({"outcome": "FAIL", "reason": "archive anchor chain broken after audit", **anchors_after})
-        return 2
-    _json({"outcome": "PASS", "deterministic_core": "fresh audit PASS", "seal": "unchanged", "archive_chain": "anchored"})
+
+    cfg = load_config(str(root))
+    assessment = evaluate_workspace(str(root), profile=cfg.profile.value, mode=cfg.mode)
+    if assessment.get("outcome") != "PASS":
+        _json(assessment)
+        return 3 if assessment.get("outcome") == "UNKNOWN" else 2
+    _json({
+        "outcome": "PASS",
+        "deterministic_core": "fresh audit PASS",
+        "seal": "unchanged",
+        "archive_chain": "anchored",
+        "gate": assessment.get("gate"),
+    })
     return 0
 
 
@@ -341,7 +382,8 @@ def _task_summary(path: Path) -> dict[str, Any]:
     for step in steps:
         status = str(step.get("status", "pending")) if isinstance(step, dict) else "invalid"
         statuses[status] = statuses.get(status, 0) + 1
-    return {"task_id": str(plan.get("id") or plan.get("task") or path.stem), "file": str(path), "steps": len(steps), "statuses": statuses}
+    return {"task_id": str(plan.get("id") or plan.get("task") or path.stem),
+            "file": str(path), "steps": len(steps), "statuses": statuses}
 
 
 def cmd_task_list(args: argparse.Namespace) -> int:
@@ -364,26 +406,37 @@ def cmd_task_inspect(args: argparse.Namespace) -> int:
     return 1
 
 
-def cmd_agents_list(args: argparse.Namespace) -> int:
+def cmd_agents(args: argparse.Namespace) -> int:
+    from .agents import Agent, MultiAgentRegistry
+    from .config import load_config
     root = _root(args.dir)
-    registry = root / ".plan-auditor" / "agents" / "registry.jsonl"
-    latest: dict[str, dict[str, Any]] = {}
-    if registry.exists():
-        for line in registry.read_text(encoding="utf-8", errors="replace").splitlines():
-            if not line.strip():
-                continue
-            try:
-                envelope = json.loads(line)
-                rec = envelope.get("rec", {})
-                agent = rec.get("agent", {})
-                agent_id = agent.get("agent_id")
-                if agent_id:
-                    latest[str(agent_id)] = {"event": rec.get("event"), "ts": rec.get("ts"), **agent}
-            except (json.JSONDecodeError, AttributeError):
-                continue
-    active = [value for value in latest.values() if value.get("event") != "leave" and value.get("state", "active") != "stale"]
-    _json({"agents": active, "count": len(active), "registry": str(registry)})
-    return 0
+    cfg = load_config(str(root))
+    registry = MultiAgentRegistry(str(root), owner_timeout=cfg.owner_timeout_sec)
+
+    if args.action == "list":
+        _json({"agents": [a.to_dict() for a in registry.active_agents()],
+               "count": len(registry.active_agents()),
+               "registry": str(registry.registry_path),
+               "registry_valid": registry.verify_registry_chain()})
+        return 0
+    if args.action == "register":
+        registry.register(Agent(args.agent_id, args.task_id, args.plan_id, pid=args.pid))
+        _json({"registered": args.agent_id})
+        return 0
+    if args.action == "heartbeat":
+        registry.heartbeat(args.agent_id, action=args.action_text)
+        _json({"heartbeat": args.agent_id})
+        return 0
+    if args.action == "claim":
+        ok, conflicts = registry.claim_files(args.agent_id, set(args.files), mode=cfg.mode)
+        _json({"claimed": ok, "agent": args.agent_id,
+               "conflicts": [c.__dict__ for c in conflicts], "mode": cfg.mode})
+        return 0 if ok else 2
+    if args.action == "release":
+        registry.unregister(args.agent_id)
+        _json({"released": args.agent_id})
+        return 0
+    return 1
 
 
 def _core_script() -> Path | None:
@@ -405,7 +458,8 @@ def main(argv: list[str] | None = None) -> int:
     if rest:
         parser.error("unrecognized arguments: " + " ".join(rest))
     if args.cmd == "supervisor":
-        return {"start": cmd_supervisor_start, "stop": cmd_supervisor_stop, "status": cmd_supervisor_status}[args.action](args)
+        return {"start": cmd_supervisor_start, "stop": cmd_supervisor_stop,
+                "status": cmd_supervisor_status}[args.action](args)
     if args.cmd == "task":
         return {"list": cmd_task_list, "inspect": cmd_task_inspect}[args.action](args)
     if args.cmd == "plan":
@@ -413,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "evidence":
         return cmd_evidence_verify(args)
     if args.cmd == "agents":
-        return cmd_agents_list(args)
+        return cmd_agents(args)
     if args.cmd == "audit":
         return cmd_audit(args)
     if args.cmd == "doctor":

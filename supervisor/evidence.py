@@ -1,9 +1,8 @@
-"""L11 — Evidence hardening.
+"""L11 — evidence integrity and cross-archive anchoring.
 
-Extends the existing evidence chain with cross-archive anchoring so
-rotation does not break verifiability. Each archive file carries the
-hash of the previous archive's tail, forming an anchored chain.
-Tamper-evident (best-effort), not cryptographically immutable.
+Evidence is tamper-evident, not immutable. New-format archives are validated
+internally and across rotations. Legacy JSONL files remain discoverable for
+backward compatibility and are marked as legacy integrity state.
 """
 from __future__ import annotations
 
@@ -12,33 +11,67 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+
+def _canonical(obj: Dict) -> str:
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False)
 
 
 def file_hash(path: str) -> Optional[str]:
     try:
-        data = Path(path).read_bytes()
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
     except OSError:
         return None
-    return hashlib.sha256(data).hexdigest()
 
 
 def tail_hash(path: str) -> Optional[str]:
-    """Hash of the last evidence record's own hash (chain anchor)."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     for line in reversed(lines):
-        line = line.strip()
-        if not line:
+        if not line.strip():
+            continue
+        try:
+            return json.loads(line).get("hash")
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def verify_jsonl_chain(path: str) -> Tuple[Optional[bool], int, str]:
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return False, 0, str(exc)
+    records: List[Dict] = []
+    for line_no, line in enumerate(lines, 1):
+        if not line.strip():
             continue
         try:
             rec = json.loads(line)
         except json.JSONDecodeError:
-            return None
-        return rec.get("hash")
-    return None
+            return False, len(records), f"line {line_no} is not JSON"
+        if not isinstance(rec, dict):
+            return False, len(records), f"line {line_no} is not an object"
+        records.append(rec)
+    if not records:
+        return True, 0, ""
+    if any("prev" not in rec for rec in records):
+        return None, len(records), "legacy archive lacks prev chain"
+
+    prev = "GENESIS"
+    for index, rec in enumerate(records, 1):
+        if rec.get("prev") != prev:
+            return False, index - 1, f"line {index}: prev chain broken"
+        actual = rec.get("hash")
+        unsigned = {k: v for k, v in rec.items() if k != "hash"}
+        expected = hashlib.sha256(_canonical(unsigned).encode("utf-8")).hexdigest()
+        if actual != expected:
+            return False, index - 1, f"line {index}: hash mismatch"
+        prev = actual
+    return True, len(records), ""
 
 
 @dataclass
@@ -46,54 +79,55 @@ class ArchiveManifest:
     archives: List[Dict]
 
     def anchored(self) -> bool:
-        for i, arch in enumerate(self.archives):
-            if i == 0:
+        if any(item.get("chain_valid") is False for item in self.archives):
+            return False
+        for index, item in enumerate(self.archives):
+            if index == 0:
                 continue
-            prev = self.archives[i - 1]
-            if arch.get("previous_archive_hash") != prev.get("tail_hash"):
+            previous = self.archives[index - 1]
+            if item.get("previous_archive_hash") != previous.get("tail_hash"):
                 return False
         return True
 
-
-def build_archive_manifest(archive_dir: str) -> ArchiveManifest:
-    """Scan `archive_dir` for `evidence-*.jsonl` and read stored anchor links.
-
-    Each archive's final record may store a `previous_archive_hash` linking
-    it to the previous archive's tail. The manifest reads these stored links
-    (it does not recompute them) so breaks are detectable.
-    """
-    archives: List[Dict] = []
-    if not os.path.isdir(archive_dir):
-        return ArchiveManifest(archives=archives)
-    files = sorted(f for f in os.listdir(archive_dir) if f.endswith(".jsonl"))
-    for fn in files:
-        path = os.path.join(archive_dir, fn)
-        stored_link = _read_stored_link(path)
-        archives.append({
-            "file": fn,
-            "sha256": file_hash(path),
-            "tail_hash": tail_hash(path),
-            "previous_archive_hash": stored_link,
-        })
-    return ArchiveManifest(archives=archives)
+    def legacy_count(self) -> int:
+        return sum(1 for item in self.archives if item.get("chain_valid") is None)
 
 
 def _read_stored_link(path: str) -> Optional[str]:
-    """Read the previous_archive_hash stored in the archive's last record."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     for line in reversed(lines):
-        line = line.strip()
-        if not line:
+        if not line.strip():
             continue
         try:
-            rec = json.loads(line)
+            return json.loads(line).get("previous_archive_hash")
         except json.JSONDecodeError:
             return None
-        return rec.get("previous_archive_hash")
     return None
+
+
+def build_archive_manifest(archive_dir: str) -> ArchiveManifest:
+    archives: List[Dict] = []
+    if not os.path.isdir(archive_dir):
+        return ArchiveManifest(archives=[])
+    # Keep the original behavior of discovering any JSONL in the supplied
+    # directory; production callers pass .plan-auditor/archive.
+    files = sorted(name for name in os.listdir(archive_dir) if name.endswith(".jsonl"))
+    for filename in files:
+        path = os.path.join(archive_dir, filename)
+        chain_valid, record_count, chain_problem = verify_jsonl_chain(path)
+        archives.append({
+            "file": filename,
+            "sha256": file_hash(path),
+            "tail_hash": tail_hash(path),
+            "previous_archive_hash": _read_stored_link(path),
+            "chain_valid": chain_valid,
+            "record_count": record_count,
+            "chain_problem": chain_problem,
+        })
+    return ArchiveManifest(archives)
 
 
 def verify_anchor_chain(archive_dir: str) -> Dict:
@@ -102,14 +136,18 @@ def verify_anchor_chain(archive_dir: str) -> Dict:
         "anchored": manifest.anchored(),
         "archives": manifest.archives,
         "broken_at": _first_break(manifest),
+        "legacy_archives": manifest.legacy_count(),
+        "integrity_ok": all(item.get("chain_valid") is not False for item in manifest.archives),
     }
 
 
 def _first_break(manifest: ArchiveManifest) -> Optional[int]:
-    for i, arch in enumerate(manifest.archives):
-        if i == 0:
+    for index, item in enumerate(manifest.archives):
+        if item.get("chain_valid") is False:
+            return index
+        if index == 0:
             continue
-        prev = manifest.archives[i - 1]
-        if arch.get("previous_archive_hash") != prev.get("tail_hash"):
-            return i
+        previous = manifest.archives[index - 1]
+        if item.get("previous_archive_hash") != previous.get("tail_hash"):
+            return index
     return None

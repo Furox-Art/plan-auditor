@@ -1,12 +1,16 @@
-"""Tests for the platform-agnostic gate hook."""
-import sys
-import os
+"""Tests for the platform-agnostic integrated gate hook."""
+from __future__ import annotations
+
 import json
+import os
+import subprocess
+import sys
 import tempfile
+from pathlib import Path
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from pathlib import Path
-import subprocess
+from supervisor.cli import main as cli_main
 
 
 def _run_hook(cwd, fmt="text", warn_file=None):
@@ -14,66 +18,84 @@ def _run_hook(cwd, fmt="text", warn_file=None):
     cmd = [sys.executable, str(hook), cwd, "--format", fmt]
     if warn_file:
         cmd += ["--warn-file", warn_file]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    return r
+    return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def test_hook_pass_when_verified():
+def _write_plan(root: Path, status="pending"):
+    pg = root / ".plan-auditor"
+    pg.mkdir(exist_ok=True)
+    plan = {
+        "task": "hook integration test",
+        "created": "2026-09-03T00:00:00",
+        "steps": [{
+            "id": 1,
+            "title": "behavior",
+            "status": status,
+            "verify": [{"type": "run", "cmd": "python -c \"print('ok')\""}],
+        }],
+    }
+    (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+
+def _prepare_real_pass(root: Path):
+    _write_plan(root)
+    assert cli_main(["plan", "verify", str(root)]) == 0
+    assert cli_main(["audit", str(root)]) == 0
+
+
+def test_hook_pass_only_with_real_audit_and_seal():
     with tempfile.TemporaryDirectory() as d:
-        pg = Path(d) / ".plan-auditor"
-        pg.mkdir()
-        plan = {"task": "t", "created": "2026-09-03T00:00:00",
-                "steps": [{"id": 1, "status": "verified",
-                            "verify": [{"type": "run", "cmd": "echo"}]}]}
-        (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-        r = _run_hook(d)
-        assert r.returncode == 0
-        assert "PASS" in r.stdout
+        root = Path(d)
+        _prepare_real_pass(root)
+        result = _run_hook(d)
+        assert result.returncode == 0
+        assert "PASS" in result.stdout
+
+
+def test_hook_blocks_verified_label_without_evidence():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _write_plan(root, status="verified")
+        result = _run_hook(d)
+        assert result.returncode != 0
+        assert "BLOCKED" in result.stdout
+        assert "Seal" in result.stdout or "Fresh audit" in result.stdout
 
 
 def test_hook_blocked_when_pending():
     with tempfile.TemporaryDirectory() as d:
-        pg = Path(d) / ".plan-auditor"
-        pg.mkdir()
-        plan = {"task": "t", "created": "2026-09-03T00:00:00",
-                "steps": [{"id": 1, "status": "pending",
-                            "verify": [{"type": "run", "cmd": "echo"}]}]}
-        (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-        r = _run_hook(d)
-        assert r.returncode == 1
-        assert "BLOCKED" in r.stdout
-        assert "1" in r.stdout  # pending step id
+        root = Path(d)
+        _write_plan(root, status="pending")
+        result = _run_hook(d)
+        assert result.returncode == 1
+        assert "BLOCKED" in result.stdout
+        assert "1" in result.stdout
 
 
 def test_hook_no_plan_skips():
     with tempfile.TemporaryDirectory() as d:
-        r = _run_hook(d)
-        assert "No active plan.json" in r.stdout
+        result = _run_hook(d)
+        assert result.returncode == 0
+        assert "No active plan.json" in result.stdout
 
 
-def test_hook_json_format():
+def test_hook_json_format_reports_real_pass():
     with tempfile.TemporaryDirectory() as d:
-        pg = Path(d) / ".plan-auditor"
-        pg.mkdir()
-        (pg / "plan.json").write_text(json.dumps({"task": "t", "created": "x",
-            "steps": [{"id": 1, "status": "verified", "verify": [{"type": "run", "cmd": "echo"}]}]}),
-            encoding="utf-8")
-        r = _run_hook(d, fmt="json")
-        data = json.loads(r.stdout)
+        root = Path(d)
+        _prepare_real_pass(root)
+        result = _run_hook(d, fmt="json")
+        data = json.loads(result.stdout)
         assert data["outcome"] == "PASS"
+        assert data["report"]["fresh_audit"]["valid"] is True
 
 
 def test_hook_warn_file_written():
     with tempfile.TemporaryDirectory() as d:
-        pg = Path(d) / ".plan-auditor"
-        pg.mkdir()
-        plan = {"task": "t", "created": "x",
-                "steps": [{"id": 1, "status": "pending",
-                            "verify": [{"type": "run", "cmd": "echo"}]}]}
-        (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+        root = Path(d)
+        _write_plan(root, status="pending")
         warn = os.path.join(d, ".plan-auditor", "warn.json")
-        r = _run_hook(d, warn_file=warn)
-        assert r.returncode == 1
+        result = _run_hook(d, warn_file=warn)
+        assert result.returncode in (1, 3)
         assert os.path.isfile(warn)
-        data = json.loads(Path(warn).read_text())
+        data = json.loads(Path(warn).read_text(encoding="utf-8"))
         assert data["outcome"] in ("FAIL", "UNKNOWN")
