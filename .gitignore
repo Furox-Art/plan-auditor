@@ -4,3 +4,12 @@ __pycache__/
 .plan-auditor/evidence.jsonl
 .plan-auditor/*.tmp
 .plan-auditor/archive/
+.plan-auditor/snapshots/
+.plan-auditor/seal.json
+.plan-auditor/supervisor-runtime.json
+.plan-auditor/supervisor-assessment.json
+.plan-auditor/supervisor.stop
+.plan-auditor/supervisor.log
+.plan-auditor/watchdog.jsonl
+.plan-auditor/gate-warning.json
+.plan-auditor/agents/
