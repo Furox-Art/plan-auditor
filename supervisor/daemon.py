@@ -75,6 +75,25 @@ def _append_events(workspace: str | Path, events: list[Any]) -> None:
             }, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def _interruptible_wait(workspace: str | Path, seconds: float,
+                        should_stop: "callable[[], bool]") -> bool:
+    """Wait until the next poll while reacting quickly to stop requests.
+
+    Returns ``True`` when execution should stop. The watchdog/heartbeat cadence
+    can remain several seconds without making ``supervisor stop`` wait for the
+    full polling interval.
+    """
+    deadline = time.monotonic() + max(0.0, seconds)
+    marker = stop_path(workspace)
+    while True:
+        if should_stop() or marker.exists():
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.1, remaining))
+
+
 def run_daemon(workspace: str, profile: str, mode: str) -> int:
     root = str(Path(workspace).resolve())
     pg = runtime_dir(root)
@@ -125,7 +144,8 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
             _append_events(root, result.events)
             events_seen += len(result.events)
             write_state("running")
-            time.sleep(interval)
+            if _interruptible_wait(root, interval, lambda: should_stop):
+                break
     finally:
         try:
             stop_path(root).unlink()
