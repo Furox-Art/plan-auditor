@@ -1,8 +1,9 @@
 """Background supervisor daemon for Plan Auditor.
 
-The daemon keeps durable runtime state, polls the workspace watchdog, and
-persists observed events. Deterministic verification still happens in
-``scripts.audit_check`` and remains the source of truth.
+The daemon continuously observes the workspace and persists an integrated
+L0-L14 assessment. Deterministic implementation checks still run only through
+``scripts.audit_check``; the daemon consumes their evidence rather than
+silently executing project commands.
 """
 from __future__ import annotations
 
@@ -12,12 +13,14 @@ import os
 import signal
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config import load_config
+from .orchestrator import evaluate_workspace
 from .watchdog import Watchdog
 
 STATE_FILENAME = "supervisor-runtime.json"
+ASSESSMENT_FILENAME = "supervisor-assessment.json"
 STOP_FILENAME = "supervisor.stop"
 EVENTS_FILENAME = "watchdog.jsonl"
 
@@ -30,6 +33,10 @@ def state_path(workspace: str | Path) -> Path:
     return runtime_dir(workspace) / STATE_FILENAME
 
 
+def assessment_path(workspace: str | Path) -> Path:
+    return runtime_dir(workspace) / ASSESSMENT_FILENAME
+
+
 def stop_path(workspace: str | Path) -> Path:
     return runtime_dir(workspace) / STOP_FILENAME
 
@@ -38,6 +45,14 @@ def read_state(workspace: str | Path) -> dict[str, Any] | None:
     path = state_path(workspace)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def read_assessment(workspace: str | Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(assessment_path(workspace).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
@@ -56,7 +71,7 @@ def pid_alive(pid: int | None) -> bool:
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -76,13 +91,7 @@ def _append_events(workspace: str | Path, events: list[Any]) -> None:
 
 
 def _interruptible_wait(workspace: str | Path, seconds: float,
-                        should_stop: "callable[[], bool]") -> bool:
-    """Wait until the next poll while reacting quickly to stop requests.
-
-    Returns ``True`` when execution should stop. The watchdog/heartbeat cadence
-    can remain several seconds without making ``supervisor stop`` wait for the
-    full polling interval.
-    """
+                        should_stop: Callable[[], bool]) -> bool:
     deadline = time.monotonic() + max(0.0, seconds)
     marker = stop_path(workspace)
     while True:
@@ -92,6 +101,20 @@ def _interruptible_wait(workspace: str | Path, seconds: float,
         if remaining <= 0:
             return False
         time.sleep(min(0.1, remaining))
+
+
+def _safe_assessment(root: str, profile: str, mode: str) -> dict[str, Any]:
+    try:
+        return evaluate_workspace(root, profile=profile, mode=mode)
+    except Exception as exc:
+        # Fail closed but keep the daemon alive so the error remains observable.
+        return {
+            "outcome": "UNKNOWN",
+            "workspace": root,
+            "profile": profile,
+            "mode": mode,
+            "error": f"assessment failed: {type(exc).__name__}: {exc}",
+        }
 
 
 def run_daemon(workspace: str, profile: str, mode: str) -> int:
@@ -113,6 +136,7 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
     should_stop = False
     started_at = time.time()
     events_seen = 0
+    gate_outcome = "UNKNOWN"
 
     def _signal_handler(_signum: int, _frame: object) -> None:
         nonlocal should_stop
@@ -134,15 +158,25 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
             "started_at": started_at,
             "heartbeat_at": time.time(),
             "events_seen": events_seen,
+            "gate_outcome": gate_outcome,
+            "assessment_file": str(assessment_path(root)),
         })
 
+    assessment = _safe_assessment(root, profile, mode)
+    gate_outcome = str(assessment.get("outcome", "UNKNOWN"))
+    _atomic_write_json(assessment_path(root), assessment)
     write_state("running")
+
     interval = max(0.5, min(float(cfg.heartbeat_sec), 5.0))
     try:
         while not should_stop and not stop_path(root).exists():
             result = watchdog.poll()
             _append_events(root, result.events)
             events_seen += len(result.events)
+
+            assessment = _safe_assessment(root, profile, mode)
+            gate_outcome = str(assessment.get("outcome", "UNKNOWN"))
+            _atomic_write_json(assessment_path(root), assessment)
             write_state("running")
             if _interruptible_wait(root, interval, lambda: should_stop):
                 break
@@ -151,6 +185,10 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
             stop_path(root).unlink()
         except FileNotFoundError:
             pass
+        # Final assessment captures any changes observed during shutdown.
+        assessment = _safe_assessment(root, profile, mode)
+        gate_outcome = str(assessment.get("outcome", "UNKNOWN"))
+        _atomic_write_json(assessment_path(root), assessment)
         write_state("stopped")
     return 0
 
