@@ -19,10 +19,12 @@ jobs:
           python -m pip install . pytest
       - name: Validate plan schema
         run: python scripts/audit_check.py validate .
-      - name: Independent audit (gate)
-        run: python scripts/audit_check.py audit .
-      - name: Supervisor self-audit (layers + CLI)
+      - name: Unit test gate (explicit diagnostic)
         run: python -m pytest tests/ -q
+      - name: Fib example gate (explicit diagnostic)
+        run: python -m pytest examples/fib/test_fib.py -q
+      - name: Independent audit (dogfood final gate)
+        run: python scripts/audit_check.py audit .
       - name: Installed CLI smoke test
         run: |
           plan-auditor --help
