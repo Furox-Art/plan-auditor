@@ -1,27 +1,30 @@
-"""L8 — Plan sealing + monotonic verification.
+"""L8 — plan sealing and monotonic verification.
 
-Once a plan is approved, it is canonicalized, hashed, and sealed. After
-sealing, criteria may only be *tightened* (new checks, stricter
-thresholds), never weakened (removed checks, relaxed criteria, disabled
-tests).
+A sealed verification check may never disappear or be edited in place. New
+checks may be appended, which gives a simple fail-closed monotonic rule that is
+easy to audit and does not rely on subjective notions of "stricter".
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 def canonical_plan(plan: Dict) -> str:
-    """Stable, sorted-JSON serialization for hashing."""
     return json.dumps(plan, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def plan_hash(plan: Dict) -> str:
     return hashlib.sha256(canonical_plan(plan).encode("utf-8")).hexdigest()
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 @dataclass
@@ -31,14 +34,27 @@ class Seal:
     plan_hash: str
     criteria_count: int
     steps: List[Dict]
+    task: Any = None
+    requirements: Any = None
+    format_version: int = 2
 
     def to_dict(self) -> Dict:
         return {
+            "format_version": self.format_version,
             "plan_id": self.plan_id,
             "sealed_at": self.sealed_at,
             "plan_hash": self.plan_hash,
             "criteria_count": self.criteria_count,
-            "steps": self.steps,
+            "task": copy.deepcopy(self.task),
+            "requirements": copy.deepcopy(self.requirements),
+            "steps": copy.deepcopy(self.steps),
+        }
+
+    def as_plan(self) -> Dict:
+        return {
+            "task": copy.deepcopy(self.task),
+            "requirements": copy.deepcopy(self.requirements),
+            "steps": copy.deepcopy(self.steps),
         }
 
 
@@ -49,8 +65,17 @@ def seal_plan(plan: Dict, plan_id: str, sealed_at: str) -> Seal:
         sealed_at=sealed_at,
         plan_hash=plan_hash(plan),
         criteria_count=criteria_count,
-        steps=[{"id": s.get("id"), "verify_count": len(s.get("verify", []))}
-               for s in plan.get("steps", [])],
+        task=copy.deepcopy(plan.get("task")),
+        requirements=copy.deepcopy(plan.get("requirements")),
+        steps=[
+            {
+                "id": s.get("id"),
+                "verify": copy.deepcopy(
+                    [c for c in s.get("verify", []) if isinstance(c, dict)]
+                ),
+            }
+            for s in plan.get("steps", [])
+        ],
     )
 
 
@@ -61,51 +86,70 @@ class MonotonicCheck:
     improvements: List[str]
 
 
-_WEAK_TYPES = {"file_exists", "regex"}
-
-
-def _weakness_score(checks: list) -> int:
-    """Lower score = weaker verification. run/pytest/exec = 2, weak = 0."""
-    score = 0
-    for c in checks:
-        if not isinstance(c, dict):
-            continue
-        if c.get("type") in ("run", "pytest", "exec"):
-            score += 2
-    return score
-
-
 def check_monotonic(before: Dict, after: Dict) -> MonotonicCheck:
-    """Return OK iff `after` only tightens / extends `before`."""
+    """Verify that sealed criteria are preserved exactly and only extended."""
     violations: List[str] = []
     improvements: List[str] = []
 
-    before_steps = {s.get("id"): s for s in before.get("steps", [])}
-    after_steps = {s.get("id"): s for s in after.get("steps", [])}
+    before_steps = {s.get("id"): s for s in before.get("steps", []) if isinstance(s, dict)}
+    after_steps = {s.get("id"): s for s in after.get("steps", []) if isinstance(s, dict)}
 
     for sid, step in before_steps.items():
         if sid not in after_steps:
-            violations.append("step %s removed after seal" % sid)
+            violations.append(f"step {sid} removed after seal")
             continue
+
+        # Legacy v1 seals stored only verify_count. They cannot prove check identity.
+        if "verify" not in step and "verify_count" in step:
+            expected = int(step.get("verify_count", 0))
+            actual = len(after_steps[sid].get("verify", []))
+            if actual < expected:
+                violations.append(
+                    f"step {sid}: verification count reduced ({expected} -> {actual})"
+                )
+            else:
+                violations.append(
+                    f"step {sid}: legacy seal lacks check contents; explicit reseal required"
+                )
+            continue
+
         before_checks = [c for c in step.get("verify", []) if isinstance(c, dict)]
         after_checks = [c for c in after_steps[sid].get("verify", []) if isinstance(c, dict)]
-        if len(after_checks) < len(before_checks):
-            violations.append("step %s: verification count reduced (%d -> %d)" % (
-                sid, len(before_checks), len(after_checks)))
-        elif len(after_checks) > len(before_checks):
-            improvements.append("step %s: verification count increased (%d -> %d)" % (
-                sid, len(before_checks), len(after_checks)))
-        else:
-            before_score = _weakness_score(before_checks)
-            after_score = _weakness_score(after_checks)
-            if after_score < before_score:
-                violations.append("step %s: verification strength reduced" % sid)
-            elif after_score > before_score:
-                improvements.append("step %s: verification strength increased" % sid)
+        remaining = [_canonical(c) for c in after_checks]
 
-    for key in ("task", "requirements"):
-        if before.get(key) and not after.get(key):
-            violations.append("plan field '%s' removed after seal" % key)
+        for check in before_checks:
+            encoded = _canonical(check)
+            try:
+                remaining.remove(encoded)
+            except ValueError:
+                violations.append(
+                    f"step {sid}: sealed verification check removed or modified: {encoded}"
+                )
+
+        if len(after_checks) > len(before_checks):
+            improvements.append(
+                f"step {sid}: verification count increased "
+                f"({len(before_checks)} -> {len(after_checks)})"
+            )
+
+    if before.get("task") is not None and before.get("task") != after.get("task"):
+        violations.append("plan field 'task' changed after seal")
+
+    before_req = before.get("requirements")
+    after_req = after.get("requirements")
+    if before_req is not None:
+        if isinstance(before_req, list) and isinstance(after_req, list):
+            after_encoded = {_canonical(item) for item in after_req}
+            for item in before_req:
+                if _canonical(item) not in after_encoded:
+                    violations.append("a sealed requirement was removed or modified")
+                    break
+            if len(after_req) > len(before_req):
+                improvements.append(
+                    f"requirements increased ({len(before_req)} -> {len(after_req)})"
+                )
+        elif before_req != after_req:
+            violations.append("plan field 'requirements' changed after seal")
 
     return MonotonicCheck(ok=not violations, violations=violations, improvements=improvements)
 
@@ -119,13 +163,19 @@ def load_seal(path: str) -> Optional[Seal]:
         plan_id=data.get("plan_id", ""),
         sealed_at=data.get("sealed_at", ""),
         plan_hash=data.get("plan_hash", ""),
-        criteria_count=data.get("criteria_count", 0),
-        steps=data.get("steps", []),
+        criteria_count=int(data.get("criteria_count", 0)),
+        task=copy.deepcopy(data.get("task")),
+        requirements=copy.deepcopy(data.get("requirements")),
+        steps=copy.deepcopy(data.get("steps", [])),
+        format_version=int(data.get("format_version", 1)),
     )
 
 
 def save_seal(seal: Seal, path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = path + ".tmp"
-    Path(tmp).write_text(json.dumps(seal.to_dict(), indent=2), encoding="utf-8")
+    Path(tmp).write_text(
+        json.dumps(seal.to_dict(), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     os.replace(tmp, path)
