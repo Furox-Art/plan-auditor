@@ -3,7 +3,8 @@
 
 The core never trusts an agent's narrative. It executes concrete checks, keeps
 append-only SHA-256 evidence, limits retries, supports multi-plan operation and
-snapshot/rollback, and anchors evidence rotations across archive files.
+snapshot/rollback, anchors evidence rotations, and binds every full audit to a
+deterministic plan/workspace fingerprint.
 
 Exit codes: 0 pass, 1 verification failure, 2 evidence-integrity failure.
 """
@@ -24,10 +25,71 @@ CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
 MAX_ATTEMPTS = 3
 ROTATE_BYTES = 2_000_000
 SNAPSHOT_DIR = "snapshots"
+_FINGERPRINT_SKIP_DIRS = {".git", PG_DIR, "__pycache__", ".pytest_cache"}
 
 
 def canonical(obj):
     return json.dumps(obj, sort_keys=True, ensure_ascii=False)
+
+
+def plan_contract_fingerprint(plan):
+    """Hash the immutable verification contract, ignoring runtime status."""
+    contract = {
+        "task": plan.get("task"),
+        "requirements": plan.get("requirements"),
+        "steps": [
+            {
+                "id": step.get("id"),
+                "title": step.get("title"),
+                "verify": step.get("verify", []),
+            }
+            for step in plan.get("steps", [])
+            if isinstance(step, dict)
+        ],
+    }
+    return hashlib.sha256(canonical(contract).encode("utf-8")).hexdigest()
+
+
+def workspace_fingerprint(base):
+    """Content hash of product/source state outside auditor/git/cache metadata.
+
+    File mtimes are deliberately ignored: they are not stable across processes,
+    filesystems, checkouts, or fast consecutive writes. Symlinks are hashed as
+    links (target text), never followed outside the workspace.
+    """
+    root = os.path.realpath(base)
+    digest = hashlib.sha256()
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if d not in _FINGERPRINT_SKIP_DIRS)
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            entries.append((rel, path))
+
+    for rel, path in sorted(entries):
+        digest.update(b"PATH\0")
+        digest.update(rel.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        try:
+            if os.path.islink(path):
+                digest.update(b"LINK\0")
+                digest.update(os.readlink(path).encode("utf-8", errors="surrogateescape"))
+            elif os.path.isfile(path):
+                digest.update(b"FILE\0")
+                with open(path, "rb") as handle:
+                    while True:
+                        chunk = handle.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+            else:
+                digest.update(b"OTHER\0")
+        except OSError as exc:
+            digest.update(b"UNREADABLE\0")
+            digest.update(type(exc).__name__.encode("ascii", errors="replace"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 # ---------------------------------------------------------------- plan io
@@ -231,9 +293,9 @@ def _archive_paths(base):
     if not os.path.isdir(directory):
         return []
     return [
-        os.path.join(directory, f)
-        for f in sorted(os.listdir(directory))
-        if f.startswith("evidence-") and f.endswith(".jsonl")
+        os.path.join(directory, filename)
+        for filename in sorted(os.listdir(directory))
+        if filename.startswith("evidence-") and filename.endswith(".jsonl")
     ]
 
 
@@ -262,9 +324,6 @@ def maybe_rotate(base):
         return
     archive_dir = os.path.join(base, PG_DIR, "archive")
     os.makedirs(archive_dir, exist_ok=True)
-
-    # The archive's LAST record stores the previous archive tail. L11 can then
-    # verify both the internal record chain and the cross-archive link.
     anchor = {
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
         "mode": "archive_anchor",
@@ -275,7 +334,6 @@ def maybe_rotate(base):
         "previous_archive_hash": _latest_archive_tail(base),
     }
     _write_evidence_record(path, anchor)
-
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
     name = "evidence-%s.jsonl" % stamp
     os.replace(path, os.path.join(archive_dir, name))
@@ -421,7 +479,7 @@ def latest_snapshot(base):
     directory = snapshots_dir(base)
     if not os.path.isdir(directory):
         return None
-    zips = sorted(f for f in os.listdir(directory) if f.endswith(".zip"))
+    zips = sorted(filename for filename in os.listdir(directory) if filename.endswith(".zip"))
     return os.path.join(directory, zips[-1]) if zips else None
 
 
@@ -501,6 +559,18 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
                 print("         çıktı: %s" % result["output_tail"][-400:].replace("\n", " | "))
 
     save_plan(base, plan, name)
+    if mode == "audit":
+        append_evidence(base, {
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+            "mode": "audit_complete",
+            "plan": key,
+            "step": 0,
+            "results": [],
+            "status": "verified" if all_ok else "failed",
+            "steps": len(plan.get("steps", [])),
+            "plan_fingerprint": plan_contract_fingerprint(plan),
+            "workspace_fingerprint": workspace_fingerprint(base),
+        })
     return all_ok
 
 
