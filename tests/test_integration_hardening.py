@@ -10,6 +10,7 @@ from supervisor.evidence import verify_anchor_chain
 from supervisor.orchestrator import evaluate_workspace, fresh_full_audit_proof
 from supervisor.policies import PolicyEngine, load_policy_rules_from_dir
 from supervisor.sealing import save_seal, seal_plan
+from supervisor.workspace import capture_workspace
 
 
 def _plan(status="pending"):
@@ -60,7 +61,15 @@ def test_fresh_audit_invalidated_by_workspace_change(tmp_path: Path):
     current = json.loads((tmp_path / ".plan-auditor" / "plan.json").read_text())
     proof = fresh_full_audit_proof(tmp_path, current)
     assert proof.valid is False
-    assert "changed_after_audit.py" in proof.reason
+    assert "workspace content changed" in proof.reason
+
+
+def test_workspace_capture_is_read_only(tmp_path: Path):
+    before = core.workspace_fingerprint(str(tmp_path))
+    capture_workspace(str(tmp_path))
+    after = core.workspace_fingerprint(str(tmp_path))
+    assert after == before
+    assert not (tmp_path / "nul").exists()
 
 
 def test_integrated_gate_requires_seal(tmp_path: Path):
