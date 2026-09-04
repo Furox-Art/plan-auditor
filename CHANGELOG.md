@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — integration hardening
+
+- **Integrated supervisor pipeline:** new `supervisor/orchestrator.py` wires plan validation, requirements, workspace state, policies, sealing, deterministic evidence, adversarial review, completion gating, lifecycle state, and multi-agent state into one fail-closed assessment.
+- **Real hook enforcement:** `hooks/gate_hook.py` no longer trusts `status=verified` or fabricated integrity flags; PASS requires a valid seal and matching fresh full-audit evidence.
+- **Deterministic audit freshness:** full audits now record SHA-256 fingerprints of the verification contract and workspace contents. Any post-audit content change invalidates completion without relying on filesystem mtimes.
+- **Cross-archive evidence anchoring:** rotations write archive anchors and L11 verifies both internal JSONL hash chains and links between archives.
+- **Persistent multi-agent state:** ownership and heartbeat updates are written to the shared registry; separate processes see the same state, and `parallel-strict` rejects overlapping file claims.
+- **Adversarial gate integration:** high/critical L12 findings with no deterministic follow-up prevent PASS and produce UNKNOWN instead of being ignored.
+- **User policy loading:** deterministic JSON/TOML policies now load from configured policy directories.
+- **Workspace safety:** file checks and rollback are path-confined; workspace observation is read-only and uses `shutil.which()` instead of shell redirections that could create files.
+- **Daemon integration:** the background supervisor now persists an integrated assessment and final gate outcome on every observation cycle.
+- **Regression coverage:** integration-hardening tests cover stale `verified` labels, fingerprints, archive anchors, cross-process ownership, strict conflicts, policy loading, and read-only workspace observation.
+
 ## v1.1.0 — 2026-09-03
 
 - **Portable skill paths:** `SKILL.md` no longer hardcodes an install path; agents resolve `scripts/audit_check.py` relative to the skill directory. The package now drops into any Agent-Skills tool (Command Code, Claude Code, Codex CLI, Cursor, Grok Build, OpenCode).
