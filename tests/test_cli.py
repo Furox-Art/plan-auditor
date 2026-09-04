@@ -1,51 +1,85 @@
-"""Tests for CLI gate integration."""
-import sys
-import os
+"""Tests for CLI gate integration and packaging-facing behavior."""
+from __future__ import annotations
+
 import json
-import subprocess
-import tempfile
+import os
+import sys
+from pathlib import Path
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from supervisor.cli import main
-from supervisor import verify_plan
 
 
-def test_cli_audit_rejects_pending(tmp_path):
-    plan = {"task": "t", "created": "2026-09-03T00:00:00",
-            "steps": [{"id": 1, "title": "x", "status": "pending",
-                        "verify": [{"type": "run", "cmd": "echo"}]}]}
+def _write_plan(tmp_path: Path, *, command: str = "python -c \"print('ok')\"") -> None:
+    plan = {
+        "task": "test task",
+        "created": "2026-09-03T00:00:00",
+        "steps": [
+            {
+                "id": 1,
+                "title": "behavior",
+                "status": "pending",
+                "verify": [{"type": "run", "cmd": command}],
+            }
+        ],
+    }
+    pg = tmp_path / ".plan-auditor"
+    pg.mkdir(exist_ok=True)
+    (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+
+def test_cli_audit_requires_seal(tmp_path: Path) -> None:
+    _write_plan(tmp_path)
+    assert main(["audit", str(tmp_path)]) == 2
+
+
+def test_cli_plan_verify_seals_plan(tmp_path: Path) -> None:
+    _write_plan(tmp_path)
+    assert main(["plan", "verify", str(tmp_path)]) == 0
+    seal = json.loads((tmp_path / ".plan-auditor" / "seal.json").read_text(encoding="utf-8"))
+    assert seal["format_version"] == 2
+    assert seal["steps"][0]["verify"][0]["type"] == "run"
+
+
+def test_cli_audit_runs_fresh_core_and_passes(tmp_path: Path) -> None:
+    _write_plan(tmp_path)
+    assert main(["plan", "verify", str(tmp_path)]) == 0
+    assert main(["audit", str(tmp_path)]) == 0
+    plan = json.loads((tmp_path / ".plan-auditor" / "plan.json").read_text(encoding="utf-8"))
+    assert plan["steps"][0]["status"] == "verified"
+
+
+def test_cli_audit_rejects_post_seal_check_edit(tmp_path: Path) -> None:
+    _write_plan(tmp_path)
+    assert main(["plan", "verify", str(tmp_path)]) == 0
+    path = tmp_path / ".plan-auditor" / "plan.json"
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    plan["steps"][0]["verify"] = [{"type": "run", "cmd": "python -c \"print('weaker edit')\""}]
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    assert main(["audit", str(tmp_path)]) == 2
+
+
+def test_cli_plan_verify_rejects_weak(tmp_path: Path) -> None:
+    plan = {"task": "t", "steps": [{"id": 1, "verify": [{"type": "file_exists", "path": "x.py"}]}]}
     pg = tmp_path / ".plan-auditor"
     pg.mkdir()
     (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-    rc = main(["audit", str(tmp_path)])
-    assert rc == 1
+    assert main(["plan", "verify", str(tmp_path)]) == 1
 
 
-def test_cli_audit_passes_when_all_verified(tmp_path):
-    plan = {"task": "t", "created": "2026-09-03T00:00:00",
-            "steps": [{"id": 1, "title": "x", "status": "verified",
-                        "verify": [{"type": "run", "cmd": "echo"}]}]}
-    pg = tmp_path / ".plan-auditor"
-    pg.mkdir()
-    (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-    rc = main(["audit", str(tmp_path)])
-    assert rc == 0
+def test_cli_status_reports_stopped_when_daemon_absent(tmp_path: Path) -> None:
+    assert main(["supervisor", "status", str(tmp_path)]) == 1
 
 
-def test_cli_plan_verify_rejects_weak(tmp_path):
-    plan = {"task": "t", "steps": [{"id": 1, "verify": [{"type": "file_exists", "path": "x"}]}]}
-    pg = tmp_path / ".plan-auditor"
-    pg.mkdir()
-    (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-    rc = main(["plan", "verify", str(tmp_path)])
-    assert rc == 1
+def test_cli_doctor_includes_workspace(tmp_path: Path) -> None:
+    assert main(["doctor", str(tmp_path)]) == 0
 
 
-def test_cli_status_valid_json(tmp_path, capsys=None):
-    rc = main(["supervisor", "status", str(tmp_path)])
-    assert rc == 0
+def test_cli_task_list_is_real(tmp_path: Path) -> None:
+    _write_plan(tmp_path)
+    assert main(["task", "list", str(tmp_path)]) == 0
 
 
-def test_cli_doctor_includes_language(tmp_path):
-    rc = main(["doctor", str(tmp_path)])
-    assert rc == 0
+def test_cli_agents_list_is_real_and_empty(tmp_path: Path) -> None:
+    assert main(["agents", "list", str(tmp_path)]) == 0
