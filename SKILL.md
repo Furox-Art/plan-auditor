@@ -1,83 +1,83 @@
 ---
 name: plan-auditor
-description: Katı plan + bağımsız denetçi iş akışı — verilen görevi makineyle doğrulanabilir adımlara böler, her adımı gerçek komut çıktısıyla (kanıtla) test eder, ajanın kendi "yaptım" sözüne asla güvenmez ve görev ancak tam denetim geçilirse bitmiş sayılır. Kullanıcı bir şeyi yaptırırken işin yarım kalmamasını istiyorsa, "planla", "denetle", "yarım bırakma", "gerçekten yaptın mı" derse veya /plan-auditor çağrılırsa kullan.
-argument-hint: "<görev metni>"
+description: Strict plan + independent auditor workflow — turns a task into machine-verifiable steps, tests every step with real command evidence (never trusting the agent's own "done" claim), and only treats the task as finished when the full audit passes. Use when the user asks to build/implement/fix something non-trivial, says "plan it", "audit it", "don't leave it half-done", "did you actually do it", or invokes /plan-auditor.
+argument-hint: "<task description>"
 metadata:
   version: "1.1.0"
 ---
 
-# Plan-Auditor: Net Plan + Bağımsız Denetçi
+# Plan-Auditor: Strict Plan + Independent Auditor
 
-Sen bu iş akışında İKİ rol oynarsın ve rolleri asla karıştırmazsın:
-- **Planlayıcı:** görevi ölçülebilir adımlara böl.
-- **Denetçi:** her adımı kanıtla test et — kendi anlatımına, hafızana, "ben yaptım" sözüne güvenme; yalnızca komut çıktısına güven.
+You play TWO roles in this workflow and never mix them:
+- **Planner:** break the task into measurable steps.
+- **Auditor:** test every step with evidence — never trust your own narration, memory, or "I did it" claim; trust only command output.
 
-## Katı kurallar (istisnasız)
+## Strict rules (no exceptions)
 
-1. **Kanıt yoksa adım yapılmamıştır.** Bir adım `verified` yalnızca denetçi scripti tüm kontrolleri geçti derse olur.
-2. **Yargıç yalnızca düşürür.** Kontroller geçse bile işin gerçekte doğru olmadığına inanıyorsan `verified`'ı geçerli sayma — daha sıkı bir kontrol ekleyip scripti tekrar çalıştır. Hiçbir zaman başarısız kanıtı "geçti"ye çeviremezsin.
-3. **Doğrulanamayan = başarısız.** Kanıt üretilemeyen adım `failed`'tır.
-4. **Kayıt append-only.** `evidence.jsonl` ve kayıtların `hash` zinciri asla elle düzenlenmez; scriptin dışında hiçbir şey log'a yazamaz.
-5. **Kontrol spesifikasyonu kilidi.** İş başladıktan sonra `plan.json` içindeki `verify` listelerini gevşetmek yasak; yalnızca yeni/sıkı kontrol EKLEYEBİLİRSİN.
-6. **Tam denetim kapısı.** Görevi "bitti" demeden önce `audit` modu exit 0 dönmeli. Dönmeden bitirme.
+1. **No evidence = not done.** A step is `verified` only when the auditor script passes all its checks.
+2. **Judge can only downgrade.** Even if checks pass, if you believe the work is actually wrong, do not treat `verified` as valid — add a stricter check and re-run the script. You can never turn a failed check into a pass.
+3. **Unverifiable = failed.** A step with no reproducible evidence is `failed`.
+4. **Log is append-only.** `evidence.jsonl` and its `hash` chain are never edited by hand; nothing outside the script may write to the log.
+5. **Check specification lock.** Once work begins, weakening the `verify` lists inside `plan.json` is forbidden; you may only ADD new/stricter checks.
+6. **Full audit gate.** Before saying "done", `audit` mode must exit 0. Never finish without it.
 
-## Dosyalar
+## Files
 
-- Plan: `<proje>/.plan-auditor/plan.json` (format: `references/plan-format.md`)
-- Kanıt: `<proje>/.plan-auditor/evidence.jsonl` (script yazar, append-only, hash zincirli)
-- Denetçi scripti: bu skill dizinindeki `scripts/audit_check.py`
+- Plan: `<project>/.plan-auditor/plan.json` (format: `references/plan-format.md`)
+- Evidence: `<project>/.plan-auditor/evidence.jsonl` (written by script, append-only, hash-chained)
+- Auditor script: `scripts/audit_check.py` inside this skill directory
 
-Scripti her seferinde skill dizinine GÖRE çağır — bu SKILL.md'nin bulunduğu klasör `<skill-dizini>`dir, tam yol kurulumdan kuralluma değişir:
+Always call the script RELATIVE to the skill directory — the folder containing this `SKILL.md` is `<skill-dizini>`; the full path changes per install:
 
 ```
-python <skill-dizini>/scripts/audit_check.py <mod> <proje-dizini> [id id ...]
+python <skill-dizin>/scripts/audit_check.py <mode> <project-dir> [id id ...]
 ```
 
-Modlar: `validate` (şema kontrolü) · `run` (bekleyen — veya `run <dir> 1 2` gibi verilen id'li — adımları denetle) · `audit` (TÜM adımları yeniden denetle, final gate) · `status` (tablo, çalıştırmadan) · `snapshot` / `rollback` (dosya anlık görüntüsü al / geri yükle). Dizin adı `id`'lerden ÖNCE gelir.
+Modes: `validate` (schema check) · `run` (audit pending — or given ids like `run <dir> 1 2` — steps) · `audit` (re-verify ALL steps, final gate) · `status` (table, no execution) · `snapshot` / `rollback` (capture / restore a file snapshot). Directory name comes BEFORE ids.
 
-Ek seçenekler: `--plan <ad>` (çoklu plan: `.plan-auditor/plans/<ad>.json`; varsayılan `plan.json`) · `run --force` (3 deneme sınırını aşılmaya zorla — istisnai durumda, kullanıcı istediyse).
+Extra options: `--plan <name>` (multi-plan: `.plan-auditor/plans/<name>.json`; default `plan.json`) · `run --force` (force past the 3-attempt limit — exceptional case, user asked).
 
-## İş akışı
+## Workflow
 
 ### 1. PLAN
-- Görevi al, `references/plan-format.md`'deki şemaya göre `<proje>/.plan-auditor/plan.json` yaz.
-- Her adımın `verify` listesi SOMUT ve makineyle çalıştırılabilir olmalı: komut + beklenen exit kodu, dosya varlığı, regex, pytest. "Düzgün çalışıyor" gibi ölçüsüz kriter YOK.
-- Yeni görev başlatırken eski plan varsa iki seçenek: artık işi yoksa `.plan-auditor/archive/<tarih>-<slug>.json`'a taşı; HÂLÂ aktifse yeni görevi `--plan <ad>` ile ayrı dosyada tut (`.plan-auditor/plans/<ad>.json`).
-- Yazınca `validate` çalıştır; hata varsa düzelt ve tekrar çalıştır. Planı kullanıcıya kısaca özetle.
+- Take the task, write `<project>/.plan-auditor/plan.json` per the schema in `references/plan-format.md`.
+- Every step's `verify` list must be CONCRETE and machine-executable: command + expected exit code, file existence, regex, pytest. NO vague criteria like "works correctly".
+- When starting a new task, if an old plan exists: archive it to `.plan-auditor/archive/<date>-<slug>.json` if its work is done; if STILL active, keep the new task in a separate file via `--plan <name>`.
+- Run `validate`; fix errors and re-run. Summarize the plan to the user.
 
-### 2. YÜRÜT + HER ADIMDA KANITLA + KURTARMA DÖNGÜSÜ
-- Adımları sırayla yap. Her adımın işi bittiğinde HEMEN `run <id>` çalıştır.
-- `verified` değilse: adım bitmemiştir. Kurtarma döngüsü:
-  1. evidence çıktısındaki KALDI satırlarından teşhis koy (hangi kontrol, neden düştü).
-  2. Kök nedeni düzelt (semptomu değil — test sahte geçiyorsa testi gevşetmek YASAK, ürünü düzelt).
-  3. Aynı adım için `run <id>` tekrar.
-- Adım başına en fazla **3 kurtarma denemesi**. 3 denemeden sonra hâlâ `verified` değilse DUR: kullanıcıya kanıt çıktısıyla rapor ver ve nasıl devam edileceğini sor. Asla kontrolü gevşeterek, adımı atlayarak veya "yeterince iyi" diyerek geçme.
-- Sonraki adıma yalnızca önceki adım `verified` olduktan sonra geç.
+### 2. EXECUTE + PROVE AFTER EACH STEP + RECOVERY LOOP
+- Do steps in order. The moment a step's work is done, run `run <id>`.
+- If not `verified`: the step is not finished. Recovery loop:
+  1. Diagnose from the FAILED lines in the evidence output (which check, why it fell).
+  2. Fix the root cause (not the symptom — if a test passes trivially, FIX the product, never weaken the test).
+  3. Re-run `run <id>` for the same step.
+- At most **3 recovery attempts per step**. After 3, if still not `verified`, STOP: report to the user with evidence output and ask how to proceed. Never pass by weakening a check, skipping a step, or saying "good enough".
+- Advance to the next step only after the previous is `verified`.
 
-### 3. TAM DENETİM
-- Tüm adımlar `verified` olduktan sonra `audit` çalıştır (tümünü taze kabukta yeniden test eder).
-- Exit 0 değilse rapordan devam et: hangi adım neden düşmüş, düzelt, audit'i tekrarla.
+### 3. FULL AUDIT
+- After all steps are `verified`, run `audit` (re-tests everything in fresh shells).
+- If exit is not 0, continue from the report: which step fell why, fix, re-run audit.
 
-### 4. RAPOR
-- Tablo halinde bildir: adım, kontrol sayısı, durum, kanıt özeti (komut çıktılarından alıntı).
-- "Yaptım" deme; "audit geçti, kanıtlar şunlar" de.
+### 4. REPORT
+- Report as a table: step, check count, status, evidence summary (quotes from command output).
+- Do not say "I did it"; say "audit passed, evidence is: ...".
 
-## Zorunlu denetim (hook)
+## Mandatory enforcement (hook)
 
-Command Code tarafında kullanıcı `Stop` hook'una bu skill'in `scripts/stop_gate.py`'sini bağladıysa: aktif planda doğrulanmamış adım varken tur KAPATILAMAZ — hook exit 2 ile seni denetime geri iter. Bu, atlanamaz katmandır; hook'un varlığına güvenme ama varken onunla çelişme. Polyglot kontroller için `exec` tipi: kullanıcının derlenmiş ikilisi (C++/Rust/Java/jar) plana `{"type": "exec", "cmd": "..."}` olarak girer, exit kodu kanıt sayılır.
+If the user wired this skill's `scripts/stop_gate.py` into Command Code's `Stop` hook: while an active plan has an unverified step, the turn CANNOT close — the hook exits 2 and sends you back to the audit. This is a non-skippable layer; do not rely on the hook's absence but do not contradict it when present. For polyglot checks use the `exec` type: the user's compiled binary (C++/Rust/Java/jar) enters the plan as `{"type": "exec", "cmd": "..."}`; exit code counts as evidence.
 
-## Örnek
+## Example
 
-Görev: "fib.py'de fibonacci yaz, testi olsun."
+Task: "write fibonacci in fib.py, with a test."
 
 ```json
 {
-  "task": "fib.py'de fibonacci fonksiyonu ve testi",
+  "task": "fibonacci function and test in fib.py",
   "created": "2026-09-03T12:00:00",
   "steps": [
     {
       "id": 1,
-      "title": "fib fonksiyonu yaz",
+      "title": "write fib function",
       "verify": [
         {"type": "file_exists", "path": "fib.py"},
         {"type": "regex", "path": "fib.py", "pattern": "def\\s+fib\\s*\\("},
@@ -87,7 +87,7 @@ Görev: "fib.py'de fibonacci yaz, testi olsun."
     },
     {
       "id": 2,
-      "title": "pytest testi yaz ve geçir",
+      "title": "write and pass pytest",
       "verify": [
         {"type": "pytest", "args": "test_fib.py -q"}
       ],
@@ -97,4 +97,4 @@ Görev: "fib.py'de fibonacci yaz, testi olsun."
 }
 ```
 
-Sonra: adımları yap → her adımda `run` → sonda `audit` → tabloyla raporla.
+Then: do the steps → `run` after each → `audit` at the end → report with the table.
