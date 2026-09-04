@@ -123,7 +123,7 @@ def check_monotonic(before: Dict, after: Dict) -> MonotonicCheck:
                 remaining.remove(encoded)
             except ValueError:
                 violations.append(
-                    f"step {sid}: sealed verification check removed or modified: {encoded}"
+                    f"step {sid}: verification reduced; sealed check removed or modified: {encoded}"
                 )
 
         if len(after_checks) > len(before_checks):
