@@ -1,9 +1,4 @@
-"""L3 — deterministic policy engine.
-
-Rules are plain IF/THEN checks over a structured context. Integrated supervisor
-calls always provide explicit seal/evidence/agent-registry state; direct legacy
-callers remain backward compatible when those fields are absent.
-"""
+"""L3 — deterministic policy engine."""
 from __future__ import annotations
 
 import ast
@@ -70,9 +65,6 @@ def _seal_intact(state: Dict) -> bool:
     current = state.get("current_hash")
     if sealed is not None or current is not None:
         return bool(sealed and current and sealed == current)
-    # Legacy direct PolicyEngine callers did not supply L8 state. The integrated
-    # orchestrator always supplies seal_ok explicitly, so this compatibility
-    # fallback cannot create a supervisor PASS.
     return True
 
 
@@ -110,8 +102,6 @@ def no_secret_leak(ctx: Dict) -> RuleResult:
 
 
 def evidence_chain_valid(ctx: Dict) -> RuleResult:
-    # Integrated callers always provide the field; old unit-level callers may
-    # omit it, so omission stays non-triggering for API compatibility.
     if "evidence_valid" not in ctx:
         return RuleResult("EVIDENCE_VALID", False, 2)
     valid = ctx.get("evidence_valid") is True
@@ -120,15 +110,11 @@ def evidence_chain_valid(ctx: Dict) -> RuleResult:
 
 
 def agent_registry_chain_valid(ctx: Dict) -> RuleResult:
-    # Same compatibility rule as evidence. The integrated orchestrator always
-    # supplies this value, making registry tampering fail closed in real runs.
     if "agent_registry_valid" not in ctx:
         return RuleResult("AGENT_REGISTRY_VALID", False, 2)
     valid = ctx.get("agent_registry_valid") is True
     return RuleResult(
-        "AGENT_REGISTRY_VALID",
-        not valid,
-        2,
+        "AGENT_REGISTRY_VALID", not valid, 2,
         "Agent registry chain/head integrity check failed or is unknown" if not valid else "",
     )
 
@@ -139,18 +125,29 @@ def required_tool_present(ctx: Dict) -> RuleResult:
                       "Missing required tools: %s" % ", ".join(missing) if missing else "")
 
 
+def configuration_valid(ctx: Dict) -> RuleResult:
+    errors = ctx.get("configuration_errors", [])
+    return RuleResult("CONFIG_VALID", bool(errors), 1,
+                      "Supervisor configuration is invalid" if errors else "",
+                      "\n".join(str(item) for item in errors) if errors else "")
+
+
+def policy_configuration_valid(ctx: Dict) -> RuleResult:
+    errors = ctx.get("policy_errors", [])
+    return RuleResult("POLICY_CONFIG_VALID", bool(errors), 1,
+                      "Configured policy files are invalid" if errors else "",
+                      "\n".join(str(item) for item in errors) if errors else "")
+
+
 DEFAULT_RULES: List[PolicyRule] = [
+    PolicyRule("CONFIG_VALID", 1, "Is supervisor configuration valid?", configuration_valid),
+    PolicyRule("POLICY_CONFIG_VALID", 1, "Are configured policy files valid?", policy_configuration_valid),
     PolicyRule("REQ_TESTS_PASS", 2, "Do all required tests pass?", required_tests_passing),
     PolicyRule("NO_PENDING", 2, "Are all plan steps verified?", no_pending_steps),
     PolicyRule("SEAL_INTACT", 1, "Is the sealed plan intact?", seal_not_violated),
     PolicyRule("NO_SECRET_LEAK", 3, "Any secret leaked to logs?", no_secret_leak),
     PolicyRule("EVIDENCE_VALID", 2, "Is the evidence chain valid?", evidence_chain_valid),
-    PolicyRule(
-        "AGENT_REGISTRY_VALID",
-        2,
-        "Is the multi-agent registry chain valid?",
-        agent_registry_chain_valid,
-    ),
+    PolicyRule("AGENT_REGISTRY_VALID", 2, "Is the multi-agent registry chain valid?", agent_registry_chain_valid),
     PolicyRule("TOOLS_PRESENT", 2, "Are required tools present?", required_tool_present),
 ]
 
@@ -185,6 +182,8 @@ def _compile_policy(spec: Dict[str, Any]) -> Optional[PolicyRule]:
     try:
         level = int(spec.get("level", 3))
     except (TypeError, ValueError):
+        return None
+    if level < 0 or level > 5:
         return None
     detail = str(spec.get("detail") or rule_id)
     question = str(spec.get("question") or detail)
@@ -234,10 +233,11 @@ def _parse_scalar(raw: str) -> Any:
             return raw.strip('"\'')
 
 
-def _parse_simple_toml_rules(text: str) -> List[Dict[str, Any]]:
+def _parse_simple_toml_rules(text: str) -> tuple[List[Dict[str, Any]], List[str]]:
     result: List[Dict[str, Any]] = []
+    errors: List[str] = []
     current: Optional[Dict[str, Any]] = None
-    for raw_line in text.splitlines():
+    for line_no, raw_line in enumerate(text.splitlines(), 1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -245,36 +245,75 @@ def _parse_simple_toml_rules(text: str) -> List[Dict[str, Any]]:
             current = {}
             result.append(current)
             continue
-        if current is None or "=" not in line:
+        if current is None:
+            errors.append(f"line {line_no}: content outside [[rules]]")
+            continue
+        if "=" not in line:
+            errors.append(f"line {line_no}: expected key = value")
             continue
         key, value = line.split("=", 1)
-        current[key.strip()] = _parse_scalar(value.split("#", 1)[0].strip())
-    return result
+        key = key.strip()
+        if not key:
+            errors.append(f"line {line_no}: empty key")
+            continue
+        current[key] = _parse_scalar(value.split("#", 1)[0].strip())
+    return result, errors
 
 
-def load_policy_rules_from_dir(dirpath: str) -> List[PolicyRule]:
+def load_policy_rules_from_dir(dirpath: str, errors: Optional[List[str]] = None) -> List[PolicyRule]:
+    """Load policy rules, optionally collecting every parse/compile error.
+
+    Integrated supervisor callers pass an ``errors`` list and fail closed when
+    it is non-empty. Legacy direct callers keep the old list-only API.
+    """
     root = Path(dirpath)
     if not root.is_dir():
         return []
-    specs: List[Dict[str, Any]] = []
+    specs: List[tuple[Path, Dict[str, Any]]] = []
     for path in sorted(root.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in {".json", ".toml"}:
+            continue
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except OSError as exc:
+            if errors is not None:
+                errors.append(f"{path}: unreadable policy file: {exc}")
             continue
-        try:
-            if path.suffix.lower() == ".json":
+        if path.suffix.lower() == ".json":
+            try:
                 data = json.loads(text)
-                items = data.get("rules", []) if isinstance(data, dict) else data
-                if isinstance(items, list):
-                    specs.extend(item for item in items if isinstance(item, dict))
-            elif path.suffix.lower() == ".toml":
-                specs.extend(_parse_simple_toml_rules(text))
-        except (json.JSONDecodeError, ValueError):
-            continue
-    rules = []
-    for spec in specs:
+            except json.JSONDecodeError as exc:
+                if errors is not None:
+                    errors.append(f"{path}: invalid JSON: {exc}")
+                continue
+            items = data.get("rules", []) if isinstance(data, dict) else data
+            if not isinstance(items, list):
+                if errors is not None:
+                    errors.append(f"{path}: JSON policy must be a list or object with rules list")
+                continue
+            for item in items:
+                if isinstance(item, dict):
+                    specs.append((path, item))
+                elif errors is not None:
+                    errors.append(f"{path}: policy rule must be an object")
+        else:
+            items, parse_errors = _parse_simple_toml_rules(text)
+            if errors is not None:
+                errors.extend(f"{path}: {message}" for message in parse_errors)
+            specs.extend((path, item) for item in items)
+
+    rules: List[PolicyRule] = []
+    seen_ids: set[str] = set()
+    for path, spec in specs:
         rule = _compile_policy(spec)
-        if rule is not None:
-            rules.append(rule)
+        if rule is None:
+            if errors is not None:
+                errors.append(f"{path}: invalid policy rule: {spec!r}")
+            continue
+        if rule.rule_id in seen_ids:
+            if errors is not None:
+                errors.append(f"{path}: duplicate policy id: {rule.rule_id}")
+            continue
+        seen_ids.add(rule.rule_id)
+        rules.append(rule)
     return rules
