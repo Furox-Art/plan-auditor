@@ -41,6 +41,33 @@ jobs:
               text = text.replace(old_deadline, new_deadline, 1)
           elif new_deadline not in text:
               raise SystemExit('supervisor startup deadline anchor missing')
+
+          old_fds = '        "stderr": subprocess.STDOUT, "close_fds": os.name != "nt",\n'
+          new_fds = '        "stderr": subprocess.STDOUT, "close_fds": True,\n'
+          if old_fds in text:
+              if text.count(old_fds) != 1:
+                  raise SystemExit('unexpected close_fds anchor count')
+              text = text.replace(old_fds, new_fds, 1)
+          elif new_fds not in text:
+              raise SystemExit('close_fds anchor missing')
+
+          old_import = '    from .daemon import read_state, pid_alive\n'
+          new_import = '    from .daemon import read_state\n'
+          if old_import in text:
+              if text.count(old_import) != 1:
+                  raise SystemExit('unexpected start pid_alive import count')
+              text = text.replace(old_import, new_import, 1)
+          elif new_import not in text:
+              raise SystemExit('start daemon import anchor missing')
+
+          old_condition = '        if state and state.get("state") == "running" and state.get("pid") == process.pid and pid_alive(process.pid):\n'
+          new_condition = '''        if (\n            state\n            and state.get("state") == "running"\n            and state.get("pid") == process.pid\n            and process.poll() is None\n        ):\n'''
+          if old_condition in text:
+              if text.count(old_condition) != 1:
+                  raise SystemExit('unexpected startup liveness condition count')
+              text = text.replace(old_condition, new_condition, 1)
+          elif new_condition not in text:
+              raise SystemExit('startup liveness condition anchor missing')
           cli.write_text(text, encoding='utf-8')
 
           daemon = Path('supervisor/daemon.py')
