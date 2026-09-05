@@ -45,6 +45,31 @@ def _contract_step(step: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _legacy_v3_contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Reproduce the exact v2.1.0/v3 seal hashing contract.
+
+    v3 stored raw ``depends_on`` values. v4 canonicalizes the effective graph, so
+    genuine legacy seals must be self-checked with the historical encoding before
+    they can be migrated.
+    """
+    return {
+        "task": copy.deepcopy(plan.get("task")),
+        "requirements": copy.deepcopy(plan.get("requirements")),
+        "required_tools": copy.deepcopy(plan.get("required_tools", [])),
+        "steps": [
+            _contract_step(step)
+            for step in plan.get("steps", [])
+            if isinstance(step, dict)
+        ],
+    }
+
+
+def legacy_v3_plan_hash(plan: Dict[str, Any]) -> str:
+    return hashlib.sha256(
+        _canonical(_legacy_v3_contract_plan(plan)).encode("utf-8")
+    ).hexdigest()
+
+
 def contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     try:
         dependencies = effective_dependencies(plan)
@@ -120,11 +145,13 @@ class Seal:
 
 def _criteria_count(plan: Dict[str, Any]) -> int:
     total = 0
-    for step in contract_plan(plan).get("steps", []):
-        total += len(step.get("verify", []))
+    for step in plan.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        total += len([c for c in step.get("verify", []) if isinstance(c, dict)])
         for output in step.get("outputs", []) or []:
             if isinstance(output, dict):
-                total += len(output.get("verify", []) or [])
+                total += len([c for c in output.get("verify", []) or [] if isinstance(c, dict)])
     return total
 
 
@@ -178,7 +205,7 @@ def check_monotonic(before: Dict, after: Dict) -> MonotonicCheck:
     """Allow proof strengthening while freezing host-approved execution scope.
 
     Safe automatic strengthening is limited to extra deterministic verification
-    checks, extra dependencies and extra required-output prerequisites.  New
+    checks, extra dependencies and extra required-output prerequisites. New
     steps, requirements, tools, coverage assignments or declared outputs change
     the execution/request scope and therefore require a new host-approved request
     generation rather than silently becoming the new seal baseline.
@@ -328,13 +355,17 @@ def _parse_seal_data(data: Dict[str, Any]) -> Seal:
 
 
 def _validate_seal_self_consistency(seal: Seal) -> None:
-    if seal.format_version >= 3:
+    if seal.format_version == 3:
+        expected_hash = legacy_v3_plan_hash(seal.as_plan())
+    elif seal.format_version >= 4:
         expected_hash = plan_hash(seal.as_plan())
-        if not isinstance(seal.plan_hash, str) or seal.plan_hash != expected_hash:
-            raise SealIntegrityError("plan seal contract hash mismatch")
-        expected_count = _criteria_count(seal.as_plan())
-        if seal.criteria_count != expected_count:
-            raise SealIntegrityError("plan seal criteria_count mismatch")
+    else:
+        return
+    if not isinstance(seal.plan_hash, str) or seal.plan_hash != expected_hash:
+        raise SealIntegrityError("plan seal contract hash mismatch")
+    expected_count = _criteria_count(seal.as_plan())
+    if seal.criteria_count != expected_count:
+        raise SealIntegrityError("plan seal criteria_count mismatch")
 
 
 def load_seal(path: str) -> Optional[Seal]:
@@ -369,6 +400,8 @@ def _write_seal_payload(payload: Dict[str, Any], path: Path, key: Optional[KeyMa
         value["auth"] = make_auth(key, SEAL_DOMAIN, payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
+    if tmp.exists() and tmp.is_symlink():
+        raise SealIntegrityError(f"refusing symlinked seal temp path: {tmp}")
     tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
 
