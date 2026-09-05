@@ -2,7 +2,9 @@
 
 A live writer is never evicted merely because a wall-clock timeout elapsed.
 Stale recovery is allowed only when the recorded PID is provably dead and the
-lock identity is unchanged at removal time.
+lock identity is unchanged at removal time. A just-created lock may be visible
+before its JSON payload is fully written; malformed/partial observations are
+therefore retried without eviction until the acquisition deadline.
 """
 from __future__ import annotations
 
@@ -72,11 +74,10 @@ def install_registry_lock_hardening() -> None:
     @contextmanager
     def _write_lock(self: MultiAgentRegistry):
         self._ensure_dirs()
-        deadline = time.monotonic() + float(getattr(self, "REGISTRY_LOCK_TIMEOUT", 5.0) or 5.0)
-        # Constants live at module level in older releases; preserve their public
-        # behavior while making stale eviction owner-based rather than age-based.
-        if deadline <= time.monotonic():
-            deadline = time.monotonic() + 5.0
+        timeout = float(getattr(self, "REGISTRY_LOCK_TIMEOUT", 5.0) or 5.0)
+        if timeout <= 0:
+            timeout = 5.0
+        deadline = time.monotonic() + timeout
         token = uuid.uuid4().hex
         payload = {"pid": os.getpid(), "token": token, "created": time.time()}
 
@@ -95,11 +96,17 @@ def install_registry_lock_hardening() -> None:
                 observed = _read_lock(self.lock_path)
                 if isinstance(observed, dict) and _remove_dead_owner_lock(self.lock_path, observed):
                     continue
-                if isinstance(observed, dict) and observed.get("malformed"):
-                    raise RegistryIntegrityError(
-                        "agent registry write lock is malformed; refusing unsafe stale-lock eviction"
-                    )
+
+                # O_EXCL publishes the directory entry before the owner has
+                # necessarily finished writing/fsyncing its small JSON payload.
+                # Treat malformed/changed observations as transient contention,
+                # never as permission to delete an unknown owner's lock.
                 if time.monotonic() >= deadline:
+                    if isinstance(observed, dict) and observed.get("malformed"):
+                        raise RegistryIntegrityError(
+                            "agent registry write lock remained malformed through acquisition deadline; "
+                            "refusing unsafe stale-lock eviction"
+                        )
                     owner = observed.get("pid") if isinstance(observed, dict) else None
                     raise RegistryIntegrityError(
                         "agent registry write lock timeout"
