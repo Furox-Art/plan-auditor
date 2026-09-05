@@ -1,8 +1,8 @@
 """L3 — deterministic policy engine.
 
 Rules are plain IF/THEN checks over a structured context. Integrated supervisor
-calls always provide explicit seal/evidence state; direct legacy callers remain
-backward compatible when seal fields are absent.
+calls always provide explicit seal/evidence/agent-registry state; direct legacy
+callers remain backward compatible when those fields are absent.
 """
 from __future__ import annotations
 
@@ -110,13 +110,27 @@ def no_secret_leak(ctx: Dict) -> RuleResult:
 
 
 def evidence_chain_valid(ctx: Dict) -> RuleResult:
-    # Same compatibility rule as seal: integrated callers always provide the
-    # field; old unit-level callers may omit it.
+    # Integrated callers always provide the field; old unit-level callers may
+    # omit it, so omission stays non-triggering for API compatibility.
     if "evidence_valid" not in ctx:
         return RuleResult("EVIDENCE_VALID", False, 2)
     valid = ctx.get("evidence_valid") is True
     return RuleResult("EVIDENCE_VALID", not valid, 2,
                       "Evidence integrity check failed or is unknown" if not valid else "")
+
+
+def agent_registry_chain_valid(ctx: Dict) -> RuleResult:
+    # Same compatibility rule as evidence. The integrated orchestrator always
+    # supplies this value, making registry tampering fail closed in real runs.
+    if "agent_registry_valid" not in ctx:
+        return RuleResult("AGENT_REGISTRY_VALID", False, 2)
+    valid = ctx.get("agent_registry_valid") is True
+    return RuleResult(
+        "AGENT_REGISTRY_VALID",
+        not valid,
+        2,
+        "Agent registry chain/head integrity check failed or is unknown" if not valid else "",
+    )
 
 
 def required_tool_present(ctx: Dict) -> RuleResult:
@@ -131,6 +145,12 @@ DEFAULT_RULES: List[PolicyRule] = [
     PolicyRule("SEAL_INTACT", 1, "Is the sealed plan intact?", seal_not_violated),
     PolicyRule("NO_SECRET_LEAK", 3, "Any secret leaked to logs?", no_secret_leak),
     PolicyRule("EVIDENCE_VALID", 2, "Is the evidence chain valid?", evidence_chain_valid),
+    PolicyRule(
+        "AGENT_REGISTRY_VALID",
+        2,
+        "Is the multi-agent registry chain valid?",
+        agent_registry_chain_valid,
+    ),
     PolicyRule("TOOLS_PRESENT", 2, "Are required tools present?", required_tool_present),
 ]
 
