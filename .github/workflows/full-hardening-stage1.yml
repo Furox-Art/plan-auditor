@@ -43,6 +43,8 @@ jobs:
           PY
       - name: Apply hardening patch
         run: python tools/apply_full_hardening_stage1.py
+      - name: Apply request-boundary regression migration
+        run: python tools/apply_stage1_followup.py
       - name: Install package and test tooling
         run: |
           python -m pip install --upgrade pip
@@ -70,7 +72,7 @@ jobs:
         run: python -m build
       - name: Remove one-shot tooling and commit verified changes
         run: |
-          git rm -f tools/apply_full_hardening_stage1.py .github/workflows/full-hardening-stage1.yml
+          git rm -f tools/apply_full_hardening_stage1.py tools/apply_stage1_followup.py .github/workflows/full-hardening-stage1.yml
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
