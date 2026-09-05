@@ -87,6 +87,15 @@ def _safe_path(root: Path, relative: str, errors: List[str], label: str) -> Path
         return None
 
 
+def _register_policy_roots(workspace: Path, policies_dir: str, errors: List[str]) -> None:
+    # Import lazily to keep config parsing independent from policy compilation.
+    from .policies import register_policy_workspace
+
+    for error in register_policy_workspace(workspace, policies_dir):
+        if error not in errors:
+            errors.append(error)
+
+
 def load_config(workspace_root: str = ".") -> Config:
     """Load and strictly validate ``.plan-auditor/supervisor.json``.
 
@@ -101,13 +110,14 @@ def load_config(workspace_root: str = ".") -> Config:
         workspace, f".plan-auditor/{CONFIG_FILENAME}", errors, "supervisor config path"
     )
     if config_path is None:
+        _register_policy_roots(workspace, "policies", errors)
         return Config(workspace_root=str(workspace), errors=errors)
     if not config_path.exists():
-        # Even without a config file, reject an unsafe implicit policy control
-        # directory if it already exists as a symlink.
         _safe_path(workspace, ".plan-auditor/policies", errors, "implicit policy directory")
+        _register_policy_roots(workspace, "policies", errors)
         return Config(workspace_root=str(workspace), errors=errors)
     if not config_path.is_file():
+        _register_policy_roots(workspace, "policies", errors)
         return Config(
             workspace_root=str(workspace),
             errors=errors + ["supervisor config path is not a regular file"],
@@ -116,11 +126,13 @@ def load_config(workspace_root: str = ".") -> Config:
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
+        _register_policy_roots(workspace, "policies", errors)
         return Config(
             workspace_root=str(workspace),
             errors=errors + [f"invalid supervisor config: {type(exc).__name__}: {exc}"],
         )
     if not isinstance(data, dict):
+        _register_policy_roots(workspace, "policies", errors)
         return Config(
             workspace_root=str(workspace),
             errors=errors + ["supervisor config root must be an object"],
@@ -180,6 +192,7 @@ def load_config(workspace_root: str = ".") -> Config:
         # though the config is already blocking.
         policies_dir = ".plan-auditor/__invalid_policies__"
     _safe_path(workspace, ".plan-auditor/policies", errors, "implicit policy directory")
+    _register_policy_roots(workspace, policies_dir, errors)
 
     raw_extra = data.get("extra", {})
     if not isinstance(raw_extra, dict):
