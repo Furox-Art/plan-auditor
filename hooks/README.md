@@ -1,25 +1,52 @@
 # Platform hook adapters
 
-Each AI tool exposes lifecycle hooks differently. This directory contains
-the small glue that wires `gate_hook.py` into each platform so the audit
-gate runs **automatically** — without the main AI having to remember to
-call the skill.
+`gate_hook.py` is the **single authoritative hook gate**. It calls the integrated
+supervisor assessment and only returns PASS when every active plan has:
 
-## Generic hook (tool-agnostic)
+- explicit requirement coverage,
+- an intact format-v3 full-contract seal,
+- matching supervisor profile/mode/policy contract,
+- a fresh deterministic full audit,
+- valid active + archived evidence,
+- valid agent-registry state,
+- required tools and policies satisfied.
 
-`gate_hook.py` is the core. It reads the workspace, runs the completion
-gate, and prints a verdict. Every adapter below calls it.
+It never trusts `status=verified` by itself.
+
+## Generic invocation
 
 ```bash
 python hooks/gate_hook.py <workspace-dir>
-# exit 0 = PASS, exit 1 = BLOCKED, exit 3 = UNKNOWN
 ```
 
----
+Exit codes:
 
-## Per-platform wiring
+- `0` — PASS / no active plan
+- `1` — FAIL / completion blocked
+- `3` — UNKNOWN / completion withheld pending deterministic follow-up
 
-### Claude Code — `.claude/settings.json`
+JSON output:
+
+```bash
+python hooks/gate_hook.py . --format json
+```
+
+Advisory warning file:
+
+```bash
+python hooks/gate_hook.py . --warn-file .plan-auditor/gate-warning.json
+```
+
+## Command Code compatibility adapter
+
+`scripts/stop_gate.py` exists only for hosts that use exit code `2` to retry a
+Stop event. It delegates to the same integrated supervisor assessment as
+`gate_hook.py`; it is not a weaker status-only gate.
+
+## Claude Code / blocking Stop hooks
+
+Point the host's Stop hook at `gate_hook.py` and treat any nonzero result as
+“do not finish.” Example shape:
 
 ```json
 {
@@ -30,7 +57,7 @@ python hooks/gate_hook.py <workspace-dir>
           {
             "type": "command",
             "command": "python \"/abs/path/to/plan-auditor/hooks/gate_hook.py\" \"$(pwd)\"",
-            "timeout": 15
+            "timeout": 20
           }
         ]
       }
@@ -39,103 +66,35 @@ python hooks/gate_hook.py <workspace-dir>
 }
 ```
 
-The `Stop` event fires at every turn-end. If the gate returns BLOCKED,
-Claude Code retries the turn (capped at 3) and feeds the hook output back
-to the model — so the model sees "completion BLOCKED" and runs the
-auditor.
+Host configuration syntax can change; the invariant is that the host executes the
+integrated gate and does not accept a non-PASS completion.
 
-### Cursor — `.cursor/hooks.json` (or hooks UI)
+## Cursor / Grok / similar hosts
 
-```json
-{
-  "hooks": {
-    "stop": [
-      {
-        "command": "python /abs/path/to/plan-auditor/hooks/gate_hook.py \"$(pwd)\""
-      }
-    ]
-  }
-}
-```
+Use the same `gate_hook.py` command from the host's blocking stop/lifecycle hook
+when such a hook is available.
 
-Cursor runs `stop` hooks after each agent turn and injects the output
-into the conversation.
+## Codex CLI and advisory-only hosts
 
-### Codex CLI — `config.toml`
+When the host cannot block turn-end, use `--warn-file` or inject the gate output
+into the next model turn. This makes the deterministic result visible but cannot
+physically force an advisory-only host to continue.
 
-Codex's `notify` hook is advisory (it cannot block a turn), so the hook
-writes a **warning file** the model reads on the next turn:
+## OpenCode plugin pattern
 
-```toml
-notify = [
-  "python",
-  "/abs/path/to/plan-auditor/hooks/gate_hook.py",
-  "--warn-file",
-  ".plan-auditor/gate-warning.json",
-  "$(pwd)"
-]
-```
+An OpenCode plugin can execute `gate_hook.py` after relevant tool events and
+append non-PASS output to the agent context. This is advisory unless the host
+itself exposes a blocking lifecycle API.
 
-Pair this with an AGENTS.md instruction: *"Before claiming done, read
-`.plan-auditor/gate-warning.json`; if outcome is not PASS, run the
-auditor."*
+## Multi-plan behavior
 
-### OpenCode — `~/.config/opencode/plugins/plan-auditor.js`
+The hook enumerates the default plan and every safe
+`.plan-auditor/plans/<name>.json` plan. A passing default plan cannot hide an
+unfinished named plan. If only named plans exist, the workspace is **not** treated
+as `NO_PLAN`.
 
-```js
-import { spawn } from "child_process";
-export default async function (input) {
-  return {
-    "tool.execute.after": async (_toolInput, output) => {
-      const base = input.directory || process.cwd();
-      const hook = "/abs/path/to/plan-auditor/hooks/gate_hook.py";
-      const proc = spawn("python", [hook, base], { windowsHide: true });
-      let out = "";
-      proc.stdout.on("data", (d) => (out += d.toString()));
-      proc.on("close", (code) => {
-        if (code !== 0 && output && typeof output === "object") {
-          output.output = (output.output || "") + "\n\n" + out;
-        }
-      });
-      return output;
-    },
-  };
-}
-```
+## Trust boundary
 
-The plugin appends the verdict to tool output after every tool call.
-
-### Grok Build — `.grok/settings.json` (or hooks config)
-
-```json
-{
-  "hooks": {
-    "stop": [
-      {
-        "command": "python /abs/path/to/plan-auditor/hooks/gate_hook.py \"$(pwd)\""
-      }
-    ]
-  }
-}
-```
-
-Same pattern as Claude Code / Cursor.
-
----
-
-## What the hook guarantees
-
-- **Deterministic gate runs automatically** on every turn/tool event.
-- The main AI **sees the verdict** (PASS / BLOCKED / UNKNOWN) without
-  being asked.
-- The main AI **cannot relax criteria** to force a PASS — the gate reads
-  sealed plan state, not the AI's claim.
-- Exit codes let platforms that support blocking (Claude Code, Cursor,
-  Grok) physically prevent turn-end until PASS.
-
-## What it cannot do
-
-- On advisory-only platforms (Codex `notify`), the hook **nudges** but
-  cannot block. Use `--warn-file` + AGENTS.md as the enforcement layer.
-- The hook trusts the workspace filesystem. A same-user malicious agent
-  can tamper with `.plan-auditor/` state — see `docs/threat-model.md`.
+The gate verifies whether the planned/user-requested work is actually proven. It
+is not an OS sandbox. See `docs/threat-model.md` for the same-user boundary and
+external-key HMAC integrity mode.
