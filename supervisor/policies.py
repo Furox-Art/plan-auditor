@@ -10,38 +10,44 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .control_plane import ControlPlanePathError, confined_workspace_path
 
-# ``load_config`` registers the exact lexical policy directories for each
-# workspace before the orchestrator/CLI resolves them.  Resolved paths that came
-# through a symlink are therefore not in this allow-set and are rejected before
-# any external file is read.
+# ``load_config`` records safe policy directories and, critically, the resolved
+# target of an unsafe symlinked policy directory. A later caller may pass an
+# already-resolved path (the historical orchestrator/CLI behavior); explicit
+# deny entries ensure that resolved external target is still rejected. Unrelated
+# direct policy-loader callers remain backwards compatible.
 _ALLOWED_POLICY_DIRS: set[Path] = set()
-_POLICY_CONFINEMENT_ACTIVE = False
+_DENIED_POLICY_DIRS: set[Path] = set()
 
 
 def register_policy_workspace(root: str | Path, configured_relative: str) -> list[str]:
-    """Register policy directories that are physically confined to ``root``.
-
-    Returns validation errors and activates fail-closed policy loading even when
-    no policy directory currently exists.
-    """
-    global _POLICY_CONFINEMENT_ACTIVE
-    _POLICY_CONFINEMENT_ACTIVE = True
+    """Register safe/unsafe policy roots for one workspace without reading them."""
     errors: list[str] = []
     workspace = Path(root).expanduser().resolve()
     for relative, label in (
         (configured_relative, "configured policy directory"),
         (".plan-auditor/policies", "implicit policy directory"),
     ):
+        lexical = workspace / relative
         try:
             path = confined_workspace_path(workspace, relative, require_directory=True)
         except ControlPlanePathError as exc:
             errors.append(f"{label}: {exc}")
+            # Resolving only the pathname (without opening policy files) records
+            # the exact external target that older callers might later pass to
+            # ``load_policy_rules_from_dir`` after ``Path.resolve()``.
+            try:
+                _DENIED_POLICY_DIRS.add(lexical.resolve(strict=False))
+            except OSError:
+                pass
             continue
         if path.exists():
             try:
-                _ALLOWED_POLICY_DIRS.add(path.resolve(strict=True))
+                resolved = path.resolve(strict=True)
             except OSError as exc:
                 errors.append(f"{label}: cannot resolve directory: {exc}")
+                continue
+            _ALLOWED_POLICY_DIRS.add(resolved)
+            _DENIED_POLICY_DIRS.discard(resolved)
     return errors
 
 
@@ -297,7 +303,7 @@ def _parse_simple_toml_rules(text: str) -> tuple[List[Dict[str, Any]], List[str]
 
 
 def load_policy_rules_from_dir(dirpath: str, errors: Optional[List[str]] = None) -> List[PolicyRule]:
-    """Load policy rules only from a pre-authorized workspace directory."""
+    """Load policy rules while honoring workspace registrations when present."""
     root = Path(dirpath)
     if not root.exists():
         return []
@@ -315,10 +321,10 @@ def load_policy_rules_from_dir(dirpath: str, errors: Optional[List[str]] = None)
         if errors is not None:
             errors.append(f"{root}: cannot resolve policy directory: {exc}")
         return []
-    if _POLICY_CONFINEMENT_ACTIVE and resolved not in _ALLOWED_POLICY_DIRS:
+    if resolved in _DENIED_POLICY_DIRS:
         if errors is not None:
             errors.append(
-                f"{root}: policy directory was not authorized as a symlink-free workspace path"
+                f"{root}: policy directory resolves through an unsafe workspace symlink"
             )
         return []
 
