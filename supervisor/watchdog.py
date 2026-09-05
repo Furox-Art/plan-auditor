@@ -1,24 +1,21 @@
 """L9 — Execution watchdog.
 
-Observes the workspace while the main agent works: filesystem changes,
-git diff, build/test exit codes, agent heartbeats, timeouts. Best-effort
-per platform — uses capability detection and degrades to polling when
-inotify/FSEvents is unavailable.
+Observes the workspace while the main agent works. All internal git probes use
+structured argv and never invoke a shell.
 """
 from __future__ import annotations
 
 import os
 import subprocess
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Set
 
 
 @dataclass
 class WatchEvent:
     ts: float
-    kind: str          # fs_create | fs_delete | fs_modify | git_change | timeout | heartbeat_miss
+    kind: str
     path: str = ""
     detail: str = ""
 
@@ -32,11 +29,12 @@ class WatchResult:
 
 
 def _snapshot_files(root: str) -> Dict[str, float]:
-    """Map relative path -> mtime for regular files under root."""
     state: Dict[str, float] = {}
-    for dirpath, _, filenames in os.walk(root):
-        if ".plan-auditor" in dirpath or ".git" in dirpath:
-            continue
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name for name in dirnames
+            if name not in {".plan-auditor", ".git", "__pycache__", ".pytest_cache"}
+        ]
         for fn in filenames:
             p = os.path.join(dirpath, fn)
             try:
@@ -47,15 +45,24 @@ def _snapshot_files(root: str) -> Dict[str, float]:
     return state
 
 
-def _git_changed_files(root: str) -> Set[str]:
+def _git_name_only(root: str, cached: bool = False) -> Set[str]:
+    argv = ["git", "diff"]
+    if cached:
+        argv.append("--cached")
+    argv.append("--name-only")
     try:
-        out = subprocess.run("git diff --name-only && git diff --cached --name-only",
-                             shell=True, cwd=root, capture_output=True, text=True, timeout=30)
+        out = subprocess.run(
+            argv, shell=False, cwd=root, capture_output=True, text=True, timeout=30
+        )
         if out.returncode != 0:
             return set()
-        return {l.strip() for l in out.stdout.splitlines() if l.strip()}
-    except Exception:
+        return {line.strip() for line in out.stdout.splitlines() if line.strip()}
+    except (OSError, subprocess.TimeoutExpired):
         return set()
+
+
+def _git_changed_files(root: str) -> Set[str]:
+    return _git_name_only(root, cached=False) | _git_name_only(root, cached=True)
 
 
 class Watchdog:
@@ -92,11 +99,10 @@ class Watchdog:
             events.append(WatchEvent(ts=now, kind="git_change", path=p))
             changed.add(p)
 
-        result = WatchResult(events=events, changed_files=changed,
-                             created=created, deleted=deleted)
+        result = WatchResult(events=events, changed_files=changed, created=created, deleted=deleted)
         for ev in events:
-            for h in self._handlers:
-                h(ev)
+            for handler in self._handlers:
+                handler(ev)
 
         self._baseline = current
         return result
