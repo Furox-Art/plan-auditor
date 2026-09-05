@@ -26,6 +26,7 @@ dependencies = []
 
 [project.scripts]
 plan-auditor = "supervisor.cli:entrypoint"
+plan-auditor-migrate-seal = "supervisor.seal_migration:main"
 
 [project.urls]
 Homepage = "https://github.com/Furox-Art/plan-auditor"
