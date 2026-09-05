@@ -277,8 +277,20 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
         "verdict": analysis.verdict,
         "rationale": analysis.rationale,
         "weakest_verification": analysis.weakest_verification,
-        "steps": [{"id": s.step_id, "behavioral": s.has_behavioral_verification, "risks": s.risks}
-                  for s in analysis.step_analyses],
+        "graph_errors": analysis.graph_errors,
+        "topological_order": analysis.topological_order,
+        "dependencies": analysis.dependencies,
+        "steps": [
+            {
+                "id": s.step_id,
+                "behavioral": s.has_behavioral_verification,
+                "dependencies": s.dependencies,
+                "required_outputs": s.required_outputs,
+                "declared_outputs": s.declared_outputs,
+                "risks": s.risks,
+            }
+            for s in analysis.step_analyses
+        ],
     }
     if analysis.verdict != "PASS":
         _json(output)

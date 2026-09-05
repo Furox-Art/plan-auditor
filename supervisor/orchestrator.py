@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from scripts import audit_check as core
+from scripts.plan_graph import (
+    PlanGraphError,
+    effective_dependencies,
+    output_index,
+    required_outputs,
+    topological_order,
+)
 
 from .adversarial import AdversarialReport, run_adversarial_review
 from .agents import MultiAgentRegistry
@@ -84,36 +91,91 @@ def _read_evidence_records(root: Path) -> List[Dict[str, Any]]:
     return records
 
 
-def _checks_match(step: Dict[str, Any], record: Dict[str, Any]) -> bool:
-    expected = [core.norm_check(check) for check in step.get("verify", []) if isinstance(check, dict)]
-    results = record.get("results", [])
+def _result_checks_match(expected, results):
     if len(results) != len(expected):
         return False
     actual = [result.get("check") for result in results if isinstance(result, dict)]
-    return actual == expected and all(
+    return actual == expected and len(actual) == len(results) and all(
         result.get("passed") is True for result in results if isinstance(result, dict)
     )
 
 
-def fresh_full_audit_proof(root: str | Path, plan: Dict[str, Any]) -> FreshAuditProof:
-    """Prove the current plan/workspace exactly matches a completed L10 audit.
+def _checks_match(step: Dict[str, Any], record: Dict[str, Any], dependencies: List[int],
+                  by_id: Dict[int, Dict[str, Any]]) -> bool:
+    expected = [core.norm_check(check) for check in step.get("verify", []) if isinstance(check, dict)]
+    results = record.get("results", [])
+    if not _result_checks_match(expected, results):
+        return False
+    if record.get("dependencies", []) != dependencies:
+        return False
 
-    ``status=verified`` is never sufficient. A valid proof requires:
-    - the active evidence chain to verify,
-    - a final ``audit_complete`` marker,
-    - exact plan-contract fingerprint equality,
-    - exact workspace-content fingerprint equality,
-    - matching successful per-step audit records immediately preceding the
-      latest completion marker.
-    """
+    try:
+        declared_outputs = output_index(step)
+        expected_required = required_outputs(step)
+    except PlanGraphError:
+        return False
+
+    actual_outputs = record.get("outputs", [])
+    if len(actual_outputs) != len(declared_outputs):
+        return False
+    for (name, contract), actual_output in zip(declared_outputs.items(), actual_outputs):
+        if not isinstance(actual_output, dict):
+            return False
+        if actual_output.get("name") != name or actual_output.get("passed") is not True:
+            return False
+        output_checks = [
+            core.norm_check(check)
+            for check in contract.get("verify", [])
+            if isinstance(check, dict)
+        ]
+        if not _result_checks_match(output_checks, actual_output.get("results", [])):
+            return False
+
+    actual_required = record.get("required_outputs", [])
+    if len(actual_required) != len(expected_required):
+        return False
+    for expected_ref, actual_ref in zip(expected_required, actual_required):
+        if not isinstance(actual_ref, dict):
+            return False
+        if (
+            actual_ref.get("step") != expected_ref["step"]
+            or actual_ref.get("name") != expected_ref["name"]
+            or actual_ref.get("passed") is not True
+        ):
+            return False
+        try:
+            source_contract = output_index(by_id[expected_ref["step"]])[expected_ref["name"]]
+        except (KeyError, PlanGraphError):
+            return False
+        source_checks = [
+            core.norm_check(check)
+            for check in source_contract.get("verify", [])
+            if isinstance(check, dict)
+        ]
+        if not _result_checks_match(source_checks, actual_ref.get("results", [])):
+            return False
+    return True
+
+def fresh_full_audit_proof(root: str | Path, plan: Dict[str, Any]) -> FreshAuditProof:
+    """Prove current graph, checks, outputs, and workspace match a full audit."""
     root_path = Path(root).resolve()
     chain_ok, _count, problem = core.verify_chain(str(root_path))
     if not chain_ok:
         return FreshAuditProof(False, f"active evidence chain invalid: {problem}")
 
-    steps = [step for step in plan.get("steps", []) if isinstance(step, dict)]
-    if not steps:
-        return FreshAuditProof(False, "plan has no steps")
+    try:
+        order = topological_order(plan)
+        dependencies = effective_dependencies(plan)
+    except PlanGraphError as exc:
+        return FreshAuditProof(False, f"dependency graph invalid: {exc}")
+    by_id = {
+        step.get("id"): step
+        for step in plan.get("steps", [])
+        if isinstance(step, dict) and isinstance(step.get("id"), int)
+    }
+    if not order or len(by_id) != len(order):
+        return FreshAuditProof(False, "plan has no valid dependency-graph steps")
+    steps = [by_id[sid] for sid in order]
 
     records = _read_evidence_records(root_path)
     marker_index: Optional[int] = None
@@ -128,6 +190,8 @@ def fresh_full_audit_proof(root: str | Path, plan: Dict[str, Any]) -> FreshAudit
         return FreshAuditProof(False, "no complete full-audit fingerprint evidence")
     if marker.get("status") != "verified":
         return FreshAuditProof(False, "latest full audit did not pass")
+    if marker.get("topological_order") != order:
+        return FreshAuditProof(False, "full-audit dependency order does not match current plan")
 
     current_plan_fp = core.plan_contract_fingerprint(plan)
     if marker.get("plan_fingerprint") != current_plan_fp:
@@ -144,23 +208,24 @@ def fresh_full_audit_proof(root: str | Path, plan: Dict[str, Any]) -> FreshAudit
     if len(audit_records) < len(steps):
         return FreshAuditProof(False, "full-audit marker lacks complete step evidence")
     candidate = audit_records[-len(steps):]
-    expected_ids = [step.get("id") for step in steps]
-    if [record.get("step") for record in candidate] != expected_ids:
-        return FreshAuditProof(False, "latest audit evidence does not cover current step sequence")
+    if [record.get("step") for record in candidate] != order:
+        return FreshAuditProof(False, "latest audit evidence does not cover dependency order")
     for step, record in zip(steps, candidate):
-        if record.get("status") != "verified" or not _checks_match(step, record):
+        sid = step.get("id")
+        if record.get("status") != "verified" or not _checks_match(
+            step, record, dependencies.get(sid, []), by_id
+        ):
             return FreshAuditProof(
                 False,
-                f"audit evidence does not match current checks for step {step.get('id')}",
+                f"audit evidence does not match graph/check/output contract for step {sid}",
             )
 
     return FreshAuditProof(
         True,
-        "current plan and workspace match deterministic full-audit fingerprints",
+        "current dependency graph, output contracts, checks, and workspace match full audit",
         str(marker.get("ts")),
         len(steps),
     )
-
 
 def _tail_logs(root: Path, limit: int = 200) -> List[str]:
     lines: List[str] = []
@@ -335,6 +400,9 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
             "verdict": plan_analysis.verdict,
             "rationale": plan_analysis.rationale,
             "weakest_verification": plan_analysis.weakest_verification,
+            "graph_errors": plan_analysis.graph_errors,
+            "topological_order": plan_analysis.topological_order,
+            "dependencies": plan_analysis.dependencies,
         },
         "workspace_state": workspace_state.to_dict(),
         "events": [repr(event) for event in events],
