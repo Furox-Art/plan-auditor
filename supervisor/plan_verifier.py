@@ -1,18 +1,25 @@
-"""L5 — STRIPS-like plan verifier.
+"""L5 — deterministic structural plan verifier.
 
-Reduces each plan step to ACTION / PRECONDITIONS / EXPECTED EFFECTS /
-FAILURE CONDITIONS / DEPENDENCIES / REQUIREMENTS COVERED /
-VERIFICATION. Checks logical soundness: preconditions present,
-effects advance the goal, coverage complete, no contradictions, no
-impossible states, real behavioral verification.
-
-Output: PASS / REVISE / REJECT + rationale. This layer does NOT
-execute; it only analyzes the plan structure.
+Plans are reduced to a dependency DAG plus concrete verification/output
+contracts. This layer does not execute commands; runtime enforcement lives in
+the deterministic core. Legacy plans without ``depends_on`` retain sequential
+semantics, while explicit DAGs must bind every dependency edge to at least one
+concrete upstream output contract.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+from scripts.plan_graph import (
+    PlanGraphError,
+    effective_dependencies,
+    explicit_graph,
+    output_index,
+    required_outputs,
+    topological_order,
+    validate_output_links,
+)
 
 
 @dataclass
@@ -21,6 +28,9 @@ class StepAnalysis:
     preconditions_met: bool
     expected_effect_advances: bool
     has_behavioral_verification: bool
+    dependencies: List[int] = field(default_factory=list)
+    required_outputs: List[Dict] = field(default_factory=list)
+    declared_outputs: List[str] = field(default_factory=list)
     risks: List[str] = field(default_factory=list)
     suggestions: List[str] = field(default_factory=list)
 
@@ -31,22 +41,25 @@ class PlanAnalysis:
     step_analyses: List[StepAnalysis] = field(default_factory=list)
     coverage_gaps: List[str] = field(default_factory=list)
     contradictions: List[str] = field(default_factory=list)
+    graph_errors: List[str] = field(default_factory=list)
     rationale: List[str] = field(default_factory=list)
+    topological_order: List[int] = field(default_factory=list)
+    dependencies: Dict[int, List[int]] = field(default_factory=dict)
 
     @property
     def weakest_verification(self) -> Optional[str]:
-        for s in self.step_analyses:
-            if not s.has_behavioral_verification:
-                return "step %d lacks behavioral verification" % s.step_id
+        for step in self.step_analyses:
+            if not step.has_behavioral_verification:
+                return "step %d lacks behavioral verification" % step.step_id
         return None
 
 
 _WEAK_VERIFY = {"file_exists", "regex"}
 
 
-def _check_step(step: Dict, index: int, total: int) -> StepAnalysis:
+def _check_step(step: Dict, index: int, dependencies: List[int]) -> StepAnalysis:
     verify = step.get("verify", [])
-    types = {c.get("type") for c in verify if isinstance(c, dict)}
+    types = {check.get("type") for check in verify if isinstance(check, dict)}
     has_behavioral = bool(types - _WEAK_VERIFY)
     risks: List[str] = []
     suggestions: List[str] = []
@@ -54,42 +67,118 @@ def _check_step(step: Dict, index: int, total: int) -> StepAnalysis:
     if not has_behavioral:
         risks.append("step %d uses only weak checks (file_exists/regex)" % step.get("id", index))
         suggestions.append("add a behavioral check (run/pytest/exec) that exercises real behavior")
-
     if not verify:
         risks.append("step %d has no verification" % step.get("id", index))
 
+    try:
+        outputs = sorted(output_index(step))
+    except PlanGraphError as exc:
+        outputs = []
+        risks.append(str(exc))
+    try:
+        required = required_outputs(step)
+    except PlanGraphError as exc:
+        required = []
+        risks.append(str(exc))
+
     return StepAnalysis(
         step_id=step.get("id", index),
-        preconditions_met=True,            # preconditions need runtime state; optimistic here
-        expected_effect_advances=True,
+        preconditions_met=not any("depend" in risk.lower() for risk in risks),
+        expected_effect_advances=has_behavioral or bool(outputs),
         has_behavioral_verification=has_behavioral,
+        dependencies=list(dependencies),
+        required_outputs=required,
+        declared_outputs=outputs,
         risks=risks,
         suggestions=suggestions,
     )
 
 
+def _unbound_explicit_edges(plan: Dict, dependencies: Dict[int, List[int]]) -> List[str]:
+    """Require every explicit dependency edge to name a concrete source output."""
+    if not explicit_graph(plan):
+        return []
+    by_id = {
+        step.get("id"): step
+        for step in plan.get("steps", [])
+        if isinstance(step, dict) and isinstance(step.get("id"), int)
+    }
+    errors: List[str] = []
+    for child, parents in dependencies.items():
+        step = by_id.get(child, {})
+        try:
+            refs = required_outputs(step)
+        except PlanGraphError:
+            continue
+        linked_sources = {ref["step"] for ref in refs}
+        for parent in parents:
+            if parent not in linked_sources:
+                errors.append(
+                    "dependency edge %s -> %s has no requires_outputs link; "
+                    "explicit dependencies must be backed by a concrete upstream output"
+                    % (parent, child)
+                )
+    return errors
+
+
 def verify_plan(plan: Dict) -> PlanAnalysis:
     analysis = PlanAnalysis()
     steps = plan.get("steps", [])
-    if not steps:
+    if not isinstance(steps, list) or not steps:
         analysis.verdict = "REJECT"
         analysis.rationale.append("plan has no steps")
         return analysis
 
-    total = len(steps)
+    graph_valid = True
+    try:
+        analysis.dependencies = effective_dependencies(plan)
+        analysis.topological_order = topological_order(plan)
+    except PlanGraphError as exc:
+        graph_valid = False
+        analysis.graph_errors.append(str(exc))
+        analysis.rationale.append("dependency graph is invalid")
+        # Continue behavioral analysis with empty dependency lists so callers
+        # still receive actionable verification diagnostics.
+        analysis.dependencies = {
+            step.get("id"): []
+            for step in steps
+            if isinstance(step, dict) and isinstance(step.get("id"), int)
+        }
+
+    output_errors = validate_output_links(plan)
+    if output_errors:
+        graph_valid = False
+        analysis.graph_errors.extend(output_errors)
+        analysis.rationale.append("output dependency contract is invalid")
+
+    if graph_valid:
+        edge_errors = _unbound_explicit_edges(plan, analysis.dependencies)
+        if edge_errors:
+            graph_valid = False
+            analysis.graph_errors.extend(edge_errors)
+            analysis.rationale.append("explicit dependency edges lack concrete output bindings")
+
     weak_steps = 0
-    for i, step in enumerate(steps):
-        sa = _check_step(step, i, total)
-        analysis.step_analyses.append(sa)
-        if not sa.has_behavioral_verification:
+    for index, step in enumerate(steps, 1):
+        if not isinstance(step, dict):
+            continue
+        sid = step.get("id", index)
+        step_deps = analysis.dependencies.get(sid, []) if isinstance(sid, int) else []
+        step_analysis = _check_step(step, index, step_deps)
+        analysis.step_analyses.append(step_analysis)
+        if not step_analysis.has_behavioral_verification:
             weak_steps += 1
 
-    if weak_steps == total:
+    if not graph_valid:
+        analysis.verdict = "REJECT"
+    elif analysis.step_analyses and weak_steps == len(analysis.step_analyses):
         analysis.verdict = "REJECT"
         analysis.rationale.append("no step has behavioral verification")
     elif weak_steps > 0:
         analysis.verdict = "REVISE"
-        analysis.rationale.append("%d/%d steps lack behavioral verification" % (weak_steps, total))
+        analysis.rationale.append(
+            "%d/%d steps lack behavioral verification" % (weak_steps, len(analysis.step_analyses))
+        )
     else:
         analysis.verdict = "PASS"
 
