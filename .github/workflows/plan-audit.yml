@@ -9,8 +9,8 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install package and test dependency
@@ -23,28 +23,77 @@ jobs:
         run: python -m pytest tests/ -q
       - name: Fib example gate (explicit diagnostic)
         run: python -m pytest examples/fib/test_fib.py -q
-      - name: Independent audit (dogfood final gate)
-        run: python scripts/audit_check.py audit .
-      - name: Installed CLI smoke test
+      - name: Verify and seal plan
+        run: plan-auditor plan verify .
+      - name: Integrated independent audit (dogfood final gate)
+        run: plan-auditor audit .
+      - name: Installed CLI health smoke test
+        shell: bash
         run: |
+          set -euo pipefail
           plan-auditor --help
-          plan-auditor doctor .
+          plan-auditor doctor . > /tmp/plan-auditor-doctor.json
+          cat /tmp/plan-auditor-doctor.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('/tmp/plan-auditor-doctor.json').read_text(encoding='utf-8'))
+          outcome = data.get('assessment', {}).get('outcome')
+          if outcome != 'PASS':
+              raise SystemExit(f'ERROR: doctor assessment is {outcome!r}, expected PASS')
+          PY
           plan-auditor task list .
           plan-auditor agents list .
+          plan-auditor evidence verify .
 
   supervisor-runtime:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install package
         run: python -m pip install .
+      - name: Prepare sealed and audited workspace
+        run: |
+          plan-auditor plan verify .
+          plan-auditor audit .
       - name: Start real background supervisor
         run: plan-auditor supervisor start --profile standard --mode serial .
-      - name: Require running status
-        run: plan-auditor supervisor status .
+      - name: Require running supervisor with PASS assessment
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          import time
+
+          last = None
+          for _ in range(30):
+              proc = subprocess.run(
+                  ['plan-auditor', 'supervisor', 'status', '.'],
+                  text=True,
+                  capture_output=True,
+              )
+              if proc.stdout.strip():
+                  try:
+                      last = json.loads(proc.stdout)
+                  except json.JSONDecodeError:
+                      last = None
+              if (
+                  proc.returncode == 0
+                  and isinstance(last, dict)
+                  and last.get('running') is True
+                  and (last.get('assessment') or {}).get('outcome') == 'PASS'
+              ):
+                  print(json.dumps(last, indent=2))
+                  raise SystemExit(0)
+              time.sleep(0.2)
+
+          print(json.dumps(last, indent=2) if isinstance(last, dict) else 'no valid status JSON')
+          raise SystemExit('ERROR: supervisor never reached running + PASS assessment')
+          PY
       - name: Stop supervisor cleanly
         run: plan-auditor supervisor stop .
       - name: Require stopped status
@@ -54,5 +103,19 @@ jobs:
             echo "ERROR: supervisor still reports running after stop"
             exit 1
           fi
+      - name: Require persisted final PASS assessment
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('.plan-auditor/supervisor-assessment.json')
+          if not path.exists():
+              raise SystemExit('ERROR: supervisor assessment file is missing')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          if data.get('outcome') != 'PASS':
+              raise SystemExit(f"ERROR: persisted supervisor assessment is {data.get('outcome')!r}, expected PASS")
+          print(json.dumps(data, indent=2))
+          PY
       - name: Evidence anchor check
         run: plan-auditor evidence verify .
