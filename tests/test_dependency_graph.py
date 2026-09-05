@@ -30,10 +30,10 @@ def _plan(steps: list[dict]) -> dict:
     return {"task": "dependency graph regression", "created": "2026-09-05T00:00:00Z", "steps": steps}
 
 
-def test_legacy_plan_gets_sequential_dependencies():
+def test_multistep_legacy_dependencies_are_rejected():
     plan = _plan([_step(10), _step(20), _step(30)])
-    assert effective_dependencies(plan) == {10: [], 20: [10], 30: [20]}
-    assert topological_order(plan) == [10, 20, 30]
+    with pytest.raises(PlanGraphError, match="explicitly declare depends_on"):
+        effective_dependencies(plan)
 
 
 def test_explicit_dag_uses_declared_dependencies_and_stable_topology():
@@ -103,7 +103,10 @@ def test_validate_plan_checks_output_verification_contract():
 
 
 def test_run_blocks_step_when_prerequisite_is_not_verified(tmp_path):
-    plan = _plan([_step(1), _step(2)])
+    plan = _plan([
+        _step(1, depends_on=[], outputs=[{"name": "artifact", "verify": [{"type": "file_exists", "path": "artifact.txt"}]}]),
+        _step(2, depends_on=[1], requires_outputs=[{"step": 1, "name": "artifact"}]),
+    ])
     assert core.audit_steps(str(tmp_path), plan, ids=[2], mode="run") is False
     assert plan["steps"][1]["status"] == "blocked"
 

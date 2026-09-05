@@ -27,6 +27,8 @@ REGISTRY_RECORD_DOMAIN = "plan-auditor:registry-record:v1"
 REGISTRY_HEAD_DOMAIN = "plan-auditor:registry-head:v1"
 SEAL_DOMAIN = "plan-auditor:plan-seal:v1"
 MARKER_DOMAIN = "plan-auditor:integrity-marker:v1"
+REQUEST_CONTRACT_DOMAIN = "plan-auditor:request-contract:v1"
+ACTIVATION_DOMAIN = "plan-auditor:request-activation:v1"
 
 
 class IntegrityKeyError(RuntimeError):

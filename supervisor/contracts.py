@@ -41,9 +41,18 @@ def policy_fingerprint(root: str | Path, cfg: Config) -> str:
 
 
 def environment_contract(root: str | Path, cfg: Config) -> Dict[str, Any]:
+    from .request_contract import verify_request_contract
+
+    request = verify_request_contract(root)
     return {
         "profile": cfg.profile.value,
         "mode": cfg.mode,
         "tier": int(cfg.tier),
+        "max_attempts": int(cfg.max_attempts),
+        "owner_timeout_sec": int(cfg.owner_timeout_sec),
+        "heartbeat_sec": int(cfg.heartbeat_sec),
+        "rotate_bytes": int(cfg.rotate_bytes),
+        "policies_dir": cfg.policies_dir,
         "policies_sha256": policy_fingerprint(root, cfg),
+        "request_sha256": request.request_sha256 if request.valid else None,
     }

@@ -1,3 +1,13 @@
+## Unreleased
+
+- Introduce host-owned immutable request activation and deterministic acceptance-check binding.
+- Reject active-workspace plan deletion as FAIL instead of NO_PLAN.
+- Remove automatic reseal baseline reset; request generations are immutable.
+- Require explicit dependency declarations and concrete output bindings for every multi-step edge.
+- Upgrade seals to format v4 with canonical effective dependency graphs and full runtime-config/request fingerprints.
+- Make authenticated-integrity initialization idempotent and refuse re-signing a broken initialized state.
+- Pin GitHub Actions dependencies to immutable commit SHAs.
+
 # Changelog
 
 ## v2.1.0 — 2026-09-05

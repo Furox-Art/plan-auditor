@@ -13,31 +13,58 @@
       "priority": "must"
     }
   ],
-  "required_tools": ["python"],
+  "required_tools": [
+    "python"
+  ],
   "steps": [
     {
       "id": 1,
       "title": "audit_check.py birim test süiti geçer",
-      "covers": ["REQ-001"],
+      "depends_on": [],
+      "covers": [
+        "REQ-001"
+      ],
       "verify": [
         {
           "type": "pytest",
           "args": "tests/ -q"
         }
       ],
-      "status": "verified"
+      "outputs": [
+        {
+          "name": "unit-suite-pass",
+          "verify": [
+            {
+              "type": "pytest",
+              "args": "tests/ -q"
+            }
+          ]
+        }
+      ],
+      "status": "pending"
     },
     {
       "id": 2,
       "title": "örnek fib görevinin testleri geçer",
-      "covers": ["REQ-002"],
+      "depends_on": [
+        1
+      ],
+      "requires_outputs": [
+        {
+          "step": 1,
+          "name": "unit-suite-pass"
+        }
+      ],
+      "covers": [
+        "REQ-002"
+      ],
       "verify": [
         {
           "type": "pytest",
           "args": "examples/fib/test_fib.py -q"
         }
       ],
-      "status": "verified"
+      "status": "pending"
     }
   ]
 }

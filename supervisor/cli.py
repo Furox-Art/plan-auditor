@@ -59,6 +59,14 @@ def _build_parser() -> argparse.ArgumentParser:
     integrity_status = integrity_sub.add_parser("status", help="show authenticated integrity status")
     integrity_status.add_argument("dir", nargs="?", default=".")
 
+    request = sub.add_parser("request", help="host-owned immutable request contract")
+    request_sub = request.add_subparsers(dest="action", required=True)
+    request_init = request_sub.add_parser("init", help="activate request contract from a host-provided JSON file")
+    request_init.add_argument("dir", nargs="?", default=".")
+    request_init.add_argument("--file", required=True, dest="request_file")
+    request_status_cmd = request_sub.add_parser("status", help="verify request activation and plan alignment")
+    request_status_cmd.add_argument("dir", nargs="?", default=".")
+
     agents = sub.add_parser("agents", help="persistent multi-agent registry")
     agents_sub = agents.add_subparsers(dest="action", required=True)
     agents_list = agents_sub.add_parser("list")
@@ -265,6 +273,46 @@ def _selected_refs(root: Path, name: str | None = None):
     return refs
 
 
+def _request_gate(root: Path):
+    from .plans import all_plan_refs, load_plan_ref
+    from .request_contract import analyze_request_alignment, verify_request_contract
+
+    status = verify_request_contract(root)
+    if not status.valid or not isinstance(status.request, dict):
+        return status, None, [status.reason or "request contract invalid"]
+    docs: dict[str, Any] = {}
+    errors: list[str] = []
+    for ref in all_plan_refs(root):
+        try:
+            docs[ref.key] = load_plan_ref(ref)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"{ref.key}: {exc}")
+    alignment = analyze_request_alignment(docs, status.request)
+    errors.extend(alignment.errors)
+    return status, alignment, errors
+
+
+def cmd_request(args: argparse.Namespace) -> int:
+    from .request_contract import initialize_request_from_file, verify_request_contract
+
+    root = _root(args.dir)
+    if args.action == "init":
+        try:
+            result = initialize_request_from_file(root, args.request_file)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            _json({"activated": False, "valid": False, "error": str(exc)})
+            return 2
+        _json(result.as_dict())
+        return 0 if result.valid else 2
+    status, alignment, errors = _request_gate(root)
+    payload = status.as_dict()
+    if alignment is not None:
+        payload["alignment"] = alignment.as_dict()
+    payload["errors"] = errors
+    _json(payload)
+    return 0 if status.valid and not errors else 2
+
+
 def _policy_errors(root: Path, cfg) -> list[str]:
     from .policies import load_policy_rules_from_dir
     errors: list[str] = []
@@ -295,6 +343,16 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    request_status, request_alignment, request_errors = _request_gate(root)
+    if request_errors:
+        _json({"outcome": "FAIL", "request_contract": request_status.as_dict(), "request_errors": request_errors})
+        return 2
+    if args.reseal:
+        _json({
+            "outcome": "FAIL",
+            "reason": "automatic --reseal is disabled after request activation; create a new host-approved request generation instead",
+        })
+        return 2
     cfg = load_config(str(root))
     policy_errors = _policy_errors(root, cfg)
     if cfg.errors or policy_errors:
@@ -347,12 +405,12 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
             outputs[ref.key] = output
             final_rc = max(final_rc, 2)
             continue
-        if existing and existing.format_version < 3 and not args.reseal:
+        if existing and existing.format_version < 4:
             output["seal"] = {"status": "legacy", "error": "legacy seal requires --reseal"}
             outputs[ref.key] = output
             final_rc = max(final_rc, 2)
             continue
-        if existing and not args.reseal:
+        if existing:
             monotonic = check_monotonic(existing.as_plan(), plan)
             env_check = check_environment(existing, env)
             if not monotonic.ok or not env_check.ok:
@@ -451,6 +509,10 @@ def cmd_audit(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    request_status, request_alignment, request_errors = _request_gate(root)
+    if request_errors:
+        _json({"outcome": "FAIL", "request_contract": request_status.as_dict(), "request_errors": request_errors})
+        return 2
     cfg = load_config(str(root))
     policy_errors = _policy_errors(root, cfg)
     if cfg.errors or policy_errors:
@@ -468,7 +530,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if not seal:
             _json({"outcome": "FAIL", "plan": ref.key, "reason": "plan is not sealed; run plan verify first"})
             return 2
-        if seal.format_version < 3:
+        if seal.format_version < 4:
             _json({"outcome": "FAIL", "plan": ref.key, "reason": "legacy seal requires explicit reseal"})
             return 2
         monotonic = check_monotonic(seal.as_plan(), plan)
@@ -607,6 +669,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_evidence_verify(args)
     if args.cmd == "integrity":
         return cmd_integrity(args)
+    if args.cmd == "request":
+        return cmd_request(args)
     if args.cmd == "agents":
         return cmd_agents(args)
     if args.cmd == "audit":

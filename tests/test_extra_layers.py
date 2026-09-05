@@ -74,8 +74,10 @@ def test_verify_plan_reject_empty():
 
 def test_verify_plan_revise_mixed():
     plan = {"steps": [
-        {"id": 1, "verify": [{"type": "run", "cmd": "echo"}]},
-        {"id": 2, "verify": [{"type": "file_exists", "path": "x"}]},
+        {"id": 1, "depends_on": [], "verify": [{"type": "run", "cmd": "echo"}],
+         "outputs": [{"name": "x", "verify": [{"type": "file_exists", "path": "x"}]}]},
+        {"id": 2, "depends_on": [1], "requires_outputs": [{"step": 1, "name": "x"}],
+         "verify": [{"type": "file_exists", "path": "x"}]},
     ]}
     a = verify_plan(plan)
     assert a.verdict == "REVISE"

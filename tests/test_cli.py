@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from supervisor.cli import main
+from tests.request_fixture import activate_for_plan
 
 
 def _write_plan(tmp_path: Path, *, command: str = "python -c \"print('ok')\"") -> None:
@@ -32,6 +33,7 @@ def _write_plan(tmp_path: Path, *, command: str = "python -c \"print('ok')\"") -
     pg = tmp_path / ".plan-auditor"
     pg.mkdir(exist_ok=True)
     (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    activate_for_plan(tmp_path, plan)
 
 
 def test_cli_audit_requires_seal(tmp_path: Path) -> None:
@@ -43,7 +45,7 @@ def test_cli_plan_verify_seals_full_contract(tmp_path: Path) -> None:
     _write_plan(tmp_path)
     assert main(["plan", "verify", str(tmp_path)]) == 0
     seal = json.loads((tmp_path / ".plan-auditor" / "seal.json").read_text(encoding="utf-8"))
-    assert seal["format_version"] == 3
+    assert seal["format_version"] == 4
     assert seal["requirements"][0]["id"] == "REQ-001"
     assert seal["steps"][0]["covers"] == ["REQ-001"]
     assert seal["steps"][0]["verify"][0]["type"] == "run"
@@ -82,7 +84,7 @@ def test_cli_plan_verify_rejects_missing_requirement_coverage(tmp_path: Path) ->
     pg = tmp_path / ".plan-auditor"
     pg.mkdir()
     (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-    assert main(["plan", "verify", str(tmp_path)]) == 1
+    assert main(["plan", "verify", str(tmp_path)]) == 2
 
 
 def test_cli_status_reports_stopped_when_daemon_absent(tmp_path: Path) -> None:
