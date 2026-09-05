@@ -3,7 +3,10 @@
 ## Unreleased
 
 - **Command execution hardening:** behavioral checks now execute without a shell by default. Structured `argv` is supported and preferred; legacy `cmd` strings are parsed into argument vectors, while shell interpretation requires explicit `shell: true` opt-in. Internal `git ls-files` snapshot discovery also runs without a shell.
-- **Regression coverage:** tests verify structured argv execution, inert shell metacharacters by default, explicit shell opt-in, and rejection of `shell=true` combined with `argv`.
+- **Agent registry chain hardening:** L14 registry records now use `format_version + seq + prev + hash`, with a persisted head checkpoint for tail-truncation detection. Middle deletion, reordering, record mutation, missing logs with a surviving head, and head mismatches are rejected. Legacy v1 per-record-hash registries are validated and atomically migrated before further writes.
+- **Fail-closed registry gating:** integrated completion policy now blocks PASS when the multi-agent registry chain/head integrity check fails. Mutating registry operations refuse to proceed after an integrity failure.
+- **Cross-process registry serialization:** registry migration and append operations use an exclusive write lock so independent agent processes cannot race sequence/previous-hash assignment.
+- **Regression coverage:** tests verify structured argv execution, inert shell metacharacters by default, explicit shell opt-in, rejection of `shell=true` combined with `argv`, registry sequence/previous-hash continuity, mutation/deletion/reordering/tail-truncation detection, legacy migration, and integrated gate failure on registry tampering.
 
 ## v2.0.2 — 2026-09-05
 
