@@ -85,9 +85,8 @@ def patch_wheel_smoke() -> None:
 def patch_tests() -> None:
     path = Path("tests/test_audit_check.py")
     text = path.read_text(encoding="utf-8")
-    if "test_full_audit_rejects_verifier_workspace_mutation" in text:
-        return
-    text = text.rstrip() + r'''
+    if "test_full_audit_rejects_verifier_workspace_mutation" not in text:
+        text = text.rstrip() + r'''
 
 
 # ----------------------------------------------- audit observational purity
@@ -114,11 +113,21 @@ def test_full_audit_rejects_verifier_workspace_mutation(tmp_path):
         for result in step_record["results"]
     )
 '''
-    path.write_text(text + "\n", encoding="utf-8")
+        path.write_text(text + "\n", encoding="utf-8")
+
+
+def patch_full_contract_tests() -> None:
+    path = Path("tests/test_full_contract_hardening.py")
+    text = path.read_text(encoding="utf-8")
+    old = '''                    "-c",\n                    f"from pathlib import Path; Path({marker!r}).write_text('ok', encoding='utf-8')",\n'''
+    new = '''                    "-c",\n                    "print('verified')",\n'''
+    text = replace_once(text, old, new, "full-contract observational fixture")
+    path.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":
     patch_core()
     patch_wheel_smoke()
     patch_tests()
+    patch_full_contract_tests()
     print("final hardening repair applied")
