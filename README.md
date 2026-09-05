@@ -14,6 +14,37 @@ PASS requires reproducible behavioral checks, explicit requirement coverage, an
 intact sealed verification contract, fresh audit evidence, and a valid aggregate
 completion gate across **every active plan**.
 
+## Use it directly by skill name
+
+In a skill-capable AI coding environment, call/select the skill simply as:
+
+```text
+plan-auditor
+```
+
+or give the task in the same invocation:
+
+```text
+plan-auditor: implement this change and prove it is complete
+```
+
+You should not need to hand-write the internal plan JSON, formal STRIPS contract,
+seal metadata, or evidence files. The `plan-auditor` skill is instructed to build
+those artifacts, verify them, and run the final audit on your behalf.
+
+For non-trivial multi-step work, the skill now creates a sealed LLM-free
+`formal_planning` contract by default, so the plan is checked twice at different
+levels:
+
+1. **Classical symbolic planning** — can the declared preconditions/effects reach
+   the final goals while respecting dependencies?
+2. **Deterministic execution audit** — was the concrete work actually executed
+   and proven by real checks?
+
+The built-in classical planner uses only Python/CPU. PDDL export and Fast Downward
+are available as an optional independent planner cross-check. See
+`docs/formal-planning.md`.
+
 ## Core completion model
 
 ```text
@@ -27,7 +58,13 @@ Explicit requirement IDs ──► plan steps (`covers`)
       │                         └─ requires_outputs
       │
       ▼
-Format-v3 full-contract seal
+Sealed STRIPS-style symbolic plan (non-trivial multi-step work)
+      │
+      ├─ internal classical reachability check
+      └─ PDDL / Fast Downward cross-check (optional)
+      │
+      ▼
+Format-v4 full-contract seal
       │
       ▼
 Deterministic execution / tests
@@ -58,7 +95,8 @@ following:
 - at least one behavioral check (`run`, `exec`, `pytest`) per step,
 - valid dependency DAG,
 - concrete output contract for every explicit dependency edge,
-- intact format-v3 seal,
+- successful formal reachability when a `formal_planning` anchor is present,
+- intact format-v4 seal,
 - unchanged sealed supervisor profile/mode/tier/policy fingerprint,
 - all steps verified in a fresh full audit,
 - current plan contract matches the audited plan fingerprint,
@@ -132,13 +170,50 @@ Example plan fragment:
 A downstream step cannot pass until the prerequisite passed and the upstream
 output contract is independently rechecked.
 
+## Classical STRIPS/PDDL planning
+
+For non-trivial multi-step plans, `plan-auditor` can embed a symbolic contract
+inside one ordinary sealed `run` check. The contract includes:
+
+- initial facts,
+- final goal facts,
+- one action per Plan Auditor step,
+- symbolic preconditions,
+- add effects,
+- delete effects.
+
+The internal grounded STRIPS-style planner checks whether all steps can execute
+while reaching the declared goals. Plans with no delete effects use an efficient
+deterministic forward solver; delete-effect plans use bounded state-space search.
+
+The canonical check is generated with:
+
+```bash
+plan-auditor-formal make-check formal-contract.json
+```
+
+Optional PDDL/Fast Downward cross-check:
+
+```bash
+plan-auditor-formal make-check formal-contract.json \
+  --fast-downward auto \
+  --require-fast-downward
+```
+
+Because the formal contract is stored inside the normal verification check, its
+facts/actions/effects/goals are covered by the existing plan fingerprint and
+seal. Changing or removing them after sealing is not a silent escape hatch.
+
+Formal planning proves the declared symbolic model; it does not replace concrete
+execution evidence. See `docs/formal-planning.md`.
+
 ## Full-contract sealing
 
 ```bash
 plan-auditor plan verify .
 ```
 
-The v3 seal binds:
+The v4 seal binds:
 
 - task and requirements,
 - required tools,
@@ -147,6 +222,7 @@ The v3 seal binds:
 - dependencies and required outputs,
 - outputs and their checks,
 - step verification checks,
+- embedded formal-planning data when present,
 - supervisor `profile`, `mode`, `tier`,
 - configured-policy fingerprint.
 
@@ -214,6 +290,9 @@ plan-auditor doctor <dir>
 plan-auditor task list <dir>
 plan-auditor agents list|register|heartbeat|claim|release ...
 plan-auditor supervisor start|stop|status ...
+plan-auditor-formal make-check <formal-contract.json>
+plan-auditor-formal verify <dir> --contract-sha <sha256>
+plan-auditor-formal export-pddl <dir> --contract-sha <sha256> --output <dir>
 ```
 
 With no `--plan`, `plan verify` and the integrated final gate operate across all
@@ -259,28 +338,32 @@ so PyPI publishing cannot race ahead of platform packaging validation.
 ## Architecture
 
 The supervisor combines deterministic layers for requirements, workspace state,
-policy evaluation, plan/DAG validation, lifecycle, sealing, watchdog observation,
-evidence integrity, completion gating, and multi-agent coordination. Optional
-semantic/adversarial review may propose stronger deterministic checks but cannot
-create PASS.
+policy evaluation, plan/DAG validation, BDI-inspired goal state, sealed
+STRIPS-style symbolic reachability, Soar-like lifecycle, subsumption authority,
+sealing, watchdog observation, evidence integrity, completion gating, and
+multi-agent coordination. Optional semantic/adversarial review may propose
+stronger deterministic checks but cannot create PASS.
 
 See:
 
 - `docs/architecture.md`
 - `docs/dependency-graph.md`
+- `docs/formal-planning.md`
 - `docs/threat-model.md`
 - `references/plan-format.md`
 
 ## Trust boundary
 
-Plan Auditor verifies completion; it is not an OS sandbox. External-key HMAC
-protects against workspace-only rewriting while the untrusted process cannot read
-the key. A deliberately malicious same-user process that can obtain the key is
-outside that guarantee. See the threat model for exact boundaries.
+Plan Auditor verifies completion; it is not an OS sandbox. Formal planning cannot
+repair an incorrect formalization: a planner can prove a wrong symbolic model
+correctly. External-key HMAC protects against workspace-only rewriting while the
+untrusted process cannot read the key. A deliberately malicious same-user process
+that can obtain the key is outside that guarantee. See the threat model for exact
+boundaries.
 
 ## Version
 
-Current development version: **2.1.0**.
+Current development version: **2.2.0**.
 
 ## License
 
