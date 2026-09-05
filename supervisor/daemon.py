@@ -58,13 +58,51 @@ def read_assessment(workspace: str | Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def pid_alive(pid: int | None) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
+def _windows_pid_alive(pid: int) -> bool:
+    """Probe a Windows process without sending a signal or mutating it."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        open_process.restype = wintypes.HANDLE
+        get_exit_code = kernel32.GetExitCodeProcess
+        get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        get_exit_code.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        handle = open_process(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if not get_exit_code(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            close_handle(handle)
+    except (AttributeError, OSError, ValueError):
         return False
+
+
+def pid_alive(pid: int | None) -> bool:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if os.name == "nt":
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
-    except (OSError, PermissionError):
+    except PermissionError:
+        # A permission error still proves that the process exists.
+        return True
+    except OSError:
         return False
 
 
