@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from scripts import audit_check as core
@@ -84,7 +85,8 @@ def test_workspace_capture_is_read_only(tmp_path: Path):
     capture_workspace(str(tmp_path))
     after = core.workspace_fingerprint(str(tmp_path))
     assert after == before
-    assert not (tmp_path / "nul").exists()
+    if os.name != "nt":
+        assert not (tmp_path / "nul").exists()
 
 
 def test_integrated_gate_requires_seal(tmp_path: Path):

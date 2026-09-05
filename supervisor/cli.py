@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+SUPERVISOR_START_TIMEOUT_SEC = 60.0
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -144,7 +146,7 @@ def _spawn_daemon(root: Path, profile: str, mode: str) -> subprocess.Popen[bytes
     log_handle = log_path.open("ab", buffering=0)
     kwargs: dict[str, Any] = {
         "cwd": str(root), "stdin": subprocess.DEVNULL, "stdout": log_handle,
-        "stderr": subprocess.STDOUT, "close_fds": os.name != "nt",
+        "stderr": subprocess.STDOUT, "close_fds": True,
     }
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -161,7 +163,7 @@ def _spawn_daemon(root: Path, profile: str, mode: str) -> subprocess.Popen[bytes
 
 
 def cmd_supervisor_start(args: argparse.Namespace) -> int:
-    from .daemon import read_state, pid_alive
+    from .daemon import read_state
     root = _root(args.dir)
     if not root.is_dir():
         print(f"ERROR: directory not found: {root}", file=sys.stderr)
@@ -172,10 +174,14 @@ def cmd_supervisor_start(args: argparse.Namespace) -> int:
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    deadline = time.time() + 5.0
+    deadline = time.time() + SUPERVISOR_START_TIMEOUT_SEC
     while time.time() < deadline:
         state = read_state(root)
-        if state and state.get("state") == "running" and state.get("pid") == process.pid and pid_alive(process.pid):
+        if (
+            state
+            and state.get("state") == "running"
+            and process.poll() is None
+        ):
             _json(state)
             return 0
         if process.poll() is not None:

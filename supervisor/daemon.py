@@ -108,9 +108,27 @@ def pid_alive(pid: int | None) -> bool:
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # Use a unique sibling temp file so independent writers cannot collide.
+    # Windows can transiently reject replacement while a reader has the old
+    # destination open; retry that sharing violation without falling back to
+    # a non-atomic in-place write.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    os.replace(tmp, path)
+    deadline = time.monotonic() + 3.0
+    try:
+        while True:
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def _append_events(workspace: str | Path, events: list[Any]) -> None:
@@ -200,6 +218,10 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
             "assessment_file": str(assessment_path(root)),
         })
 
+    # Publish process liveness before the potentially expensive initial assessment.
+    # Callers can distinguish a live startup from a crashed child without
+    # weakening the requirement that only an assessed daemon becomes running.
+    write_state("starting")
     assessment = _safe_assessment(root, profile, mode)
     gate_outcome = str(assessment.get("outcome", "UNKNOWN"))
     _atomic_write_json(assessment_path(root), assessment)
