@@ -44,13 +44,9 @@ jobs:
 
           follow = Path('tools/apply_stage1_followup.py')
           follow_text = follow.read_text(encoding='utf-8')
-          ambiguous_test = '''replace_once(\n    "tests/test_cli.py",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n    activate_for_plan(tmp_path, plan)\\n",\n)'''
-          # Match the actual Python source form rather than YAML-escaped representation.
           ambiguous_test = '''replace_once(\n    "tests/test_cli.py",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n    activate_for_plan(tmp_path, plan)\\n",\n)'''.replace('\\\\\"', '\\"')
           if ambiguous_test not in follow_text:
-              # Simpler literal fallback matching what is stored in the script.
-              needle = '''replace_once(\n    "tests/test_cli.py",\n    "    (pg / \\"plan.json\\").write_text(json.dumps(plan), encoding=\\"utf-8\\")\\n",\n    "    (pg / \\"plan.json\\").write_text(json.dumps(plan), encoding=\\"utf-8\\")\\n    activate_for_plan(tmp_path, plan)\\n",\n)'''
-              ambiguous_test = needle
+              ambiguous_test = '''replace_once(\n    "tests/test_cli.py",\n    "    (pg / \\"plan.json\\").write_text(json.dumps(plan), encoding=\\"utf-8\\")\\n",\n    "    (pg / \\"plan.json\\").write_text(json.dumps(plan), encoding=\\"utf-8\\")\\n    activate_for_plan(tmp_path, plan)\\n",\n)'''
           scoped_test = '''text = read("tests/test_cli.py")\nhelper_pos = text.find("def _write_plan")\ntarget = '    (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")\\n'\ntarget_pos = text.find(target, helper_pos)\nif helper_pos < 0 or target_pos < 0:\n    raise RuntimeError("test_cli _write_plan marker missing")\nreplacement = target + '    activate_for_plan(tmp_path, plan)\\n'\nwrite("tests/test_cli.py", text[:target_pos] + replacement + text[target_pos + len(target):])'''
           if ambiguous_test not in follow_text:
               raise SystemExit('expected ambiguous test_cli fixture replacement not found')
@@ -85,8 +81,31 @@ jobs:
           PY
       - name: Build distributions
         run: python -m build
-      - name: Remove one-shot tooling and commit verified changes
+      - name: Commit only verified source changes
         run: |
+          set -euo pipefail
+          # Workflow files are patched later through the GitHub connector because
+          # the Actions token intentionally has no workflow-write permission.
+          git restore --source=HEAD -- .github/workflows/plan-audit.yml .github/workflows/wheel-cli-smoke.yml .github/workflows/release.yml
+
+          # Never commit generated audit state or build artifacts.
+          rm -rf dist .plan-auditor/archive .plan-auditor/agents .plan-auditor/snapshots
+          rm -f .plan-auditor/request.json .plan-auditor/activation.json .plan-auditor/seal.json \
+                .plan-auditor/evidence.jsonl .plan-auditor/evidence.head.json \
+                .plan-auditor/supervisor-runtime.json .plan-auditor/supervisor-assessment.json
+
+          # Dogfood execution mutates runtime status; source plans stay pending.
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('.plan-auditor/plan.json')
+          plan = json.loads(path.read_text(encoding='utf-8'))
+          for step in plan.get('steps', []):
+              if isinstance(step, dict):
+                  step['status'] = 'pending'
+          path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
           git rm -f tools/apply_full_hardening_stage1.py tools/apply_stage1_followup.py .github/workflows/full-hardening-stage1.yml
           git add -A
           git config user.name 'github-actions[bot]'
