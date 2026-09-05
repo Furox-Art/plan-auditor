@@ -1,8 +1,8 @@
 """Safe one-way migration of legacy full-contract v3 seals to v4.
 
-Migration is representation-only: the current plan contract must exactly match
-what the v3 seal approved.  It cannot add/remove requirements, steps, tools,
-coverage, outputs or checks.  A valid host request contract must also align with
+Migration is representation-only: the current effective plan contract must match
+what the v3 seal approved. It cannot add/remove requirements, steps, tools,
+coverage, outputs or checks. A valid host request contract must also align with
 all active plans before the v4 environment/request fingerprint is introduced.
 """
 from __future__ import annotations
@@ -23,7 +23,6 @@ from .sealing import (
     SealIntegrityError,
     canonical_plan,
     load_seal,
-    plan_hash,
     save_seal,
     seal_plan,
 )
@@ -85,16 +84,16 @@ def migrate_one(root: Path, ref: PlanRef) -> dict[str, Any]:
             "error": f"only full-contract v3 seals can be migrated safely; found v{seal.format_version}",
         }
 
-    # ``load_seal`` already verifies HMAC (when configured), plan_hash and
-    # criteria_count.  Exact canonical equality makes this migration strictly
-    # representation-only, not a hidden reseal/scope-expansion mechanism.
+    # ``load_seal`` already verifies the genuine historical v3 hash encoding,
+    # criteria_count and HMAC (when configured). Compare v4 canonical effective
+    # graphs here so adding explicit dependencies that are identical to the old
+    # implicit sequential semantics counts as representation migration, not a
+    # scope change. Any actual contract/scope difference is rejected.
     if canonical_plan(seal.as_plan()) != canonical_plan(plan):
         return {
             "status": "error",
-            "error": "current plan contract differs from the approved v3 seal; migration cannot change scope",
+            "error": "current effective plan contract differs from the approved v3 seal; migration cannot change scope",
         }
-    if seal.plan_hash != plan_hash(plan):
-        return {"status": "error", "error": "legacy seal hash does not match the current exact contract"}
 
     cfg = load_config(str(root))
     if cfg.errors:
