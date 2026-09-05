@@ -19,10 +19,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.12'
-      - name: Normalize patch driver
+      - name: Normalize patch drivers
         run: |
           python - <<'PY'
           from pathlib import Path
+
           path = Path('tools/apply_full_hardening_stage1.py')
           text = path.read_text(encoding='utf-8')
           old = '''replace_once(\n    ".github/workflows/release.yml",\n    "uses: pypa/gh-action-pypi-publish@release/v1",\n    "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33",\n)\n# There are two publish uses; pin the second too if still present.\n'''
@@ -40,6 +41,20 @@ jobs:
               raise SystemExit('expected ambiguous cli replacement not found')
           text = text.replace(ambiguous, scoped, 1)
           path.write_text(text, encoding='utf-8')
+
+          follow = Path('tools/apply_stage1_followup.py')
+          follow_text = follow.read_text(encoding='utf-8')
+          ambiguous_test = '''replace_once(\n    "tests/test_cli.py",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n    activate_for_plan(tmp_path, plan)\\n",\n)'''
+          # Match the actual Python source form rather than YAML-escaped representation.
+          ambiguous_test = '''replace_once(\n    "tests/test_cli.py",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n",\n    "    (pg / \\\"plan.json\\\").write_text(json.dumps(plan), encoding=\\\"utf-8\\\")\\n    activate_for_plan(tmp_path, plan)\\n",\n)'''.replace('\\\\\"', '\\"')
+          if ambiguous_test not in follow_text:
+              # Simpler literal fallback matching what is stored in the script.
+              needle = '''replace_once(\n    "tests/test_cli.py",\n    "    (pg / \\"plan.json\\").write_text(json.dumps(plan), encoding=\\"utf-8\\")\\n",\n    "    (pg / \\"plan.json\\").write_text(json.dumps(plan), encoding=\\"utf-8\\")\\n    activate_for_plan(tmp_path, plan)\\n",\n)'''
+              ambiguous_test = needle
+          scoped_test = '''text = read("tests/test_cli.py")\nhelper_pos = text.find("def _write_plan")\ntarget = '    (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")\\n'\ntarget_pos = text.find(target, helper_pos)\nif helper_pos < 0 or target_pos < 0:\n    raise RuntimeError("test_cli _write_plan marker missing")\nreplacement = target + '    activate_for_plan(tmp_path, plan)\\n'\nwrite("tests/test_cli.py", text[:target_pos] + replacement + text[target_pos + len(target):])'''
+          if ambiguous_test not in follow_text:
+              raise SystemExit('expected ambiguous test_cli fixture replacement not found')
+          follow.write_text(follow_text.replace(ambiguous_test, scoped_test, 1), encoding='utf-8')
           PY
       - name: Apply hardening patch
         run: python tools/apply_full_hardening_stage1.py
