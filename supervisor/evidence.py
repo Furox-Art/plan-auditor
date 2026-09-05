@@ -1,4 +1,8 @@
-"""L11 — evidence integrity, archive anchoring, and optional external HMAC auth."""
+"""L11 — evidence integrity, archive anchoring, and optional external HMAC auth.
+
+All JSONL verification/signing helpers are streaming: evidence size is bounded by
+storage, not by verifier RAM.  Only one decoded record is retained at a time.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -20,6 +24,7 @@ from scripts.integrity import (
 )
 
 EVIDENCE_HEAD = "evidence.head.json"
+_STREAM_CHUNK = 1024 * 1024
 
 
 def _canonical(obj: Dict) -> str:
@@ -35,33 +40,51 @@ def _auth_payload(rec: Dict) -> Dict:
 
 
 def file_hash(path: str) -> Optional[str]:
+    digest = hashlib.sha256()
     try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        with Path(path).open("rb") as handle:
+            while True:
+                chunk = handle.read(_STREAM_CHUNK)
+                if not chunk:
+                    break
+                digest.update(chunk)
     except OSError:
         return None
+    return digest.hexdigest()
+
+
+def _iter_nonempty_lines(path: str | Path):
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, 1):
+            stripped = line.strip()
+            if stripped:
+                yield line_no, stripped
 
 
 def tail_hash(path: str) -> Optional[str]:
+    last: Optional[str] = None
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-        try:
+        for _line_no, line in _iter_nonempty_lines(path):
             value = json.loads(line)
-            return value.get("hash") if isinstance(value, dict) else None
-        except json.JSONDecodeError:
-            return None
-    return None
+            if not isinstance(value, dict):
+                return None
+            candidate = value.get("hash")
+            if candidate is not None and not isinstance(candidate, str):
+                return None
+            last = candidate
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return None
+    return last
 
 
 def _record_count(path: Path) -> int:
+    count = 0
     try:
-        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
-    except OSError:
+        for _line_no, _line in _iter_nonempty_lines(path):
+            count += 1
+    except (OSError, UnicodeError):
         return 0
+    return count
 
 
 def verify_jsonl_chain(
@@ -72,46 +95,59 @@ def verify_jsonl_chain(
     ignore_auth: bool = False,
     initial_prev: str = "GENESIS",
 ) -> Tuple[Optional[bool], int, str]:
-    try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        return False, 0, str(exc)
-    records: List[Dict] = []
-    for line_no, line in enumerate(lines, 1):
-        if not line.strip():
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            return False, len(records), f"line {line_no} is not JSON"
-        if not isinstance(rec, dict):
-            return False, len(records), f"line {line_no} is not an object"
-        records.append(rec)
-    if not records:
-        return True, 0, ""
-    if any("prev" not in rec for rec in records):
-        return None, len(records), "legacy archive lacks prev chain"
+    """Verify one JSONL chain in O(1) record memory.
 
+    Legacy unchained evidence returns ``(None, count, reason)`` exactly as before.
+    A missing ``prev`` discovered after earlier chained records is still treated
+    as legacy rather than accepting a mixed chain.
+    """
     prev = initial_prev
-    for index, rec in enumerate(records, 1):
-        if rec.get("prev") != prev:
-            return False, index - 1, f"line {index}: prev chain broken"
-        actual = rec.get("hash")
-        expected = hashlib.sha256(_canonical(_hash_payload(rec)).encode("utf-8")).hexdigest()
-        if actual != expected:
-            return False, index - 1, f"line {index}: hash mismatch"
-        if not ignore_auth:
-            auth = rec.get("auth")
-            if require_auth:
-                if key is None or not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _auth_payload(rec), auth):
-                    return False, index - 1, f"line {index}: HMAC authentication failed"
-            elif auth is not None and key is None:
-                return False, index - 1, f"line {index}: authenticated record requires HMAC key"
-            elif auth is not None and key is not None:
-                if not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _auth_payload(rec), auth):
-                    return False, index - 1, f"line {index}: HMAC authentication failed"
-        prev = actual
-    return True, len(records), ""
+    count = 0
+    saw_missing_prev = False
+    try:
+        for line_no, line in _iter_nonempty_lines(path):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                return False, count, f"line {line_no} is not JSON"
+            if not isinstance(rec, dict):
+                return False, count, f"line {line_no} is not an object"
+            count += 1
+            if "prev" not in rec:
+                saw_missing_prev = True
+                continue
+            if saw_missing_prev:
+                # Keep legacy/mixed classification conservative and avoid
+                # accepting a suffix that only happens to be chained.
+                continue
+            if rec.get("prev") != prev:
+                return False, count - 1, f"line {line_no}: prev chain broken"
+            actual = rec.get("hash")
+            expected = hashlib.sha256(_canonical(_hash_payload(rec)).encode("utf-8")).hexdigest()
+            if actual != expected:
+                return False, count - 1, f"line {line_no}: hash mismatch"
+            if not ignore_auth:
+                auth = rec.get("auth")
+                if require_auth:
+                    if key is None or not verify_auth(
+                        key, EVIDENCE_RECORD_DOMAIN, _auth_payload(rec), auth
+                    ):
+                        return False, count - 1, f"line {line_no}: HMAC authentication failed"
+                elif auth is not None and key is None:
+                    return False, count - 1, f"line {line_no}: authenticated record requires HMAC key"
+                elif auth is not None and key is not None and not verify_auth(
+                    key, EVIDENCE_RECORD_DOMAIN, _auth_payload(rec), auth
+                ):
+                    return False, count - 1, f"line {line_no}: HMAC authentication failed"
+            prev = actual
+    except (OSError, UnicodeError) as exc:
+        return False, count, str(exc)
+
+    if count == 0:
+        return True, 0, ""
+    if saw_missing_prev:
+        return None, count, "legacy archive lacks prev chain"
+    return True, count, ""
 
 
 @dataclass
@@ -137,28 +173,27 @@ class ArchiveManifest:
 
 
 def _read_stored_link(path: str) -> Optional[str]:
+    last: Optional[str] = None
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-        try:
+        for _line_no, line in _iter_nonempty_lines(path):
             value = json.loads(line)
-            return value.get("previous_archive_hash") if isinstance(value, dict) else None
-        except json.JSONDecodeError:
-            return None
-    return None
+            if not isinstance(value, dict):
+                return None
+            candidate = value.get("previous_archive_hash")
+            if candidate is not None and not isinstance(candidate, str):
+                return None
+            last = candidate
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return None
+    return last
 
 
 def _first_prev(path: str) -> Optional[str]:
     try:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                value = json.loads(line)
-                return value.get("prev") if isinstance(value, dict) else None
-    except (OSError, json.JSONDecodeError):
+        for _line_no, line in _iter_nonempty_lines(path):
+            value = json.loads(line)
+            return value.get("prev") if isinstance(value, dict) else None
+    except (OSError, json.JSONDecodeError, UnicodeError):
         return None
     return None
 
@@ -261,17 +296,35 @@ def _sign_jsonl(path: Path, key: KeyMaterial, initial_prev: str = "GENESIS") -> 
         raise IntegrityKeyError(f"cannot authenticate invalid evidence {path.name}: {problem}")
     if valid is None:
         raise IntegrityKeyError(f"cannot authenticate legacy unchained evidence {path.name}")
-    output: List[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        rec = json.loads(line)
-        payload = _auth_payload(rec)
-        rec["auth"] = make_auth(key, EVIDENCE_RECORD_DOMAIN, payload)
-        output.append(_canonical(rec))
+
     tmp = path.with_name(path.name + ".auth.tmp")
-    tmp.write_text("\n".join(output) + ("\n" if output else ""), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        with path.open("r", encoding="utf-8") as source, tmp.open("w", encoding="utf-8") as output:
+            for line_no, line in enumerate(source, 1):
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise IntegrityKeyError(
+                        f"cannot authenticate invalid evidence {path.name}: line {line_no} is not JSON"
+                    ) from exc
+                if not isinstance(rec, dict):
+                    raise IntegrityKeyError(
+                        f"cannot authenticate invalid evidence {path.name}: line {line_no} is not an object"
+                    )
+                payload = _auth_payload(rec)
+                rec["auth"] = make_auth(key, EVIDENCE_RECORD_DOMAIN, payload)
+                output.write(_canonical(rec) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _evidence_head_payload(root: Path, key: KeyMaterial) -> Dict:
