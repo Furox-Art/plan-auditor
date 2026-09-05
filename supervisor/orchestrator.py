@@ -43,7 +43,7 @@ from .sealing import (
     check_monotonic,
     load_seal,
 )
-from .workspace import capture_workspace
+from .workspace import capture_workspace, tool_available
 from .evidence import verify_anchor_chain
 
 
@@ -269,11 +269,22 @@ def _lifecycle_for(plan_ok: bool, seal_ok: bool, pending: List[int], proof: Fres
     return lifecycle
 
 
+
 def _required_tools(plan: Dict[str, Any], available: Dict[str, bool]) -> List[str]:
     raw = plan.get("required_tools", [])
     if not isinstance(raw, list):
         return ["<invalid required_tools>"]
-    return sorted({str(tool) for tool in raw if not available.get(str(tool), False)})
+    missing = set()
+    for item in raw:
+        tool = str(item)
+        if available.get(tool) is True:
+            continue
+        if tool_available(tool):
+            available[tool] = True
+            continue
+        available[tool] = False
+        missing.add(tool)
+    return sorted(missing)
 
 
 def _merge_checks(*checks: Optional[MonotonicCheck]) -> Optional[MonotonicCheck]:

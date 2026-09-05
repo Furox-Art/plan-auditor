@@ -75,7 +75,7 @@ def test_validate_rejects_unknown_type():
 def test_norm_check_pytest_becomes_run():
     c = ac.norm_check({"type": "pytest", "args": "tests/ -q"})
     assert c["type"] == "run"
-    assert c["cmd"] == "python -m pytest tests/ -q"
+    assert c["argv"] == [sys.executable, "-m", "pytest", "tests/", "-q"]
     assert c["expect_exit"] == 0
 
 

@@ -496,7 +496,10 @@ def cmd_evidence_verify(args: argparse.Namespace) -> int:
     return 0 if result["valid"] else 2
 
 
+
 def cmd_audit(args: argparse.Namespace) -> int:
+    from .agents import MultiAgentRegistry
+    from .audit_session import AuditSessionError, final_audit_session
     from .config import load_config
     from .contracts import environment_contract
     from .orchestrator import evaluate_workspace
@@ -543,22 +546,29 @@ def cmd_audit(args: argparse.Namespace) -> int:
             })
             return 2
 
-    for ref in refs:
-        argv = ["audit", str(root)]
-        if ref.name != "default":
-            argv += ["--plan", ref.name]
-        rc = _forward_core(argv)
-        if rc != 0:
-            return rc
+    registry = MultiAgentRegistry(str(root), owner_timeout=cfg.owner_timeout_sec)
+    try:
+        with final_audit_session(root, registry):
+            for ref in refs:
+                argv = ["audit", str(root)]
+                if ref.name != "default":
+                    argv += ["--plan", ref.name]
+                rc = _forward_core(argv)
+                if rc != 0:
+                    return rc
 
-    assessment = evaluate_workspace(str(root), profile=cfg.profile.value, mode=cfg.mode)
-    if assessment.get("outcome") != "PASS":
-        _json(assessment)
-        return 3 if assessment.get("outcome") == "UNKNOWN" else 2
+            assessment = evaluate_workspace(str(root), profile=cfg.profile.value, mode=cfg.mode)
+            if assessment.get("outcome") != "PASS":
+                _json(assessment)
+                return 3 if assessment.get("outcome") == "UNKNOWN" else 2
+    except AuditSessionError as exc:
+        _json({"outcome": "FAIL", "reason": "final audit quiescence/integrity failure", "detail": str(exc)})
+        return 2
+
     _json({
         "outcome": "PASS",
         "plans": {name: item.get("outcome") for name, item in assessment.get("plans", {}).items()},
-        "deterministic_core": "fresh audit PASS for every active plan",
+        "deterministic_core": "fresh audit PASS for every active plan under workspace-wide freeze",
         "gate": assessment.get("gate"),
     })
     return 0

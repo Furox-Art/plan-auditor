@@ -183,6 +183,33 @@ def main() -> int:
     (pg / "plan.json").write_text(json.dumps(default_plan, indent=2), encoding="utf-8")
     (pg / "plans" / "named.json").write_text(json.dumps(named_plan, indent=2), encoding="utf-8")
 
+    request_source = {
+        "format_version": 1,
+        "task": "Verify the installed wheel and both active plans",
+        "requirements": [
+            {
+                "id": "REQ-001",
+                "description": "Produce an upstream artifact",
+                "priority": "must",
+                "acceptance_checks": default_plan["steps"][0]["verify"],
+            },
+            {
+                "id": "REQ-002",
+                "description": "Consume the verified upstream artifact",
+                "priority": "must",
+                "acceptance_checks": default_plan["steps"][1]["verify"],
+            },
+            {
+                "id": "REQ-N1",
+                "description": "Execute a named-plan behavioral check",
+                "priority": "must",
+                "acceptance_checks": named_plan["steps"][0]["verify"],
+            },
+        ],
+    }
+    request_source_path = pg / "request-source.json"
+    request_source_path.write_text(json.dumps(request_source, indent=2), encoding="utf-8")
+
     # Product state exists before verification. Audit commands are evidence, not implementation.
     (workspace / "wheel-upstream.txt").write_text("upstream-ok", encoding="utf-8")
     (workspace / "wheel-final.txt").write_text("final-ok", encoding="utf-8")
@@ -192,6 +219,7 @@ def main() -> int:
     if "Plan Auditor" not in help_result.stdout or "plan-auditor" not in help_result.stdout:
         raise SystemExit("installed console script help output is incomplete")
 
+    _run([str(cli), "request", "init", str(workspace), "--file", str(request_source_path)], cwd=root, env=clean_env)
     _run([str(cli), "validate", str(workspace)], cwd=root, env=clean_env)
     _run([str(cli), "validate", str(workspace), "--plan", "named"], cwd=root, env=clean_env)
     _run([str(cli), "plan", "verify", str(workspace)], cwd=root, env=clean_env)
@@ -208,6 +236,38 @@ def main() -> int:
         raise SystemExit(f"installed-wheel doctor assessment unexpected: {assessment}")
     if set(assessment.get("plans", {})) != {"default", "named"}:
         raise SystemExit("multi-plan aggregation did not expose default and named plans")
+
+    _run([str(cli), "supervisor", "start", "--profile", "standard", "--mode", "serial", str(workspace)], cwd=root, env=auth_env)
+    try:
+        status_data = None
+        for _ in range(40):
+            proc = subprocess.run(
+                [str(cli), "supervisor", "status", str(workspace)],
+                cwd=str(root), env=auth_env, text=True, capture_output=True,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                try:
+                    status_data = json.loads(proc.stdout)
+                except json.JSONDecodeError:
+                    status_data = None
+            if (
+                isinstance(status_data, dict)
+                and status_data.get("running") is True
+                and (status_data.get("assessment") or {}).get("outcome") == "PASS"
+            ):
+                break
+            import time
+            time.sleep(0.2)
+        else:
+            raise SystemExit(f"installed-wheel supervisor did not reach running+PASS: {status_data}")
+    finally:
+        _run([str(cli), "supervisor", "stop", str(workspace)], cwd=root, env=auth_env)
+    stopped = subprocess.run(
+        [str(cli), "supervisor", "status", str(workspace)],
+        cwd=str(root), env=auth_env, text=True, capture_output=True,
+    )
+    if stopped.returncode == 0:
+        raise SystemExit("installed-wheel supervisor still reports running after stop")
 
     _run([str(cli), "task", "list", str(workspace)], cwd=root, env=auth_env)
     _run([str(cli), "agents", "list", str(workspace)], cwd=root, env=auth_env)
