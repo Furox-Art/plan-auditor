@@ -1,9 +1,4 @@
-"""L8 — plan sealing and monotonic verification.
-
-A sealed verification check may never disappear or be edited in place. New
-checks may be appended, which gives a simple fail-closed monotonic rule that is
-easy to audit and does not rely on subjective notions of "stricter".
-"""
+"""L8 — full plan-contract sealing, monotonic verification, and HMAC auth."""
 from __future__ import annotations
 
 import copy
@@ -14,17 +9,57 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from scripts.integrity import (
+    IntegrityKeyError,
+    KeyMaterial,
+    SEAL_DOMAIN,
+    make_auth,
+    runtime_key,
+    verify_auth,
+)
 
-def canonical_plan(plan: Dict) -> str:
-    return json.dumps(plan, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+SEAL_FORMAT_VERSION = 3
 
 
-def plan_hash(plan: Dict) -> str:
-    return hashlib.sha256(canonical_plan(plan).encode("utf-8")).hexdigest()
+class SealIntegrityError(RuntimeError):
+    pass
 
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _contract_step(step: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": step.get("id"),
+        "title": copy.deepcopy(step.get("title")),
+        "depends_on": copy.deepcopy(step.get("depends_on")),
+        "requires_outputs": copy.deepcopy(step.get("requires_outputs", [])),
+        "outputs": copy.deepcopy(step.get("outputs", [])),
+        "covers": copy.deepcopy(step.get("covers", [])),
+        "verify": copy.deepcopy([c for c in step.get("verify", []) if isinstance(c, dict)]),
+    }
+
+
+def contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "task": copy.deepcopy(plan.get("task")),
+        "requirements": copy.deepcopy(plan.get("requirements")),
+        "required_tools": copy.deepcopy(plan.get("required_tools", [])),
+        "steps": [
+            _contract_step(step)
+            for step in plan.get("steps", [])
+            if isinstance(step, dict)
+        ],
+    }
+
+
+def canonical_plan(plan: Dict) -> str:
+    return _canonical(contract_plan(plan))
+
+
+def plan_hash(plan: Dict) -> str:
+    return hashlib.sha256(canonical_plan(plan).encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -36,9 +71,12 @@ class Seal:
     steps: List[Dict]
     task: Any = None
     requirements: Any = None
-    format_version: int = 2
+    required_tools: Any = None
+    environment: Dict[str, Any] | None = None
+    format_version: int = SEAL_FORMAT_VERSION
+    auth: Optional[Dict[str, str]] = None
 
-    def to_dict(self) -> Dict:
+    def payload(self) -> Dict[str, Any]:
         return {
             "format_version": self.format_version,
             "plan_id": self.plan_id,
@@ -47,35 +85,45 @@ class Seal:
             "criteria_count": self.criteria_count,
             "task": copy.deepcopy(self.task),
             "requirements": copy.deepcopy(self.requirements),
+            "required_tools": copy.deepcopy(self.required_tools),
+            "environment": copy.deepcopy(self.environment or {}),
             "steps": copy.deepcopy(self.steps),
         }
 
-    def as_plan(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
+        value = self.payload()
+        if self.auth is not None:
+            value["auth"] = copy.deepcopy(self.auth)
+        return value
+
+    def as_plan(self) -> Dict[str, Any]:
         return {
             "task": copy.deepcopy(self.task),
             "requirements": copy.deepcopy(self.requirements),
+            "required_tools": copy.deepcopy(self.required_tools or []),
             "steps": copy.deepcopy(self.steps),
         }
 
 
-def seal_plan(plan: Dict, plan_id: str, sealed_at: str) -> Seal:
-    criteria_count = sum(len(s.get("verify", [])) for s in plan.get("steps", []))
+def seal_plan(plan: Dict, plan_id: str, sealed_at: str,
+              environment: Optional[Dict[str, Any]] = None) -> Seal:
+    contracted = contract_plan(plan)
+    criteria_count = 0
+    for step in contracted.get("steps", []):
+        criteria_count += len(step.get("verify", []))
+        for output in step.get("outputs", []) or []:
+            if isinstance(output, dict):
+                criteria_count += len(output.get("verify", []) or [])
     return Seal(
         plan_id=plan_id,
         sealed_at=sealed_at,
-        plan_hash=plan_hash(plan),
+        plan_hash=hashlib.sha256(_canonical(contracted).encode("utf-8")).hexdigest(),
         criteria_count=criteria_count,
-        task=copy.deepcopy(plan.get("task")),
-        requirements=copy.deepcopy(plan.get("requirements")),
-        steps=[
-            {
-                "id": s.get("id"),
-                "verify": copy.deepcopy(
-                    [c for c in s.get("verify", []) if isinstance(c, dict)]
-                ),
-            }
-            for s in plan.get("steps", [])
-        ],
+        task=copy.deepcopy(contracted.get("task")),
+        requirements=copy.deepcopy(contracted.get("requirements")),
+        required_tools=copy.deepcopy(contracted.get("required_tools", [])),
+        environment=copy.deepcopy(environment or {}),
+        steps=copy.deepcopy(contracted.get("steps", [])),
     )
 
 
@@ -86,51 +134,90 @@ class MonotonicCheck:
     improvements: List[str]
 
 
+def _multiset_contains(before: List[Any], after: List[Any]) -> bool:
+    remaining = [_canonical(item) for item in after]
+    for item in before:
+        encoded = _canonical(item)
+        try:
+            remaining.remove(encoded)
+        except ValueError:
+            return False
+    return True
+
+
+def _output_map(step: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    result: Dict[str, Dict[str, Any]] = {}
+    for item in step.get("outputs", []) or []:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            result[item["name"]] = item
+    return result
+
+
 def check_monotonic(before: Dict, after: Dict) -> MonotonicCheck:
-    """Verify that sealed criteria are preserved exactly and only extended."""
+    """Verify the full sealed contract can only be strengthened, never weakened."""
     violations: List[str] = []
     improvements: List[str] = []
 
-    before_steps = {s.get("id"): s for s in before.get("steps", []) if isinstance(s, dict)}
-    after_steps = {s.get("id"): s for s in after.get("steps", []) if isinstance(s, dict)}
+    before_steps_list = [s for s in before.get("steps", []) if isinstance(s, dict)]
+    after_steps_list = [s for s in after.get("steps", []) if isinstance(s, dict)]
+    before_ids = [s.get("id") for s in before_steps_list]
+    after_ids = [s.get("id") for s in after_steps_list]
+    if after_ids[:len(before_ids)] != before_ids:
+        violations.append("sealed step order/identity changed; existing steps must remain an ordered prefix")
 
+    before_steps = {s.get("id"): s for s in before_steps_list}
+    after_steps = {s.get("id"): s for s in after_steps_list}
     for sid, step in before_steps.items():
-        if sid not in after_steps:
+        current = after_steps.get(sid)
+        if current is None:
             violations.append(f"step {sid} removed after seal")
             continue
-
-        # Legacy v1 seals stored only verify_count. They cannot prove check identity.
-        if "verify" not in step and "verify_count" in step:
-            expected = int(step.get("verify_count", 0))
-            actual = len(after_steps[sid].get("verify", []))
-            if actual < expected:
-                violations.append(
-                    f"step {sid}: verification count reduced ({expected} -> {actual})"
-                )
-            else:
-                violations.append(
-                    f"step {sid}: legacy seal lacks check contents; explicit reseal required"
-                )
-            continue
+        if step.get("title") != current.get("title"):
+            violations.append(f"step {sid}: sealed title changed")
 
         before_checks = [c for c in step.get("verify", []) if isinstance(c, dict)]
-        after_checks = [c for c in after_steps[sid].get("verify", []) if isinstance(c, dict)]
-        remaining = [_canonical(c) for c in after_checks]
+        after_checks = [c for c in current.get("verify", []) if isinstance(c, dict)]
+        if not _multiset_contains(before_checks, after_checks):
+            violations.append(f"step {sid}: sealed verification check removed or modified")
+        elif len(after_checks) > len(before_checks):
+            improvements.append(f"step {sid}: verification checks increased")
 
-        for check in before_checks:
-            encoded = _canonical(check)
-            try:
-                remaining.remove(encoded)
-            except ValueError:
-                violations.append(
-                    f"step {sid}: verification reduced; sealed check removed or modified: {encoded}"
-                )
+        before_deps = list(step.get("depends_on") or [])
+        after_deps = list(current.get("depends_on") or [])
+        if not _multiset_contains(before_deps, after_deps):
+            violations.append(f"step {sid}: sealed dependency removed or modified")
+        elif len(after_deps) > len(before_deps):
+            improvements.append(f"step {sid}: dependencies tightened")
 
-        if len(after_checks) > len(before_checks):
-            improvements.append(
-                f"step {sid}: verification count increased "
-                f"({len(before_checks)} -> {len(after_checks)})"
-            )
+        before_required = list(step.get("requires_outputs") or [])
+        after_required = list(current.get("requires_outputs") or [])
+        if not _multiset_contains(before_required, after_required):
+            violations.append(f"step {sid}: sealed required output removed or modified")
+        elif len(after_required) > len(before_required):
+            improvements.append(f"step {sid}: required outputs increased")
+
+        before_covers = list(step.get("covers") or [])
+        after_covers = list(current.get("covers") or [])
+        if not _multiset_contains(before_covers, after_covers):
+            violations.append(f"step {sid}: sealed requirement coverage removed or modified")
+
+        before_outputs = _output_map(step)
+        after_outputs = _output_map(current)
+        for name, output in before_outputs.items():
+            now = after_outputs.get(name)
+            if now is None:
+                violations.append(f"step {sid}: sealed output {name!r} removed")
+                continue
+            before_meta = {k: v for k, v in output.items() if k != "verify"}
+            after_meta = {k: v for k, v in now.items() if k != "verify"}
+            if before_meta != after_meta:
+                violations.append(f"step {sid}: sealed output {name!r} metadata changed")
+            before_output_checks = [c for c in output.get("verify", []) if isinstance(c, dict)]
+            after_output_checks = [c for c in now.get("verify", []) if isinstance(c, dict)]
+            if not _multiset_contains(before_output_checks, after_output_checks):
+                violations.append(f"step {sid}: sealed output {name!r} verification weakened")
+        if len(after_outputs) > len(before_outputs):
+            improvements.append(f"step {sid}: output contracts increased")
 
     if before.get("task") is not None and before.get("task") != after.get("task"):
         violations.append("plan field 'task' changed after seal")
@@ -139,26 +226,45 @@ def check_monotonic(before: Dict, after: Dict) -> MonotonicCheck:
     after_req = after.get("requirements")
     if before_req is not None:
         if isinstance(before_req, list) and isinstance(after_req, list):
-            after_encoded = {_canonical(item) for item in after_req}
-            for item in before_req:
-                if _canonical(item) not in after_encoded:
-                    violations.append("a sealed requirement was removed or modified")
-                    break
-            if len(after_req) > len(before_req):
-                improvements.append(
-                    f"requirements increased ({len(before_req)} -> {len(after_req)})"
-                )
+            if not _multiset_contains(before_req, after_req):
+                violations.append("a sealed requirement was removed or modified")
+            elif len(after_req) > len(before_req):
+                improvements.append("requirements increased")
         elif before_req != after_req:
             violations.append("plan field 'requirements' changed after seal")
+
+    before_tools = list(before.get("required_tools") or [])
+    after_tools = list(after.get("required_tools") or [])
+    if not _multiset_contains(before_tools, after_tools):
+        violations.append("a sealed required tool was removed or modified")
+    elif len(after_tools) > len(before_tools):
+        improvements.append("required tools increased")
 
     return MonotonicCheck(ok=not violations, violations=violations, improvements=improvements)
 
 
-def load_seal(path: str) -> Optional[Seal]:
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+def check_environment(seal: Seal, current: Dict[str, Any]) -> MonotonicCheck:
+    expected = seal.environment or {}
+    if expected == current:
+        return MonotonicCheck(True, [], [])
+    return MonotonicCheck(
+        False,
+        [f"sealed supervisor environment changed: expected {expected!r}, current {current!r}"],
+        [],
+    )
+
+
+def _workspace_from_seal(path: Path) -> Path:
+    resolved = path.resolve()
+    current = resolved.parent
+    while current != current.parent:
+        if current.name == ".plan-auditor":
+            return current.parent
+        current = current.parent
+    raise SealIntegrityError(f"seal path is not under .plan-auditor: {resolved}")
+
+
+def _parse_seal_data(data: Dict[str, Any]) -> Seal:
     return Seal(
         plan_id=data.get("plan_id", ""),
         sealed_at=data.get("sealed_at", ""),
@@ -166,16 +272,75 @@ def load_seal(path: str) -> Optional[Seal]:
         criteria_count=int(data.get("criteria_count", 0)),
         task=copy.deepcopy(data.get("task")),
         requirements=copy.deepcopy(data.get("requirements")),
+        required_tools=copy.deepcopy(data.get("required_tools", [])),
+        environment=copy.deepcopy(data.get("environment", {})),
         steps=copy.deepcopy(data.get("steps", [])),
         format_version=int(data.get("format_version", 1)),
+        auth=copy.deepcopy(data.get("auth")) if isinstance(data.get("auth"), dict) else None,
     )
+
+
+def load_seal(path: str) -> Optional[Seal]:
+    target = Path(path)
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        raise SealIntegrityError(f"invalid seal file: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SealIntegrityError("seal root must be an object")
+    seal = _parse_seal_data(data)
+    root = _workspace_from_seal(target)
+    try:
+        key = runtime_key(root)
+    except IntegrityKeyError as exc:
+        raise SealIntegrityError(str(exc)) from exc
+    payload = seal.payload()
+    if key is not None:
+        if not verify_auth(key, SEAL_DOMAIN, payload, data.get("auth")):
+            raise SealIntegrityError("plan seal HMAC authentication failed")
+    elif data.get("auth") is not None:
+        raise SealIntegrityError("authenticated plan seal requires HMAC key")
+    return seal
+
+
+def _write_seal_payload(payload: Dict[str, Any], path: Path, key: Optional[KeyMaterial]) -> None:
+    value = copy.deepcopy(payload)
+    if key is not None:
+        value["auth"] = make_auth(key, SEAL_DOMAIN, payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def save_seal(seal: Seal, path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    tmp = path + ".tmp"
-    Path(tmp).write_text(
-        json.dumps(seal.to_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    os.replace(tmp, path)
+    target = Path(path)
+    root = _workspace_from_seal(target)
+    try:
+        key = runtime_key(root)
+    except IntegrityKeyError as exc:
+        raise SealIntegrityError(str(exc)) from exc
+    _write_seal_payload(seal.payload(), target, key)
+
+
+def initialize_seal_auth(root: str | Path, key: KeyMaterial) -> None:
+    workspace = Path(root).resolve()
+    pg = workspace / ".plan-auditor"
+    candidates: List[Path] = []
+    default = pg / "seal.json"
+    if default.is_file():
+        candidates.append(default)
+    seals = pg / "seals"
+    if seals.is_dir():
+        candidates.extend(sorted(seals.glob("*.json")))
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SealIntegrityError(f"cannot authenticate invalid seal {path.name}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise SealIntegrityError(f"cannot authenticate invalid seal {path.name}")
+        payload = {k: v for k, v in data.items() if k != "auth"}
+        _write_seal_payload(payload, path, key)
