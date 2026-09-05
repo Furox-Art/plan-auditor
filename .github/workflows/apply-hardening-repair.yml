@@ -2,8 +2,10 @@ name: Apply final hardening repair
 
 on:
   push:
-    branches: [hardening/full-verification-contract]
+    branches:
+      - hardening/full-verification-contract
     paths:
+      - "scripts/repair_hardening.py"
       - ".github/workflows/apply-hardening-repair.yml"
 
 permissions:
@@ -20,75 +22,14 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Apply audit-purity and cross-plan freshness repair
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          core = Path('scripts/audit_check.py')
-          text = core.read_text(encoding='utf-8')
-          old = '''        ok_all, results = _run_check_list(step.get("verify", []), base)\n        output_results = []\n'''
-          new = '''        audit_workspace_before = workspace_fingerprint(base) if mode == "audit" else None\n        ok_all, results = _run_check_list(step.get("verify", []), base)\n        output_results = []\n'''
-          if old not in text:
-              raise SystemExit('audit_check insertion point 1 not found')
-          text = text.replace(old, new, 1)
-          old = '''        for output in declared.values():\n            output_result = _run_output_contract(output, base)\n            output_results.append(output_result)\n            ok_all = ok_all and output_result["passed"]\n\n        step["status"] = "verified" if ok_all else "failed"\n'''
-          new = '''        for output in declared.values():\n            output_result = _run_output_contract(output, base)\n            output_results.append(output_result)\n            ok_all = ok_all and output_result["passed"]\n\n        if mode == "audit":\n            audit_workspace_after = workspace_fingerprint(base)\n            if audit_workspace_after != audit_workspace_before:\n                ok_all = False\n                results.append({\n                    "check": {"type": "audit_purity"},\n                    "passed": False,\n                    "detail": (\n                        "audit verification mutated workspace content/type/mode; "\n                        "verification must be observational and implementation must happen before audit"\n                    ),\n                    "output_tail": "",\n                })\n\n        step["status"] = "verified" if ok_all else "failed"\n'''
-          if old not in text:
-              raise SystemExit('audit_check insertion point 2 not found')
-          core.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-          smoke = Path('tests/wheel_cli_smoke.py')
-          text = smoke.read_text(encoding='utf-8')
-          text = text.replace(
-              '"from pathlib import Path; Path(\'wheel-upstream.txt\').write_text(\'upstream-ok\', encoding=\'utf-8\')"',
-              '"from pathlib import Path; assert Path(\'wheel-upstream.txt\').read_text(encoding=\'utf-8\') == \'upstream-ok\'"',
-          )
-          text = text.replace(
-              '"from pathlib import Path; assert Path(\'wheel-upstream.txt\').read_text(encoding=\'utf-8\') == \'upstream-ok\'; Path(\'wheel-final.txt\').write_text(\'final-ok\', encoding=\'utf-8\')"',
-              '"from pathlib import Path; assert Path(\'wheel-upstream.txt\').read_text(encoding=\'utf-8\') == \'upstream-ok\'; assert Path(\'wheel-final.txt\').read_text(encoding=\'utf-8\') == \'final-ok\'"',
-          )
-          text = text.replace(
-              '"from pathlib import Path; Path(\'wheel-named.txt\').write_text(\'named-ok\', encoding=\'utf-8\')"',
-              '"from pathlib import Path; assert Path(\'wheel-named.txt\').read_text(encoding=\'utf-8\') == \'named-ok\'"',
-          )
-          marker = '''    (pg / "plan.json").write_text(json.dumps(default_plan, indent=2), encoding="utf-8")\n    (pg / "plans" / "named.json").write_text(json.dumps(named_plan, indent=2), encoding="utf-8")\n\n'''
-          addition = marker + '''    # Product state exists before verification. Full audit checks must be observational:\n    # a verifier is evidence, never the implementation that creates the claimed result.\n    (workspace / "wheel-upstream.txt").write_text("upstream-ok", encoding="utf-8")\n    (workspace / "wheel-final.txt").write_text("final-ok", encoding="utf-8")\n    (workspace / "wheel-named.txt").write_text("named-ok", encoding="utf-8")\n\n'''
-          if marker not in text:
-              raise SystemExit('wheel smoke product-state insertion point not found')
-          smoke.write_text(text.replace(marker, addition, 1), encoding='utf-8')
-
-          tests = Path('tests/test_audit_check.py')
-          text = tests.read_text(encoding='utf-8')
-          test_block = r'''
-
-# ----------------------------------------------- audit observational purity
-def test_full_audit_rejects_verifier_workspace_mutation(tmp_path):
-    base = str(tmp_path)
-    plan = valid_plan(verify=[{
-        "type": "run",
-        "argv": [sys.executable, "-c", "from pathlib import Path; Path('created-by-verifier.txt').write_text('bad')"],
-        "expect_exit": 0,
-    }])
-    ok = ac.audit_steps(base, plan, mode="audit")
-    assert ok is False
-    assert plan["steps"][0]["status"] == "failed"
-    assert (tmp_path / "created-by-verifier.txt").exists()
-    evidence = [json.loads(line) for line in (tmp_path / ".plan-auditor" / "evidence.jsonl").read_text(encoding="utf-8").splitlines()]
-    step_record = next(rec for rec in evidence if rec.get("mode") == "audit" and rec.get("step") == 1)
-    assert any(result.get("check", {}).get("type") == "audit_purity" and result.get("passed") is False for result in step_record["results"])
-'''
-          if 'test_full_audit_rejects_verifier_workspace_mutation' not in text:
-              tests.write_text(text.rstrip() + test_block + '\n', encoding='utf-8')
-          PY
-      - name: Run focused and full tests
+      - name: Apply repair
+        run: python scripts/repair_hardening.py
+      - name: Run tests
         run: |
           python -m pip install -e . pytest
           python -m pytest tests/test_audit_check.py tests/test_full_hardening.py -q
           python -m pytest tests/ -q
-      - name: Commit repair to PR branch
-        shell: bash
+      - name: Commit repaired sources
         run: |
           git config user.name "plan-auditor-hardening-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
