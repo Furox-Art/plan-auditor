@@ -27,7 +27,7 @@ jobs:
       - name: Run tests
         run: |
           python -m pip install -e . pytest
-          python -m pytest tests/test_audit_check.py tests/test_full_hardening.py -q
+          python -m pytest tests/test_audit_check.py tests/test_full_contract_hardening.py -q
           python -m pytest tests/ -q
       - name: Commit repaired sources
         run: |
