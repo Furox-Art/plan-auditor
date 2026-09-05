@@ -34,6 +34,11 @@ jobs:
           if bad_marker not in text:
               raise SystemExit('expected graph-summary patch marker not found')
           text = text.replace(bad_marker, good_marker, 1)
+          ambiguous = 'replace_once("supervisor/cli.py", old_verify_start, new_verify_start)'
+          scoped = '''text = read("supervisor/cli.py")\nverify_pos = text.find("def cmd_plan_verify")\ntarget_pos = text.find(old_verify_start, verify_pos)\nif verify_pos < 0 or target_pos < 0:\n    raise RuntimeError("cli plan-verify patch marker missing")\nwrite("supervisor/cli.py", text[:target_pos] + new_verify_start + text[target_pos + len(old_verify_start):])'''
+          if ambiguous not in text:
+              raise SystemExit('expected ambiguous cli replacement not found')
+          text = text.replace(ambiguous, scoped, 1)
           path.write_text(text, encoding='utf-8')
           PY
       - name: Apply hardening patch
