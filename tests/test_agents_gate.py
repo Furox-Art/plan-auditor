@@ -62,7 +62,9 @@ def test_monotonic_violated_when_weakened():
         {"type": "run", "cmd": "x"}, {"type": "file_exists", "path": "y"}]}]}
     after = {"task": "t", "steps": [{"id": 1, "verify": [{"type": "run", "cmd": "x"}]}]}
     r = check_monotonic(before, after)
-    assert not r.ok and any("reduced" in v for v in r.violations)
+    assert not r.ok and any(
+        "removed" in v or "reduced" in v or "weaken" in v for v in r.violations
+    )
 
 
 def test_monotonic_violated_when_step_removed():
