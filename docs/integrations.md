@@ -1,33 +1,47 @@
-# Integrations & optional enforcement
+# Integrations and enforcement
 
-plan-auditor is a plain Agent Skill package: a `SKILL.md` plus scripts. It installs by copying the folder — nothing else. This document records the install paths per tool and the *optional* enforcement layer for tools that support blocking hooks.
+Plan Auditor can be used as an Agent Skill, a CLI supervisor, or both. The
+**authoritative completion decision** is the integrated gate exposed by
+`hooks/gate_hook.py` and `plan-auditor audit`.
 
-## Skill package install paths (verified)
+The gate evaluates every active default/named plan and does not trust persisted
+`status=verified` by itself.
 
-| Tool | User-level path | Project-level path | Invocation |
+## Skill install paths
+
+| Tool | User-level path | Project-level path | Typical invocation |
 |---|---|---|---|
-| Command Code | `~/.commandcode/skills/plan-auditor/` | `.commandcode/skills/plan-auditor/` | `/plan-auditor` (also auto-loads by description) |
+| Command Code | `~/.commandcode/skills/plan-auditor/` | `.commandcode/skills/plan-auditor/` | `/plan-auditor` |
 | Claude Code | `~/.claude/skills/plan-auditor/` | `.claude/skills/plan-auditor/` | `/plan-auditor` |
-| Codex CLI | `~/.codex/skills/plan-auditor/` | `.codex/skills/plan-auditor/` | `$plan-auditor`; auto-loads by description; verify with `/skills` |
-| OpenCode | `~/.config/opencode/skills/plan-auditor/` | `.opencode/skills/plan-auditor/` | `/plan-auditor`; auto-loads by description |
+| Codex CLI | `~/.codex/skills/plan-auditor/` | `.codex/skills/plan-auditor/` | `$plan-auditor` |
+| OpenCode | `~/.config/opencode/skills/plan-auditor/` | `.opencode/skills/plan-auditor/` | `/plan-auditor` |
 
-Notes:
-- `SKILL.md` follows the open [agentskills.io](https://agentskills.io) standard; the same file works in all of the above without modification.
-- Codex additionally accepts an optional `openai.yaml` per skill for Codex-specific metadata — not required here.
-- After copying, start a **new** session; skills are discovered at startup.
+Start a new host-tool session after installing/changing skills if that host only
+discovers skills at startup.
 
-## What each tool can and cannot enforce
+## Authoritative generic gate
 
-| Tool | Can it block turn-end with an incomplete plan? | Mechanism |
-|---|---|---|
-| Command Code | **Yes** | `Stop` hook (`scripts/stop_gate.py`) — wired in the user's `~/.commandcode/settings.json`; exit 2 retries the turn, capped at 3 by the engine |
-| Claude Code | Yes (equivalent `Stop` hook exists) | Port the same settings.json pattern to `.claude/settings.json` |
-| Codex CLI | No blocking hook exposed | `notify` hook is notification-only; the skill's own workflow (final `audit` exit 0) is the gate |
-| OpenCode | No blocking hook exposed | Plugin hooks can inject context into tool output (`scripts/opencode_plugin.js`, optional) but cannot block turn-end |
+```bash
+python /abs/path/to/plan-auditor/hooks/gate_hook.py <workspace>
+```
 
-## Optional: unskippable gate for Command Code
+Exit codes:
 
-`~/.commandcode/settings.json`:
+- `0` — PASS or no active plan
+- `1` — deterministic/blocking FAIL
+- `3` — UNKNOWN; completion is withheld
+
+A PASS requires all active plans to satisfy requirement coverage, format-v3
+full-contract seals, fresh full audits, evidence/registry integrity and policies.
+
+## Command Code compatibility Stop hook
+
+Some Command Code installations expect a Stop adapter that returns exit code `2`
+to request another turn. `scripts/stop_gate.py` remains for that interface, but
+it is **not a second verification implementation**. It delegates to the same
+integrated supervisor decision as `gate_hook.py`.
+
+Example:
 
 ```json
 {
@@ -37,8 +51,8 @@ Notes:
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:\\Users\\<you>\\.commandcode\\skills\\plan-auditor\\scripts\\stop_gate.py\"",
-            "timeout": 10
+            "command": "python \"C:\\path\\to\\plan-auditor\\scripts\\stop_gate.py\"",
+            "timeout": 20
           }
         ]
       }
@@ -47,8 +61,62 @@ Notes:
 }
 ```
 
-Behavior: at turn end, if `<project>/.plan-auditor/plan.json` exists and any step is not `verified`, the turn is blocked and the model is told to run the auditor. Projects without an active plan are never touched. Hooks load at session start, so restart after changing settings.
+Projects with no active plans pass through. Any active plan that is unsealed,
+uncovered, stale, failed, or otherwise not PASS blocks completion.
 
-## Optional: OpenCode context-injection plugin
+## Claude Code / Cursor / other blocking hooks
 
-`scripts/opencode_plugin.js` is a non-required OpenCode plugin: after every tool call it runs `audit_check.py status` (10 s cache) and, if the plan is incomplete, appends a reminder to the tool output the model sees. Install by copying to `~/.config/opencode/plugins/plan-auditor.js` and restarting OpenCode. It nudges, it does not block.
+When the host supports a blocking stop hook, call `hooks/gate_hook.py` and treat
+any nonzero exit code as “do not finish.” For example:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"/abs/path/to/plan-auditor/hooks/gate_hook.py\" \"$(pwd)\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Exact host configuration syntax may differ by version; the invariant is that the
+host executes the authoritative gate and does not treat non-PASS as completion.
+
+## Advisory-only hosts
+
+If a host exposes notifications/context injection but no blocking lifecycle hook,
+use:
+
+```bash
+python hooks/gate_hook.py . --warn-file .plan-auditor/gate-warning.json
+```
+
+and instruct the agent to read the warning before claiming completion. This is
+advisory enforcement: Plan Auditor can produce a deterministic non-PASS result,
+but it cannot force an advisory-only host to keep a turn open.
+
+## Recommended CLI sequence
+
+```bash
+plan-auditor plan verify .
+plan-auditor audit .
+```
+
+With authenticated integrity:
+
+```bash
+plan-auditor plan verify .
+plan-auditor integrity init .
+plan-auditor audit .
+```
+
+`plan verify` and the final integrated gate cover **all active plans** when no
+specific plan is selected.
