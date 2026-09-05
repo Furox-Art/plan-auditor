@@ -16,6 +16,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
+from scripts.integrity import (
+    IntegrityKeyError,
+    KeyMaterial,
+    REGISTRY_HEAD_DOMAIN,
+    REGISTRY_RECORD_DOMAIN,
+    make_auth,
+    runtime_key,
+    verify_auth,
+)
+
 
 REGISTRY_FORMAT_VERSION = 2
 REGISTRY_GENESIS = "GENESIS"
@@ -113,6 +123,10 @@ def _legacy_hash(rec: Dict) -> str:
     return hashlib.sha256(json.dumps(rec, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def _registry_auth_payload(envelope: Dict) -> Dict:
+    return {k: v for k, v in envelope.items() if k != "auth"}
+
+
 class MultiAgentRegistry:
     def __init__(self, root: str, owner_timeout: float = 300.0):
         self.root = Path(root).resolve()
@@ -189,9 +203,13 @@ class MultiAgentRegistry:
             "seq": seq,
             "hash": tail_hash,
         }
+        value = dict(payload)
+        key = runtime_key(self.root)
+        if key is not None:
+            value["auth"] = make_auth(key, REGISTRY_HEAD_DOMAIN, payload)
         tmp = self.head_path.with_name(self.head_path.name + ".tmp")
         with tmp.open("w", encoding="utf-8") as handle:
-            handle.write(_canonical(payload) + "\n")
+            handle.write(_canonical(value) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, self.head_path)
@@ -208,6 +226,67 @@ class MultiAgentRegistry:
             agents.pop(agent.agent_id, None)
         else:
             agents[agent.agent_id] = agent
+
+    def _verify_registry_auth(self) -> Tuple[bool, str]:
+        try:
+            key = runtime_key(self.root)
+        except IntegrityKeyError as exc:
+            return False, str(exc)
+
+        if key is None:
+            if self.registry_path.exists():
+                try:
+                    for line in self.registry_path.read_text(encoding="utf-8").splitlines():
+                        if not line.strip():
+                            continue
+                        value = json.loads(line)
+                        if isinstance(value, dict) and value.get("auth") is not None:
+                            return False, "authenticated registry requires HMAC key"
+                except (OSError, json.JSONDecodeError):
+                    return False, "registry authentication scan failed"
+            head = self._read_head()
+            if isinstance(head, dict) and head.get("auth") is not None:
+                return False, "authenticated registry head requires HMAC key"
+            if not self.registry_path.exists() and head is not None:
+                return False, "registry head exists without records"
+            return True, ""
+
+        if not self.head_path.exists():
+            return False, "authenticated registry head missing"
+        if self.registry_path.exists():
+            try:
+                lines = self.registry_path.read_text(encoding="utf-8").splitlines()
+            except OSError as exc:
+                return False, "registry unreadable during HMAC verification: %s" % exc
+            for line_no, line in enumerate(lines, 1):
+                if not line.strip():
+                    continue
+                try:
+                    envelope = json.loads(line)
+                except json.JSONDecodeError:
+                    return False, "registry line %s is not JSON" % line_no
+                if not isinstance(envelope, dict) or not verify_auth(
+                    key,
+                    REGISTRY_RECORD_DOMAIN,
+                    _registry_auth_payload(envelope),
+                    envelope.get("auth"),
+                ):
+                    return False, "registry line %s HMAC authentication failed" % line_no
+        try:
+            head = json.loads(self.head_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False, "authenticated registry head unreadable"
+        if not isinstance(head, dict):
+            return False, "authenticated registry head malformed"
+        payload = {k: v for k, v in head.items() if k != "auth"}
+        if not verify_auth(key, REGISTRY_HEAD_DOMAIN, payload, head.get("auth")):
+            return False, "registry head HMAC authentication failed"
+        if self.registry_path.exists():
+            if payload.get("seq") != self._registry_seq or payload.get("hash") != self._registry_tail:
+                return False, "registry authenticated head checkpoint mismatch"
+        elif payload.get("seq") != 0 or payload.get("hash") != REGISTRY_GENESIS:
+            return False, "empty registry authenticated head mismatch"
+        return True, ""
 
     def _refresh_from_disk(self) -> None:
         agents: Dict[str, Agent] = {}
@@ -305,8 +384,18 @@ class MultiAgentRegistry:
                 tampered = True
                 problem = problem or "registry head exists without records"
         elif self.head_path.exists():
-            tampered = True
-            problem = "registry log missing while head checkpoint exists"
+            # Authenticated mode uses a signed seq=0/GENESIS checkpoint even
+            # before the first registry event. HMAC validation below decides
+            # whether that empty checkpoint is trusted.
+            head = self._read_head()
+            if not (
+                isinstance(head, dict)
+                and head.get("format_version") == REGISTRY_FORMAT_VERSION
+                and head.get("seq") == 0
+                and head.get("hash") == REGISTRY_GENESIS
+            ):
+                tampered = True
+                problem = "registry log missing while head checkpoint exists"
 
         self._agents = agents
         self._registry_seq = seq
@@ -314,6 +403,11 @@ class MultiAgentRegistry:
         self.registry_tampered = tampered
         self.registry_legacy = legacy
         self.registry_problem = problem
+        if not self.registry_tampered:
+            auth_ok, auth_problem = self._verify_registry_auth()
+            if not auth_ok:
+                self.registry_tampered = True
+                self.registry_problem = auth_problem
 
     def _legacy_records(self) -> List[Dict]:
         records: List[Dict] = []
@@ -526,6 +620,11 @@ class MultiAgentRegistry:
                 "hash": current_hash,
                 "rec": rec,
             }
+            key = runtime_key(self.root)
+            if key is not None:
+                envelope["auth"] = make_auth(
+                    key, REGISTRY_RECORD_DOMAIN, _registry_auth_payload(envelope)
+                )
             with self.registry_path.open("a", encoding="utf-8") as handle:
                 handle.write(_canonical(envelope) + "\n")
                 handle.flush()
@@ -563,6 +662,111 @@ class MultiAgentRegistry:
         if pid and _pid_alive(pid):
             return False
         return True
+
+
+def initialize_registry_auth(root: str | Path, key: KeyMaterial) -> None:
+    """Validate current registry state, normalize v1 to v2, and HMAC-sign it."""
+    root_path = Path(root).resolve()
+    agents_dir = root_path / ".plan-auditor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    registry_path = agents_dir / "registry.jsonl"
+    head_path = agents_dir / "registry.head.json"
+    envelopes: List[Dict] = []
+
+    if registry_path.exists():
+        raw_values: List[Dict] = []
+        for line_no, line in enumerate(
+            registry_path.read_text(encoding="utf-8", errors="strict").splitlines(), 1
+        ):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict) or not isinstance(value.get("rec"), dict):
+                raise RegistryIntegrityError("registry line %s malformed" % line_no)
+            raw_values.append(value)
+
+        v2 = all(
+            value.get("format_version") == REGISTRY_FORMAT_VERSION
+            and isinstance(value.get("seq"), int)
+            and isinstance(value.get("prev"), str)
+            for value in raw_values
+        ) if raw_values else True
+        legacy = all(
+            "format_version" not in value and "seq" not in value and "prev" not in value
+            for value in raw_values
+        ) if raw_values else False
+        if raw_values and not (v2 or legacy):
+            raise RegistryIntegrityError("mixed or unknown registry format")
+
+        seq = 0
+        prev = REGISTRY_GENESIS
+        if legacy:
+            for line_no, value in enumerate(raw_values, 1):
+                rec = value["rec"]
+                if value.get("hash") != _legacy_hash(rec):
+                    raise RegistryIntegrityError("legacy registry line %s hash mismatch" % line_no)
+                seq += 1
+                current_hash = _registry_hash(seq, prev, rec)
+                envelope = {
+                    "format_version": REGISTRY_FORMAT_VERSION,
+                    "seq": seq,
+                    "prev": prev,
+                    "hash": current_hash,
+                    "rec": rec,
+                }
+                envelopes.append(envelope)
+                prev = current_hash
+        else:
+            for line_no, value in enumerate(raw_values, 1):
+                rec = value["rec"]
+                seq += 1
+                if value.get("seq") != seq or value.get("prev") != prev:
+                    raise RegistryIntegrityError("registry line %s sequence/prev mismatch" % line_no)
+                expected = _registry_hash(seq, prev, rec)
+                if value.get("hash") != expected:
+                    raise RegistryIntegrityError("registry line %s hash mismatch" % line_no)
+                envelope = {k: v for k, v in value.items() if k != "auth"}
+                envelopes.append(envelope)
+                prev = expected
+
+            if raw_values:
+                try:
+                    existing_head = json.loads(head_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise RegistryIntegrityError(
+                        "v2 registry head missing or invalid before HMAC init"
+                    ) from exc
+                if (
+                    not isinstance(existing_head, dict)
+                    or existing_head.get("seq") != seq
+                    or existing_head.get("hash") != prev
+                ):
+                    raise RegistryIntegrityError("v2 registry head mismatch before HMAC init")
+    else:
+        seq = 0
+        prev = REGISTRY_GENESIS
+
+    for envelope in envelopes:
+        envelope["auth"] = make_auth(
+            key, REGISTRY_RECORD_DOMAIN, _registry_auth_payload(envelope)
+        )
+    if envelopes:
+        tmp = registry_path.with_name(registry_path.name + ".auth.tmp")
+        tmp.write_text("".join(_canonical(value) + "\n" for value in envelopes), encoding="utf-8")
+        os.replace(tmp, registry_path)
+    elif registry_path.exists():
+        registry_path.write_text("", encoding="utf-8")
+
+    head_payload = {
+        "format_version": REGISTRY_FORMAT_VERSION,
+        "seq": seq,
+        "hash": prev,
+    }
+    head = dict(head_payload)
+    head["auth"] = make_auth(key, REGISTRY_HEAD_DOMAIN, head_payload)
+    tmp_head = head_path.with_name(head_path.name + ".auth.tmp")
+    tmp_head.write_text(_canonical(head) + "\n", encoding="utf-8")
+    os.replace(tmp_head, head_path)
 
 
 def _pid_alive(pid: int) -> bool:

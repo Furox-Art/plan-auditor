@@ -46,7 +46,7 @@ even then, but defense-in-depth is recommended.
 | TOCTOU on evidence | Evidence records carry SHA-256 hashes verified on read. |
 | Unsafe temp files | Use `tempfile` stdlib module; atomic `os.replace` for writes. |
 | Privilege escalation | Supervisor does not escalate privileges; runs as the invoking user. |
-| Evidence tampering | Append-only JSONL + cross-archive anchoring (tamper-**evident**, not immutable). |
+| Evidence tampering | Append-only JSONL + cross-archive anchoring; optional external-key HMAC authenticates records and signed tail checkpoints. |
 | State corruption | Atomic writes via `.tmp` + `os.replace`; manifest hashing. |
 | Secret leakage to logs | L3 policy rule `NO_SECRET_LEAK` scans logs for credential patterns. |
 | Process kill | Lock files have stale-detection via PID liveness. |
@@ -55,7 +55,7 @@ even then, but defense-in-depth is recommended.
 | Fake evidence injection | Breaking the SHA-256 chain is detectable via `verify_anchor_chain`. |
 | Mock abuse / hardcoded success | L12 adversarial layer flags `assert True` and `mock`/`monkeypatch` patterns. |
 | Weakening criteria post-seal | L8 monotonic verification rejects check removal and strength reduction. |
-| Concurrent agent file conflicts | L14 ownership registry warns or blocks overlapping writes. |
+| Concurrent agent file conflicts | L14 ownership registry warns or blocks overlapping writes; external-key HMAC can authenticate the registry chain/head. |
 | Missing requirement coverage | L1 requirement model + L4 BDI track uncovered requirements. |
 
 ## Honest terminology
@@ -89,3 +89,27 @@ Even with all layers active:
 
 Mitigate with OS-level isolation, minimal policies, and regular audits
 of the `.plan-auditor/` directory.
+
+
+## External-key authenticated integrity
+
+For stronger same-user tamper resistance, set exactly one of `PLAN_AUDITOR_HMAC_KEY`
+or `PLAN_AUDITOR_HMAC_KEY_FILE`. Key files are rejected if they resolve inside the
+workspace and must contain at least 32 bytes. Then run:
+
+```bash
+plan-auditor integrity init .
+plan-auditor integrity status .
+```
+
+Initialization is explicit: configuring a key never automatically blesses the
+current unsigned state. The initializer first validates existing SHA-256 chains,
+then HMAC-signs evidence records, archive records, the evidence tail checkpoint,
+registry records, and the registry head; the signed integrity marker is written
+last. Once initialized, missing/wrong key material, HMAC mismatch, tail truncation,
+or marker loss fails closed.
+
+This strengthens workspace-file tamper detection but does **not** replace OS
+isolation. A same-user process that can also read the external HMAC key can still
+forge authenticated state; keep the key outside the workspace and outside the
+untrusted agent's accessible environment where the platform permits it.
