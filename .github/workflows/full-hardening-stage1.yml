@@ -28,7 +28,13 @@ jobs:
           old = '''replace_once(\n    ".github/workflows/release.yml",\n    "uses: pypa/gh-action-pypi-publish@release/v1",\n    "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33",\n)\n# There are two publish uses; pin the second too if still present.\n'''
           if old not in text:
               raise SystemExit('expected release pin patch block not found')
-          path.write_text(text.replace(old, '# Pin both publish uses.\n', 1), encoding='utf-8')
+          text = text.replace(old, '# Pin both publish uses.\n', 1)
+          bad_marker = 'replace_between("scripts/plan_graph.py", "def validate_output_links(\\n", "def graph_summary(\\n", new_validate_links)'
+          good_marker = 'replace_between("scripts/plan_graph.py", "def validate_output_links(\\n", "def graph_summary(", new_validate_links)'
+          if bad_marker not in text:
+              raise SystemExit('expected graph-summary patch marker not found')
+          text = text.replace(bad_marker, good_marker, 1)
+          path.write_text(text, encoding='utf-8')
           PY
       - name: Apply hardening patch
         run: python tools/apply_full_hardening_stage1.py
