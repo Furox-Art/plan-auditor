@@ -105,7 +105,7 @@ def test_validate_plan_checks_output_verification_contract():
 def test_run_blocks_step_when_prerequisite_is_not_verified(tmp_path):
     plan = _plan([_step(1), _step(2)])
     assert core.audit_steps(str(tmp_path), plan, ids=[2], mode="run") is False
-    assert plan[1]["status"] == "blocked" if False else True
+    assert plan[1]["status"] == "blocked"
 
 
 def test_run_rechecks_required_output_before_dependent_step(tmp_path):
