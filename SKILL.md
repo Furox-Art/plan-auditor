@@ -35,8 +35,15 @@ verification, and final audit on the user's behalf.
 
 For non-trivial multi-step plans, create exactly one sealed `formal_planning`
 anchor by default so the LLM-free STRIPS-style planner checks symbolic
-reachability in addition to the existing dependency/output graph. Use
-`plan-auditor-formal make-check` to generate the canonical check and SHA. Fast
+reachability in addition to the existing dependency/output graph. Every
+`must`/`should` requirement must also be bound to the canonical formal goal fact
+`requirement-satisfied:<REQ-ID>`. That fact must be a final goal, must not be true
+in `initial_facts`, and must be added by an action whose Plan Auditor step covers
+the same requirement. Every formal action must have at least one symbolic add or
+delete effect. This prevents a decorative STRIPS model from being disconnected
+from the requirements it claims to prove.
+
+Use `plan-auditor-formal make-check` to generate the canonical check and SHA. Fast
 Downward is an optional independent cross-check; the internal planner remains the
 default and requires no GPU, model API, or network connection.
 
@@ -57,14 +64,19 @@ no meaningful assurance. Never fabricate facts merely to force a formal model.
    sealed `formal_planning` anchor with initial facts, preconditions, add/delete
    effects, and final goals unless the task is genuinely too trivial for that
    model to add assurance.
-6. **Sealed criteria can only tighten.** Do not remove or edit sealed checks,
+6. **Formal goals must prove requirements, not merely exist.** For every
+   `must`/`should` requirement `REQ-X`, include `requirement-satisfied:REQ-X` in
+   `goal_facts` and have a covering step produce it. Never place a required
+   requirement goal in `initial_facts`; every formal action must have a symbolic
+   effect.
+7. **Sealed criteria can only tighten.** Do not remove or edit sealed checks,
    dependencies, required outputs, outputs, coverage, requirements, formal
    planning data, or supervisor policy/profile settings to manufacture PASS.
-7. **All active plans count.** A passing default plan never hides an unfinished
+8. **All active plans count.** A passing default plan never hides an unfinished
    `.plan-auditor/plans/<name>.json` plan.
-8. **Full audit is the completion gate.** Do not claim completion until
+9. **Full audit is the completion gate.** Do not claim completion until
    `plan-auditor audit <project>` exits 0.
-9. **Semantic judgment can only tighten.** If the deterministic checks miss a
+10. **Semantic judgment can only tighten.** If the deterministic checks miss a
    real defect, add a stronger deterministic check and rerun; prose cannot turn a
    failure into PASS.
 
@@ -143,6 +155,13 @@ and final goals. The action set must contain exactly one action for every Plan
 Auditor step. Existing `depends_on` edges are enforced automatically by the
 classical planner.
 
+In addition to ordinary domain facts, create a deterministic requirement binding
+for every `must`/`should` requirement. For example, if step 1 covers `REQ-001`,
+its `add_effects` must include `requirement-satisfied:REQ-001`, and that fact must
+also appear in `goal_facts`. The required fact cannot appear in `initial_facts`.
+The integrated L5 verifier rejects missing bindings, bindings produced only by
+non-covering steps, or effect-free formal actions.
+
 Generate the canonical anchored check rather than hand-writing its SHA:
 
 ```bash
@@ -159,8 +178,10 @@ plan-auditor-formal make-check formal-contract.json \
 ```
 
 The internal planner is authoritative for the built-in formal layer and remains
-fully local/CPU-only. Formal planning proves the declared symbolic model; it does
-not replace concrete execution checks.
+fully local/CPU-only. Formal planning proves the declared symbolic model; the
+requirement-binding layer proves that the symbolic end state is connected to the
+requirements covered by the plan. Neither replaces concrete execution checks or
+the host-owned request acceptance checks.
 
 ### 4. Implement and verify after each step
 
@@ -207,6 +228,8 @@ PASS requires every active plan to have:
 
 - valid schema and explicit requirement coverage,
 - successful formal reachability when a `formal_planning` anchor is present,
+- deterministic formal requirement-to-goal alignment for every `must`/`should`
+  requirement when formal planning is present,
 - intact full-contract seal,
 - unchanged sealed supervisor environment/policies,
 - all steps verified,
@@ -249,9 +272,10 @@ those files and removes files introduced after the snapshot. An explicit
 ## Trust boundary
 
 The purpose of Plan Auditor is to determine whether the AI actually completed the
-planned/user-requested work, not to sandbox the AI. Formal planning cannot repair
-an incorrect formalization: a wrong symbolic model can be proved correctly. For
-high-assurance work, derive the formal contract from the explicit host-approved
-requirements and keep the deterministic execution audit authoritative. External
+planned/user-requested work, not to sandbox the AI. Formal planning still cannot
+understand whether a human-language requirement was translated into the right
+symbolic meaning. The deterministic binding layer closes omission/disconnection
+between approved requirements and formal goals, while the host-owned request
+contract and acceptance checks remain authoritative for user intent. External
 HMAC improves tamper detection, but a same-user process that can read the HMAC key
 is outside that integrity guarantee. See `docs/threat-model.md`.

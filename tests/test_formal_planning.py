@@ -59,18 +59,22 @@ def _reachable_contract() -> dict:
     return {
         "version": 1,
         "initial_facts": ["workspace-ready"],
-        "goal_facts": ["artifact-verified"],
+        "goal_facts": [
+            "artifact-verified",
+            "requirement-satisfied:REQ-1",
+            "requirement-satisfied:REQ-2",
+        ],
         "actions": [
             {
                 "step": 1,
                 "preconditions": ["workspace-ready"],
-                "add_effects": ["artifact-built"],
+                "add_effects": ["artifact-built", "requirement-satisfied:REQ-1"],
                 "del_effects": [],
             },
             {
                 "step": 2,
                 "preconditions": ["artifact-built"],
-                "add_effects": ["artifact-verified"],
+                "add_effects": ["artifact-verified", "requirement-satisfied:REQ-2"],
                 "del_effects": [],
             },
         ],
@@ -88,6 +92,8 @@ def test_reachable_formal_contract_passes_plan_verifier():
     analysis = verify_plan(plan, require_coverage=True)
     assert analysis.verdict == "PASS"
     assert analysis.formal_planning is not None
+    assert analysis.formal_semantics is not None
+    assert analysis.formal_semantics.valid
     assert analysis.formal_planning.contract_sha256 == contract_sha256(_reachable_contract())
 
 

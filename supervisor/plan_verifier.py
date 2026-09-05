@@ -16,6 +16,7 @@ from scripts.plan_graph import (
 
 from .coverage import CoverageResult, analyze_coverage
 from .formal_planning import FormalPlanningResult, analyze_formal_contract
+from .formal_semantics import FormalSemanticResult, analyze_formal_semantics
 
 
 @dataclass
@@ -43,6 +44,7 @@ class PlanAnalysis:
     dependencies: Dict[int, List[int]] = field(default_factory=dict)
     coverage: Optional[CoverageResult] = None
     formal_planning: Optional[FormalPlanningResult] = None
+    formal_semantics: Optional[FormalSemanticResult] = None
 
     @property
     def weakest_verification(self) -> Optional[str]:
@@ -173,8 +175,10 @@ def verify_plan(plan: Dict, *, require_coverage: bool = False) -> PlanAnalysis:
             analysis.rationale.append("explicit requirement coverage is incomplete or invalid")
 
     formal = analyze_formal_contract(plan)
+    semantic = analyze_formal_semantics(plan)
     if formal.enabled:
         analysis.formal_planning = formal
+        analysis.formal_semantics = semantic
         if formal.verdict == "REJECT":
             analysis.contradictions.extend(formal.errors)
             analysis.rationale.append("sealed classical planning contract is unreachable or invalid")
@@ -184,10 +188,21 @@ def verify_plan(plan: Dict, *, require_coverage: bool = False) -> PlanAnalysis:
             analysis.rationale.append(
                 "sealed classical planning contract is reachable in dependency-respecting order"
             )
+        if not semantic.valid:
+            analysis.contradictions.extend(semantic.errors)
+            analysis.rationale.append(
+                "formal planning contract is not semantically bound to every must/should requirement"
+            )
+        else:
+            analysis.rationale.append(
+                "formal goals are deterministically bound to covered must/should requirements"
+            )
 
     if not graph_valid:
         analysis.verdict = "REJECT"
     elif formal.enabled and formal.verdict == "REJECT":
+        analysis.verdict = "REJECT"
+    elif formal.enabled and not semantic.valid:
         analysis.verdict = "REJECT"
     elif analysis.coverage is not None and not analysis.coverage.valid:
         analysis.verdict = "REJECT" if require_coverage else "REVISE"
