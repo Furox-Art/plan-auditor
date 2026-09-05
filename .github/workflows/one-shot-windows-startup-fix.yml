@@ -28,7 +28,7 @@ jobs:
           cli = Path('supervisor/cli.py')
           text = cli.read_text(encoding='utf-8')
           import_anchor = 'from typing import Any\n\n'
-          constant = 'from typing import Any\n\nSUPERVISOR_START_TIMEOUT_SEC = 30.0\n\n'
+          constant = 'from typing import Any\n\nSUPERVISOR_START_TIMEOUT_SEC = 60.0\n\n'
           if 'SUPERVISOR_START_TIMEOUT_SEC' not in text:
               if text.count(import_anchor) != 1:
                   raise SystemExit('unexpected cli import anchor')
@@ -45,6 +45,15 @@ jobs:
 
           daemon = Path('supervisor/daemon.py')
           text = daemon.read_text(encoding='utf-8')
+          old_atomic = '''def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:\n    path.parent.mkdir(parents=True, exist_ok=True)\n    tmp = path.with_suffix(path.suffix + ".tmp")\n    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")\n    os.replace(tmp, path)\n'''
+          new_atomic = '''def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:\n    path.parent.mkdir(parents=True, exist_ok=True)\n    # Use a unique sibling temp file so independent writers cannot collide.\n    # Windows can transiently reject replacement while a reader has the old\n    # destination open; retry that sharing violation without falling back to\n    # a non-atomic in-place write.\n    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")\n    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")\n    deadline = time.monotonic() + 3.0\n    try:\n        while True:\n            try:\n                os.replace(tmp, path)\n                return\n            except PermissionError:\n                if time.monotonic() >= deadline:\n                    raise\n                time.sleep(0.02)\n    finally:\n        try:\n            tmp.unlink()\n        except OSError:\n            pass\n'''
+          if old_atomic in text:
+              if text.count(old_atomic) != 1:
+                  raise SystemExit('unexpected atomic write block count')
+              text = text.replace(old_atomic, new_atomic, 1)
+          elif new_atomic not in text:
+              raise SystemExit('atomic write anchor missing')
+
           old = '''    assessment = _safe_assessment(root, profile, mode)\n    gate_outcome = str(assessment.get("outcome", "UNKNOWN"))\n    _atomic_write_json(assessment_path(root), assessment)\n    write_state("running")\n'''
           new = '''    # Publish process liveness before the potentially expensive initial assessment.\n    # Callers can distinguish a live startup from a crashed child without\n    # weakening the requirement that only an assessed daemon becomes running.\n    write_state("starting")\n    assessment = _safe_assessment(root, profile, mode)\n    gate_outcome = str(assessment.get("outcome", "UNKNOWN"))\n    _atomic_write_json(assessment_path(root), assessment)\n    write_state("running")\n'''
           if old in text:
@@ -60,6 +69,9 @@ jobs:
           marker = 'def test_daemon_publishes_starting_state_before_initial_assessment'
           if marker not in text:
               text += '''\n\ndef test_daemon_publishes_starting_state_before_initial_assessment(tmp_path: Path, monkeypatch) -> None:\n    import supervisor.daemon as daemon_module\n\n    _write_fast_config(tmp_path)\n    release = threading.Event()\n\n    def delayed_assessment(root: str, profile: str, mode: str) -> dict:\n        release.wait(timeout=2.0)\n        return {"outcome": "PASS", "workspace": root, "profile": profile, "mode": mode}\n\n    monkeypatch.setattr(daemon_module, "_safe_assessment", delayed_assessment)\n    thread = _start_thread(tmp_path)\n    starting = _wait_for_state(tmp_path, "starting", timeout=1.0, pid=os.getpid())\n    assert starting["gate_outcome"] == "UNKNOWN"\n\n    release.set()\n    _wait_for_state(tmp_path, "running", timeout=2.0, pid=os.getpid())\n    _request_stop(tmp_path)\n    thread.join(timeout=2.0)\n    assert not thread.is_alive()\n'''
+          atomic_marker = 'def test_atomic_write_json_retries_transient_permission_error'
+          if atomic_marker not in text:
+              text += '''\n\ndef test_atomic_write_json_retries_transient_permission_error(tmp_path: Path, monkeypatch) -> None:\n    import supervisor.daemon as daemon_module\n\n    target = tmp_path / "state.json"\n    target.write_text('{"old": true}', encoding="utf-8")\n    real_replace = daemon_module.os.replace\n    calls = {"count": 0}\n\n    def flaky_replace(src, dst):\n        calls["count"] += 1\n        if calls["count"] < 3:\n            raise PermissionError("transient sharing violation")\n        return real_replace(src, dst)\n\n    monkeypatch.setattr(daemon_module.os, "replace", flaky_replace)\n    daemon_module._atomic_write_json(target, {"new": True})\n    assert json.loads(target.read_text(encoding="utf-8")) == {"new": True}\n    assert calls["count"] == 3\n    assert list(tmp_path.glob("state.json.*.tmp")) == []\n'''
           tests.write_text(text, encoding='utf-8')
 
           integration = Path('tests/test_integration_hardening.py')
