@@ -1,100 +1,191 @@
 ---
 name: plan-auditor
-description: Strict plan + independent auditor workflow — turns a task into machine-verifiable steps, tests every step with real command evidence (never trusting the agent's own "done" claim), and only treats the task as finished when the full audit passes. Use when the user asks to build/implement/fix something non-trivial, says "plan it", "audit it", "don't leave it half-done", "did you actually do it", or invokes /plan-auditor.
+description: Independent plan verification for AI coding agents — converts a task into explicit requirements and machine-verifiable steps, proves every step with real command evidence, and blocks completion until every active plan has requirement coverage, an intact sealed contract, and a fresh deterministic audit. Use for non-trivial build/implement/fix work or whenever the user asks whether the work was actually completed.
 argument-hint: "<task description>"
 metadata:
-  version: "1.1.0"
+  version: "2.1.0"
 ---
 
-# Plan-Auditor: Strict Plan + Independent Auditor
+# Plan Auditor — strict plan + independent verification
 
-You play TWO roles in this workflow and never mix them:
-- **Planner:** break the task into measurable steps.
-- **Auditor:** test every step with evidence — never trust your own narration, memory, or "I did it" claim; trust only command output.
+The main agent's narration is never evidence. The workflow has two conceptual
+roles that must remain separate:
 
-## Strict rules (no exceptions)
+- **Planner / implementer:** converts the user's exact requirements into work.
+- **Auditor / supervisor:** decides completion only from reproducible checks and
+  the sealed verification contract.
 
-1. **No evidence = not done.** A step is `verified` only when the auditor script passes all its checks.
-2. **Judge can only downgrade.** Even if checks pass, if you believe the work is actually wrong, do not treat `verified` as valid — add a stricter check and re-run the script. You can never turn a failed check into a pass.
-3. **Unverifiable = failed.** A step with no reproducible evidence is `failed`.
-4. **Log is append-only.** `evidence.jsonl` and its `hash` chain are never edited by hand; nothing outside the script may write to the log.
-5. **Check specification lock.** Once work begins, weakening the `verify` lists inside `plan.json` is forbidden; you may only ADD new/stricter checks.
-6. **Full audit gate.** Before saying "done", `audit` mode must exit 0. Never finish without it.
+## Non-negotiable rules
 
-## Files
+1. **No deterministic evidence = not done.**
+2. **Every user requirement must be explicit.** Supervisor Mode requires
+   `plan.requirements`, and every `must`/`should` requirement must be linked from
+   one or more steps through `covers`.
+3. **Every step needs real behavior.** At least one `run`, `exec`, or `pytest`
+   check is mandatory; existence/regex checks may supplement but not replace it.
+4. **Dependencies must be concrete.** In explicit DAG plans, every dependency
+   edge must be backed by a named upstream output and `requires_outputs`.
+5. **Sealed criteria can only tighten.** Do not remove or edit sealed checks,
+   dependencies, required outputs, outputs, coverage, requirements, or supervisor
+   policy/profile settings to manufacture PASS.
+6. **All active plans count.** A passing default plan never hides an unfinished
+   `.plan-auditor/plans/<name>.json` plan.
+7. **Full audit is the completion gate.** Do not claim completion until
+   `plan-auditor audit <project>` exits 0.
+8. **Semantic judgment can only tighten.** If the deterministic checks miss a
+   real defect, add a stronger deterministic check and rerun; prose cannot turn a
+   failure into PASS.
 
-- Plan: `<project>/.plan-auditor/plan.json` (format: `references/plan-format.md`)
-- Evidence: `<project>/.plan-auditor/evidence.jsonl` (written by script, append-only, hash-chained)
-- Auditor script: `scripts/audit_check.py` inside this skill directory
+## Plan files
 
-Always call the script RELATIVE to the skill directory — the folder containing this `SKILL.md` is `<skill-dizini>`; the full path changes per install:
+- Default: `<project>/.plan-auditor/plan.json`
+- Named: `<project>/.plan-auditor/plans/<safe-name>.json`
+- Format reference: `references/plan-format.md`
+- Evidence: `<project>/.plan-auditor/evidence.jsonl` plus anchored archives
 
-```
-python <skill-dizin>/scripts/audit_check.py <mode> <project-dir> [id id ...]
-```
-
-Modes: `validate` (schema check) · `run` (audit pending — or given ids like `run <dir> 1 2` — steps) · `audit` (re-verify ALL steps, final gate) · `status` (table, no execution) · `snapshot` / `rollback` (capture / restore a file snapshot). Directory name comes BEFORE ids.
-
-Extra options: `--plan <name>` (multi-plan: `.plan-auditor/plans/<name>.json`; default `plan.json`) · `run --force` (force past the 3-attempt limit — exceptional case, user asked).
-
-## Workflow
-
-### 1. PLAN
-- Take the task, write `<project>/.plan-auditor/plan.json` per the schema in `references/plan-format.md`.
-- Every step's `verify` list must be CONCRETE and machine-executable: command + expected exit code, file existence, regex, pytest. NO vague criteria like "works correctly".
-- When starting a new task, if an old plan exists: archive it to `.plan-auditor/archive/<date>-<slug>.json` if its work is done; if STILL active, keep the new task in a separate file via `--plan <name>`.
-- Run `validate`; fix errors and re-run. Summarize the plan to the user.
-
-### 2. EXECUTE + PROVE AFTER EACH STEP + RECOVERY LOOP
-- Do steps in order. The moment a step's work is done, run `run <id>`.
-- If not `verified`: the step is not finished. Recovery loop:
-  1. Diagnose from the FAILED lines in the evidence output (which check, why it fell).
-  2. Fix the root cause (not the symptom — if a test passes trivially, FIX the product, never weaken the test).
-  3. Re-run `run <id>` for the same step.
-- At most **3 recovery attempts per step**. After 3, if still not `verified`, STOP: report to the user with evidence output and ask how to proceed. Never pass by weakening a check, skipping a step, or saying "good enough".
-- Advance to the next step only after the previous is `verified`.
-
-### 3. FULL AUDIT
-- After all steps are `verified`, run `audit` (re-tests everything in fresh shells).
-- If exit is not 0, continue from the report: which step fell why, fix, re-run audit.
-
-### 4. REPORT
-- Report as a table: step, check count, status, evidence summary (quotes from command output).
-- Do not say "I did it"; say "audit passed, evidence is: ...".
-
-## Mandatory enforcement (hook)
-
-If the user wired this skill's `scripts/stop_gate.py` into Command Code's `Stop` hook: while an active plan has an unverified step, the turn CANNOT close — the hook exits 2 and sends you back to the audit. This is a non-skippable layer; do not rely on the hook's absence but do not contradict it when present. For polyglot checks use the `exec` type: the user's compiled binary (C++/Rust/Java/jar) enters the plan as `{"type": "exec", "cmd": "..."}`; exit code counts as evidence.
-
-## Example
-
-Task: "write fibonacci in fib.py, with a test."
+A plan should contain explicit `requirements` and use stable IDs such as
+`REQ-001`. Each implementation step names the requirements it proves:
 
 ```json
 {
-  "task": "fibonacci function and test in fib.py",
-  "created": "2026-09-03T12:00:00",
+  "task": "implement the requested behavior",
+  "created": "2026-09-05T00:00:00Z",
+  "requirements": [
+    {"id": "REQ-001", "description": "requested behavior works", "priority": "must"}
+  ],
+  "required_tools": ["python"],
   "steps": [
     {
       "id": 1,
-      "title": "write fib function",
+      "title": "implement and prove behavior",
+      "covers": ["REQ-001"],
       "verify": [
-        {"type": "file_exists", "path": "fib.py"},
-        {"type": "regex", "path": "fib.py", "pattern": "def\\s+fib\\s*\\("},
-        {"type": "run", "cmd": "python -c \"from fib import fib; assert fib(10)==55\"", "expect_exit": 0}
-      ],
-      "status": "pending"
-    },
-    {
-      "id": 2,
-      "title": "write and pass pytest",
-      "verify": [
-        {"type": "pytest", "args": "test_fib.py -q"}
-      ],
-      "status": "pending"
+        {"type": "run", "argv": ["python", "-m", "pytest", "tests/", "-q"]}
+      ]
     }
   ]
 }
 ```
 
-Then: do the steps → `run` after each → `audit` at the end → report with the table.
+Prefer structured `argv`. Shell interpretation is disabled by default and
+`"shell": true` is an explicit trust-boundary opt-in.
+
+## Workflow
+
+### 1. Capture the full requirement set
+
+Translate every material user requirement into a stable requirement object.
+Do not omit a requested feature merely because the implementation plan is
+shorter. Ambiguous requirements must be clarified or represented explicitly;
+they must not disappear.
+
+### 2. Build a measurable plan
+
+Break the work into steps with machine-executable checks. For multi-step work,
+model prerequisites and concrete outputs. Example:
+
+```json
+{
+  "id": 2,
+  "title": "consume verified upstream result",
+  "depends_on": [1],
+  "requires_outputs": [{"step": 1, "name": "artifact"}],
+  "covers": ["REQ-002"],
+  "verify": [{"type": "run", "argv": ["python", "tests/check_consumer.py"]}]
+}
+```
+
+Run schema validation while drafting:
+
+```bash
+plan-auditor validate <project>
+```
+
+For a named plan, the deterministic core also accepts `--plan <name>`.
+
+### 3. Implement and verify after each step
+
+Run pending/given step checks through the auditor. A failed check means the step
+is not finished. Diagnose the real failure, fix the implementation, and rerun.
+Never weaken a check just to obtain PASS.
+
+The deterministic core caps normal failed attempts per step and counts failures
+across evidence rotations. Use force only when the user explicitly authorizes an
+exceptional retry.
+
+### 4. Seal the complete verification contract
+
+Before final audit:
+
+```bash
+plan-auditor plan verify <project>
+```
+
+With no `--plan`, Supervisor Mode verifies and seals **all active plans**. The
+format-v3 seal binds requirements, coverage, DAG/output contracts, checks,
+required tools, and supervisor profile/mode/policy fingerprint.
+
+If external-key authenticated integrity is configured, initialize it after the
+seals exist:
+
+```bash
+plan-auditor integrity init <project>
+```
+
+The key must be outside the workspace (or supplied through the environment).
+This authenticates evidence, checkpoints, registry state, and seals.
+
+### 5. Run the final integrated audit
+
+```bash
+plan-auditor audit <project>
+```
+
+PASS requires every active plan to have:
+
+- valid schema and explicit requirement coverage,
+- intact full-contract seal,
+- unchanged sealed supervisor environment/policies,
+- all steps verified,
+- valid dependency/output evidence,
+- a fresh plan/workspace fingerprint from a complete audit,
+- valid active + archived evidence chains,
+- valid agent-registry state,
+- required tools present,
+- no blocking policy result.
+
+Only exit code 0 means completion is proven.
+
+### 6. Report with evidence
+
+Report which plan/steps were audited and the final PASS/FAIL/UNKNOWN outcome.
+Do not substitute “I did it” for the audit result.
+
+## Hook enforcement
+
+`hooks/gate_hook.py` is the authoritative platform-neutral gate. The legacy
+`scripts/stop_gate.py` filename remains only as a compatibility adapter for tools
+whose Stop hook expects exit code 2; it delegates to the same integrated gate and
+does **not** trust `status=verified`.
+
+- Blocking-hook platforms can prevent turn completion when the integrated gate
+  is not PASS.
+- Advisory-only platforms can write/inject the gate result, but cannot physically
+  block the host application.
+
+The hook and the CLI use the same aggregate multi-plan completion decision.
+
+## Snapshot / rollback
+
+The deterministic core supports `snapshot` and `rollback`. A default snapshot
+captures the full workspace product state (excluding auditor/git/cache metadata)
+and writes a manifest with file type, mode and hash; full-scope rollback restores
+those files and removes files introduced after the snapshot. An explicit
+`snapshot` list intentionally limits the rollback scope.
+
+## Trust boundary
+
+The purpose of Plan Auditor is to determine whether the AI actually completed the
+planned/user-requested work, not to sandbox the AI. External HMAC improves tamper
+detection, but a same-user process that can read the HMAC key is outside that
+integrity guarantee. See `docs/threat-model.md`.
