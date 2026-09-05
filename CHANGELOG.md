@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Dependency DAG enforcement:** plan steps now have deterministic prerequisite semantics. Legacy plans are sequential by default; explicit `depends_on` graphs reject cycles/self/unknown edges and each explicit edge must bind to a concrete upstream `requires_outputs` contract. Required outputs are rechecked before dependent steps, producer outputs are independently verified, blocked prerequisites do not consume retry budget, and full-audit fingerprints/evidence bind graph order plus output contracts.
 - **External-key authenticated integrity:** optional HMAC-SHA256 protects evidence records, archive records, evidence tail checkpoints, agent-registry records, and registry heads using key material supplied outside the workspace. Explicit `plan-auditor integrity init` prevents silent trust-on-first-use, and authenticated state fails closed on missing/wrong keys or HMAC mismatch.
 - **Anti-truncation checkpoints:** signed evidence and registry heads bind the current tail so deleting otherwise-valid signed suffixes is detected.
 - **Command execution hardening:** behavioral checks now execute without a shell by default. Structured `argv` is supported and preferred; legacy `cmd` strings are parsed into argument vectors, while shell interpretation requires explicit `shell: true` opt-in. Internal `git ls-files` snapshot discovery also runs without a shell.

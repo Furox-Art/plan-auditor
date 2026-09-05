@@ -40,6 +40,25 @@ except ImportError:  # direct ``python scripts/audit_check.py`` execution
         verify_auth,
     )
 
+try:
+    from scripts.plan_graph import (
+        PlanGraphError,
+        effective_dependencies,
+        output_index,
+        required_outputs,
+        topological_order,
+        validate_output_links,
+    )
+except ImportError:  # direct ``python scripts/audit_check.py`` execution
+    from plan_graph import (
+        PlanGraphError,
+        effective_dependencies,
+        output_index,
+        required_outputs,
+        topological_order,
+        validate_output_links,
+    )
+
 PG_DIR = ".plan-auditor"
 EVIDENCE_HEAD = "evidence.head.json"
 CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
@@ -56,12 +75,16 @@ def canonical(obj):
 def plan_contract_fingerprint(plan):
     """Hash the immutable verification contract, ignoring runtime status."""
     contract = {
+        "contract_version": 2,
         "task": plan.get("task"),
         "requirements": plan.get("requirements"),
         "steps": [
             {
                 "id": step.get("id"),
                 "title": step.get("title"),
+                "depends_on": step.get("depends_on"),
+                "requires_outputs": step.get("requires_outputs", []),
+                "outputs": step.get("outputs", []),
                 "verify": step.get("verify", []),
             }
             for step in plan.get("steps", [])
@@ -158,6 +181,36 @@ def save_plan(base, plan, name=None):
 
 def validate_plan(data):
     errs = []
+
+    def validate_check(check, sid, label):
+        if not isinstance(check, dict) or check.get("type") not in CHECK_TYPES:
+            errs.append("%s: geçersiz kontrol %r" % (label, check))
+            return
+        kind = check["type"]
+        if kind in ("file_exists", "regex") and not check.get("path"):
+            errs.append("%s: %s kontrolü 'path' ister" % (label, kind))
+        if kind == "regex" and not check.get("pattern"):
+            errs.append("%s: regex kontrolü 'pattern' ister" % label)
+        if kind in ("run", "exec"):
+            cmd = check.get("cmd")
+            argv = check.get("argv")
+            has_cmd = isinstance(cmd, str) and bool(cmd.strip())
+            has_argv = (
+                isinstance(argv, list) and bool(argv)
+                and all(isinstance(arg, str) and bool(arg) for arg in argv)
+            )
+            if not (has_cmd or has_argv):
+                errs.append(
+                    "%s: %s kontrolü boş olmayan 'cmd' string veya 'argv' listesi ister"
+                    % (label, kind)
+                )
+            if "argv" in check and not has_argv:
+                errs.append("%s: %s argv boş olmayan string listesi olmalı" % (label, kind))
+            if "shell" in check and not isinstance(check.get("shell"), bool):
+                errs.append("%s: %s shell boolean olmalı" % (label, kind))
+            if check.get("shell") is True and has_argv:
+                errs.append("%s: %s shell=true ile argv birlikte kullanılamaz" % (label, kind))
+
     if not isinstance(data, dict):
         return ["plan kökü bir obje olmalı"]
     if not isinstance(data.get("task"), str) or not data["task"].strip():
@@ -170,6 +223,7 @@ def validate_plan(data):
     if not isinstance(steps, list) or not steps:
         errs.append("steps: boş olmayan liste olmalı")
         return errs
+
     seen = set()
     for step in steps:
         if not isinstance(step, dict):
@@ -183,49 +237,44 @@ def validate_plan(data):
         seen.add(sid)
         if not isinstance(step.get("title"), str) or not step["title"].strip():
             errs.append("adım %s: title boş olamaz" % sid)
+
         checks = step.get("verify")
         if not isinstance(checks, list) or not checks:
             errs.append("adım %s: verify boş olamaz" % sid)
-            continue
-        behavioral = [
-            c for c in checks
-            if isinstance(c, dict) and c.get("type") in ("run", "pytest", "exec")
-        ]
-        if not behavioral:
-            errs.append(
-                "adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest/exec) zorunlu — "
-                "yalnızca file_exists/regex ile adım doğrulanamaz" % sid
-            )
-        for check in checks:
-            if not isinstance(check, dict) or check.get("type") not in CHECK_TYPES:
-                errs.append("adım %s: geçersiz kontrol %r" % (sid, check))
-                continue
-            kind = check["type"]
-            if kind in ("file_exists", "regex") and not check.get("path"):
-                errs.append("adım %s: %s kontrolü 'path' ister" % (sid, kind))
-            if kind == "regex" and not check.get("pattern"):
-                errs.append("adım %s: regex kontrolü 'pattern' ister" % sid)
-            if kind in ("run", "exec"):
-                cmd = check.get("cmd")
-                argv = check.get("argv")
-                has_cmd = isinstance(cmd, str) and bool(cmd.strip())
-                has_argv = (
-                    isinstance(argv, list) and bool(argv)
-                    and all(isinstance(arg, str) and bool(arg) for arg in argv)
+        else:
+            behavioral = [
+                check for check in checks
+                if isinstance(check, dict) and check.get("type") in ("run", "pytest", "exec")
+            ]
+            if not behavioral:
+                errs.append(
+                    "adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest/exec) zorunlu — "
+                    "yalnızca file_exists/regex ile adım doğrulanamaz" % sid
                 )
-                if not (has_cmd or has_argv):
-                    errs.append(
-                        "adım %s: %s kontrolü boş olmayan 'cmd' string veya 'argv' listesi ister"
-                        % (sid, kind)
-                    )
-                if "argv" in check and not has_argv:
-                    errs.append("adım %s: %s argv boş olmayan string listesi olmalı" % (sid, kind))
-                if "shell" in check and not isinstance(check.get("shell"), bool):
-                    errs.append("adım %s: %s shell boolean olmalı" % (sid, kind))
-                if check.get("shell") is True and has_argv:
-                    errs.append("adım %s: %s shell=true ile argv birlikte kullanılamaz" % (sid, kind))
-    return errs
+            for check in checks:
+                validate_check(check, sid, "adım %s" % sid)
 
+        outputs = step.get("outputs", [])
+        if outputs is not None and isinstance(outputs, list):
+            for output in outputs:
+                if not isinstance(output, dict):
+                    continue
+                name = output.get("name")
+                output_checks = output.get("verify", [])
+                if isinstance(output_checks, list):
+                    for check in output_checks:
+                        validate_check(check, sid, "adım %s output %r" % (sid, name))
+
+    try:
+        effective_dependencies(data)
+        topological_order(data)
+    except PlanGraphError as exc:
+        errs.append("dependency graph: %s" % exc)
+    for problem in validate_output_links(data):
+        message = "output graph: %s" % problem
+        if message not in errs:
+            errs.append(message)
+    return errs
 
 def norm_check(check):
     if check["type"] == "pytest":
@@ -522,7 +571,7 @@ def count_failed_attempts(base, step_id, plan="default", mode="run"):
                 rec.get("mode") == mode
                 and rec.get("step") == step_id
                 and rec.get("plan", "default") == plan
-                and rec.get("status") != "verified"
+                and rec.get("status") == "failed"
             ):
                 count += 1
     return count
@@ -679,46 +728,161 @@ def print_table(plan, name=None):
         ))
 
 
+def _run_check_list(raw_checks, base):
+    results = []
+    ok_all = True
+    for raw_check in raw_checks:
+        check = norm_check(raw_check)
+        ok, detail, tail = run_check(check, base)
+        ok_all = ok_all and ok
+        results.append({
+            "check": check,
+            "passed": ok,
+            "detail": detail,
+            "output_tail": tail if not ok else "",
+        })
+    return ok_all, results
+
+
+def _run_output_contract(output, base):
+    ok, results = _run_check_list(output.get("verify", []), base)
+    return {
+        "name": output.get("name"),
+        "passed": ok,
+        "results": results,
+    }
+
+
+def _prerequisite_gate(base, plan, step, passed_this_run, selected, mode):
+    deps = effective_dependencies(plan).get(step["id"], [])
+    by_id = {item["id"]: item for item in plan["steps"] if isinstance(item, dict)}
+    dependency_results = []
+    ok = True
+    for dep in deps:
+        if mode == "audit" or dep in selected:
+            dep_ok = passed_this_run.get(dep) is True
+            source = "current_pass"
+        else:
+            dep_ok = by_id[dep].get("status") == "verified"
+            source = "persisted_status"
+        dependency_results.append({"step": dep, "passed": dep_ok, "source": source})
+        ok = ok and dep_ok
+
+    required_results = []
+    if ok:
+        for ref in required_outputs(step):
+            source_step = by_id[ref["step"]]
+            contract = output_index(source_step)[ref["name"]]
+            output_result = _run_output_contract(contract, base)
+            item = {
+                "step": ref["step"],
+                "name": ref["name"],
+                "passed": output_result["passed"],
+                "results": output_result["results"],
+            }
+            required_results.append(item)
+            ok = ok and item["passed"]
+    return ok, deps, dependency_results, required_results
+
+
 def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
-    target = [step for step in plan["steps"] if ids is None or step["id"] in ids]
-    if ids is not None and not target:
-        sys.exit("HATA: verilen id'ler planda yok: %s" % ids)
-    if mode == "audit":
-        target = plan["steps"]
+    try:
+        order = topological_order(plan)
+        effective_dependencies(plan)
+        output_problems = validate_output_links(plan)
+        if output_problems:
+            raise PlanGraphError("; ".join(output_problems))
+    except PlanGraphError as exc:
+        print("[FAIL] dependency graph geçersiz: %s" % exc)
+        return False
+
+    by_id = {step["id"]: step for step in plan["steps"] if isinstance(step, dict)}
+    if ids is None or mode == "audit":
+        selected = set(order)
+    else:
+        selected = set(ids)
+        unknown = sorted(selected - set(by_id))
+        if unknown:
+            sys.exit("HATA: verilen id'ler planda yok: %s" % unknown)
+        if not selected:
+            return True
+    target = [by_id[sid] for sid in order if sid in selected]
     key = plan_key(name)
     all_ok = True
+    passed_this_run = {}
 
     for step in target:
+        sid = step["id"]
+        prereq_ok, deps, dependency_results, required_results = _prerequisite_gate(
+            base, plan, step, passed_this_run, selected, mode
+        )
+        if not prereq_ok:
+            step["status"] = "blocked"
+            passed_this_run[sid] = False
+            all_ok = False
+            append_evidence(base, {
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+                "mode": mode,
+                "plan": key,
+                "step": sid,
+                "dependencies": deps,
+                "dependency_results": dependency_results,
+                "required_outputs": required_results,
+                "outputs": [],
+                "results": [],
+                "status": "blocked",
+                "reason": "prerequisite step or required output is not independently verified",
+            })
+            print("[BLOK] adım %s: prerequisite/output doğrulaması geçmedi" % sid)
+            for dep in dependency_results:
+                if not dep["passed"]:
+                    print("       - dependency step %s doğrulanmadı" % dep["step"])
+            for item in required_results:
+                if not item["passed"]:
+                    print("       - required output %s:%s doğrulanmadı" % (item["step"], item["name"]))
+            continue
+
         attempt = 1
         if mode == "run":
-            attempt = count_failed_attempts(base, step["id"], plan=key) + 1
+            attempt = count_failed_attempts(base, sid, plan=key) + 1
             if attempt > MAX_ATTEMPTS and not force:
-                print("[ATLADI] adım %s: %s önceki deneme — %s sınırı aşıldı." % (
-                    step["id"], step.get("title", ""), MAX_ATTEMPTS,
+                print("[ATLADI] adım %s: %s önceki gerçek başarısız deneme — %s sınırı aşıldı." % (
+                    sid, step.get("title", ""), MAX_ATTEMPTS,
                 ))
+                passed_this_run[sid] = False
                 all_ok = False
                 continue
 
-        results = []
-        ok_all = True
-        for raw_check in step.get("verify", []):
-            check = norm_check(raw_check)
-            ok, detail, tail = run_check(check, base)
-            ok_all = ok_all and ok
+        ok_all, results = _run_check_list(step.get("verify", []), base)
+        output_results = []
+        try:
+            declared = output_index(step)
+        except PlanGraphError as exc:
+            declared = {}
+            ok_all = False
             results.append({
-                "check": check,
-                "passed": ok,
-                "detail": detail,
-                "output_tail": tail if not ok else "",
+                "check": {"type": "output_contract"},
+                "passed": False,
+                "detail": str(exc),
+                "output_tail": "",
             })
+        for output in declared.values():
+            output_result = _run_output_contract(output, base)
+            output_results.append(output_result)
+            ok_all = ok_all and output_result["passed"]
 
         step["status"] = "verified" if ok_all else "failed"
+        passed_this_run[sid] = ok_all
         all_ok = all_ok and ok_all
         rec = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
             "mode": mode,
             "plan": key,
-            "step": step["id"],
+            "step": sid,
+            "dependencies": deps,
+            "dependency_results": dependency_results,
+            "required_outputs": required_results,
+            "outputs": output_results,
             "results": results,
             "status": step["status"],
         }
@@ -727,7 +891,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
         append_evidence(base, rec)
 
         mark = "OK " if ok_all else "FAIL"
-        label = "adım %s: %s" % (step["id"], step.get("title", ""))
+        label = "adım %s: %s" % (sid, step.get("title", ""))
         if mode == "run":
             label += " (deneme %s/%s)" % (min(attempt, MAX_ATTEMPTS), MAX_ATTEMPTS)
         print("[%s] %s" % (mark, label))
@@ -737,6 +901,10 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
             ))
             if not result["passed"] and result["output_tail"]:
                 print("         çıktı: %s" % result["output_tail"][-400:].replace("\n", " | "))
+        for output in output_results:
+            print("       - output %s | %s" % (
+                output["name"], "geçti" if output["passed"] else "KALDI",
+            ))
 
     save_plan(base, plan, name)
     if mode == "audit":
@@ -748,11 +916,11 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
             "results": [],
             "status": "verified" if all_ok else "failed",
             "steps": len(plan.get("steps", [])),
+            "topological_order": order,
             "plan_fingerprint": plan_contract_fingerprint(plan),
             "workspace_fingerprint": workspace_fingerprint(base),
         })
     return all_ok
-
 
 # ---------------------------------------------------------------- commands
 
