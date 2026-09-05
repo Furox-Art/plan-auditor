@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "task": "plan-auditor kendi kodunu kanıtla doğrular (dogfooding)",
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "description": "Plan Auditor unit test suite must pass.",
+      "priority": "must",
+      "acceptance_checks": [
+        {
+          "type": "pytest",
+          "args": "tests/ -q"
+        }
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "description": "The Fibonacci example regression tests must pass.",
+      "priority": "must",
+      "acceptance_checks": [
+        {
+          "type": "pytest",
+          "args": "examples/fib/test_fib.py -q"
+        }
+      ]
+    }
+  ]
+}

@@ -33,6 +33,9 @@ from .plans import PlanRef, all_plan_refs, load_plan_ref, seal_path
 from .plan_verifier import verify_plan
 from .policies import default_engine, load_policy_rules_from_dir
 from .requirements import parse_requirements
+from .request_contract import (
+    RequestAlignment, analyze_request_alignment, auditor_state_present, verify_request_contract,
+)
 from .sealing import (
     MonotonicCheck,
     SealIntegrityError,
@@ -40,7 +43,7 @@ from .sealing import (
     check_monotonic,
     load_seal,
 )
-from .workspace import capture_workspace
+from .workspace import capture_workspace, tool_available
 from .evidence import verify_anchor_chain
 
 
@@ -266,11 +269,22 @@ def _lifecycle_for(plan_ok: bool, seal_ok: bool, pending: List[int], proof: Fres
     return lifecycle
 
 
+
 def _required_tools(plan: Dict[str, Any], available: Dict[str, bool]) -> List[str]:
     raw = plan.get("required_tools", [])
     if not isinstance(raw, list):
         return ["<invalid required_tools>"]
-    return sorted({str(tool) for tool in raw if not available.get(str(tool), False)})
+    missing = set()
+    for item in raw:
+        tool = str(item)
+        if available.get(tool) is True:
+            continue
+        if tool_available(tool):
+            available[tool] = True
+            continue
+        available[tool] = False
+        missing.add(tool)
+    return sorted(missing)
 
 
 def _merge_checks(*checks: Optional[MonotonicCheck]) -> Optional[MonotonicCheck]:
@@ -449,8 +463,23 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
         else:
             cfg.mode = mode
 
+    request_status = verify_request_contract(root)
     refs = all_plan_refs(root)
     if not refs:
+        if request_status.activated or auditor_state_present(root):
+            return {
+                "outcome": "FAIL",
+                "workspace": str(root),
+                "profile": cfg.profile.value,
+                "mode": cfg.mode,
+                "active_layers": cfg.active_layers(),
+                "configuration_errors": cfg.errors,
+                "policy_errors": [],
+                "active_plan_count": 0,
+                "plans": {},
+                "request_contract": request_status.as_dict(),
+                "error": "auditor state/request activation exists but all active plans are missing",
+            }
         return {
             "outcome": "NO_PLAN",
             "workspace": str(root),
@@ -458,9 +487,25 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
             "mode": cfg.mode,
             "active_layers": cfg.active_layers(),
             "configuration_errors": cfg.errors,
+            "policy_errors": [],
             "active_plan_count": 0,
             "plans": {},
+            "request_contract": request_status.as_dict(),
         }
+
+    request_plans: Dict[str, Dict[str, Any]] = {}
+    request_errors: List[str] = []
+    if request_status.valid and isinstance(request_status.request, dict):
+        for ref in refs:
+            try:
+                request_plans[ref.key] = load_plan_ref(ref)
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                request_errors.append(f"{ref.key}: {exc}")
+        request_alignment = analyze_request_alignment(request_plans, request_status.request)
+        request_errors.extend(request_alignment.errors)
+    else:
+        request_errors.append(request_status.reason or "request contract invalid")
+        request_alignment = RequestAlignment(False, list(request_errors), {})
 
     workspace_state = capture_workspace(str(root))
     logs = _tail_logs(root)
@@ -476,7 +521,7 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
     conflicts = _agent_conflicts(registry)
     registry_ok = registry.verify_registry_chain()
 
-    policy_errors: List[str] = []
+    policy_errors: List[str] = [f"request contract: {item}" for item in request_errors]
     policy_rules = []
     seen_dirs: set[Path] = set()
     for directory in (root / cfg.policies_dir, root / ".plan-auditor" / "policies"):
@@ -512,6 +557,8 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
         "active_layers": cfg.active_layers(),
         "configuration_errors": cfg.errors,
         "policy_errors": policy_errors,
+        "request_contract": request_status.as_dict(),
+        "request_alignment": request_alignment.as_dict(),
         "active_plan_count": len(plans),
         "plans": plans,
         "workspace_state": workspace_state.to_dict(),

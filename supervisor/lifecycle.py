@@ -89,7 +89,9 @@ class TaskLifecycle:
         return True
 
     def terminal(self) -> bool:
-        return self.state in {States.PASSED, States.FAILED, States.UNKNOWN, States.CANCELLED}
+        # UNKNOWN is explicitly recoverable (UNKNOWN -> RECOVERY/FAILED/CANCELLED),
+        # so it cannot simultaneously be a terminal state.
+        return self.state in {States.PASSED, States.FAILED, States.CANCELLED}
 
     def progress_fraction(self) -> float:
         ordered = [

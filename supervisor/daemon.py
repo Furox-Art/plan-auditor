@@ -58,21 +58,77 @@ def read_assessment(workspace: str | Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def pid_alive(pid: int | None) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
+def _windows_pid_alive(pid: int) -> bool:
+    """Probe a Windows process without sending a signal or mutating it."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        open_process.restype = wintypes.HANDLE
+        get_exit_code = kernel32.GetExitCodeProcess
+        get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        get_exit_code.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        handle = open_process(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if not get_exit_code(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            close_handle(handle)
+    except (AttributeError, OSError, ValueError):
         return False
+
+
+def pid_alive(pid: int | None) -> bool:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if os.name == "nt":
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
-    except (OSError, PermissionError):
+    except PermissionError:
+        # A permission error still proves that the process exists.
+        return True
+    except OSError:
         return False
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # Use a unique sibling temp file so independent writers cannot collide.
+    # Windows can transiently reject replacement while a reader has the old
+    # destination open; retry that sharing violation without falling back to
+    # a non-atomic in-place write.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    os.replace(tmp, path)
+    deadline = time.monotonic() + 3.0
+    try:
+        while True:
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def _append_events(workspace: str | Path, events: list[Any]) -> None:
@@ -162,6 +218,10 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
             "assessment_file": str(assessment_path(root)),
         })
 
+    # Publish process liveness before the potentially expensive initial assessment.
+    # Callers can distinguish a live startup from a crashed child without
+    # weakening the requirement that only an assessed daemon becomes running.
+    write_state("starting")
     assessment = _safe_assessment(root, profile, mode)
     gate_outcome = str(assessment.get("outcome", "UNKNOWN"))
     _atomic_write_json(assessment_path(root), assessment)

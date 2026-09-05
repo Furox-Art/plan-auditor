@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from scripts.plan_graph import PlanGraphError, effective_dependencies
+
 from scripts.integrity import (
     IntegrityKeyError,
     KeyMaterial,
@@ -18,7 +20,7 @@ from scripts.integrity import (
     verify_auth,
 )
 
-SEAL_FORMAT_VERSION = 3
+SEAL_FORMAT_VERSION = 4
 
 
 class SealIntegrityError(RuntimeError):
@@ -42,15 +44,24 @@ def _contract_step(step: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        dependencies = effective_dependencies(plan)
+    except PlanGraphError:
+        dependencies = {}
+    steps: List[Dict[str, Any]] = []
+    for step in plan.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        contracted = _contract_step(step)
+        sid = step.get("id")
+        if isinstance(sid, int) and sid in dependencies:
+            contracted["depends_on"] = copy.deepcopy(dependencies[sid])
+        steps.append(contracted)
     return {
         "task": copy.deepcopy(plan.get("task")),
         "requirements": copy.deepcopy(plan.get("requirements")),
         "required_tools": copy.deepcopy(plan.get("required_tools", [])),
-        "steps": [
-            _contract_step(step)
-            for step in plan.get("steps", [])
-            if isinstance(step, dict)
-        ],
+        "steps": steps,
     }
 
 

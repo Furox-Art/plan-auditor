@@ -18,6 +18,7 @@ from supervisor.agents import (
 )
 from supervisor.orchestrator import evaluate_workspace
 from supervisor.sealing import save_seal, seal_plan
+from tests.request_fixture import activate_for_plan
 
 
 def _read_lines(registry: MultiAgentRegistry):
@@ -139,10 +140,12 @@ def test_integrated_gate_fails_on_registry_tamper(tmp_path: Path):
     plan = {
         "task": "registry gate hardening",
         "created": "2026-09-05T00:00:00+00:00",
+        "requirements": [{"id": "REQ-1", "description": "real behavior", "priority": "must"}],
         "steps": [
             {
                 "id": 1,
                 "title": "real behavior",
+                "covers": ["REQ-1"],
                 "status": "pending",
                 "verify": [{"type": "run", "cmd": "python -c \"print('ok')\""}],
             }
@@ -151,6 +154,7 @@ def test_integrated_gate_fails_on_registry_tamper(tmp_path: Path):
     pg = tmp_path / ".plan-auditor"
     pg.mkdir()
     (pg / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    activate_for_plan(tmp_path, plan)
     seal = seal_plan(plan, "registry-test", "2026-09-05T00:00:00+00:00")
     save_seal(seal, str(pg / "seal.json"))
     assert core.audit_steps(str(tmp_path), plan, mode="audit") is True

@@ -17,6 +17,7 @@ from supervisor.orchestrator import evaluate_workspace
 from supervisor.plans import PlanNameError, plan_path as supervisor_plan_path
 from supervisor.policies import load_policy_rules_from_dir
 from supervisor.sealing import SealIntegrityError, check_environment, check_monotonic, load_seal, seal_plan
+from tests.request_fixture import activate_for_plan
 
 
 def _plan(task: str = "full hardening test", *, marker: str = "done.txt") -> dict:
@@ -53,6 +54,7 @@ def _write_plan(root: Path, plan: dict, name: str | None = None) -> Path:
     else:
         path = pg / "plan.json"
     path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    activate_for_plan(root, plan)
     return path
 
 

@@ -5,18 +5,23 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: "3.12"
       - name: Install package and test dependency
         run: |
           python -m pip install --upgrade pip
           python -m pip install . pytest
+      - name: Activate immutable host request contract
+        run: plan-auditor request init . --file .plan-auditor/request-source.json
       - name: Validate plan schema
         run: python scripts/audit_check.py validate .
       - name: Unit test gate (explicit diagnostic)
@@ -50,12 +55,14 @@ jobs:
   supervisor-runtime:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: "3.12"
       - name: Install package and audit dependency
         run: python -m pip install . pytest
+      - name: Activate immutable host request contract
+        run: plan-auditor request init . --file .plan-auditor/request-source.json
       - name: Prepare sealed and audited workspace
         run: |
           plan-auditor plan verify .
@@ -119,3 +126,28 @@ jobs:
           PY
       - name: Evidence anchor check
         run: plan-auditor evidence verify .
+
+  python-compat:
+    name: python-compat (${{ matrix.python-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package and test dependency
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pytest
+      - name: Run full regression suite
+        run: python -m pytest tests/ -q
+      - name: Run Fibonacci regression
+        run: python -m pytest examples/fib/test_fib.py -q

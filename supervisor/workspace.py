@@ -5,9 +5,10 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 
 @dataclass
@@ -75,12 +76,26 @@ def _detect_language(root: str) -> Optional[str]:
     return None
 
 
-def _detect_tools(_root: str) -> Dict[str, bool]:
-    tools = [
+def tool_available(tool: str) -> bool:
+    """Resolve an arbitrary executable name without executing it."""
+    if not isinstance(tool, str) or not tool.strip():
+        return False
+    value = tool.strip()
+    if value == "python":
+        try:
+            return bool(sys.executable) and Path(sys.executable).is_file()
+        except OSError:
+            return False
+    return shutil.which(value) is not None
+
+
+def _detect_tools(_root: str, extra_tools: Iterable[str] = ()) -> Dict[str, bool]:
+    common = {
         "git", "python", "python3", "node", "npm", "cargo", "go",
         "pytest", "make", "docker", "gcc", "clang", "java", "dotnet",
-    ]
-    return {tool: shutil.which(tool) is not None for tool in tools}
+    }
+    common.update(tool for tool in extra_tools if isinstance(tool, str) and tool.strip())
+    return {tool: tool_available(tool) for tool in sorted(common)}
 
 
 def _inventory_files(root: Path) -> Set[str]:
@@ -97,7 +112,7 @@ def _inventory_files(root: Path) -> Set[str]:
     return files
 
 
-def capture_workspace(root: str) -> WorkspaceState:
+def capture_workspace(root: str, extra_tools: Iterable[str] = ()) -> WorkspaceState:
     root_path = Path(root).resolve()
     state = WorkspaceState(repository_root=str(root_path))
 
@@ -119,7 +134,7 @@ def capture_workspace(root: str) -> WorkspaceState:
 
     state.exists_files = _inventory_files(root_path)
     state.language = _detect_language(str(root_path))
-    state.available_tools = _detect_tools(str(root_path))
+    state.available_tools = _detect_tools(str(root_path), extra_tools)
     return state
 
 

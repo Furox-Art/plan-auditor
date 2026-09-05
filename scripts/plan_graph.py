@@ -41,38 +41,39 @@ def explicit_graph(plan_or_steps: Mapping[str, Any] | Sequence[Mapping[str, Any]
 def effective_dependencies(
     plan_or_steps: Mapping[str, Any] | Sequence[Mapping[str, Any]],
 ) -> Dict[int, List[int]]:
-    """Return the effective prerequisite graph.
+    """Return the explicit prerequisite graph.
 
-    When no step declares ``depends_on``, legacy plans are treated as a strict
-    sequential chain: each step depends on the preceding step. Once any step
-    explicitly declares dependencies, the plan is treated as an explicit DAG
-    and omitted ``depends_on`` means a root step.
+    A one-step plan may omit ``depends_on`` and is treated as a root. Multi-step
+    plans must declare ``depends_on`` on every step. This removes the legacy
+    sequential/partial-explicit ambiguity that could otherwise weaken a sealed
+    dependency graph by changing graph mode.
     """
     steps = _steps(plan_or_steps)
     by_id = step_index(steps)
-    use_explicit = explicit_graph(steps)
+    if len(steps) > 1:
+        missing = [int(step["id"]) for step in steps if "depends_on" not in step]
+        if missing:
+            raise PlanGraphError(
+                "multi-step plans must explicitly declare depends_on on every step; missing: %s"
+                % missing
+            )
     deps: Dict[int, List[int]] = {}
-    previous: int | None = None
     for step in steps:
         sid = int(step["id"])
-        if use_explicit:
-            raw = step.get("depends_on", [])
-            if not isinstance(raw, list):
-                raise PlanGraphError("step %s depends_on must be a list" % sid)
-            if any(not isinstance(dep, int) or dep < 1 for dep in raw):
-                raise PlanGraphError("step %s depends_on must contain positive integer ids" % sid)
-            if len(raw) != len(set(raw)):
-                raise PlanGraphError("step %s has duplicate dependencies" % sid)
-            current = list(raw)
-        else:
-            current = [] if previous is None else [previous]
+        raw = step.get("depends_on", [])
+        if not isinstance(raw, list):
+            raise PlanGraphError("step %s depends_on must be a list" % sid)
+        if any(not isinstance(dep, int) or dep < 1 for dep in raw):
+            raise PlanGraphError("step %s depends_on must contain positive integer ids" % sid)
+        if len(raw) != len(set(raw)):
+            raise PlanGraphError("step %s has duplicate dependencies" % sid)
+        current = list(raw)
         if sid in current:
             raise PlanGraphError("step %s cannot depend on itself" % sid)
         unknown = [dep for dep in current if dep not in by_id]
         if unknown:
             raise PlanGraphError("step %s depends on unknown step(s): %s" % (sid, unknown))
         deps[sid] = current
-        previous = sid
     return deps
 
 
@@ -170,10 +171,11 @@ def required_outputs(step: Mapping[str, Any]) -> List[Dict[str, Any]]:
 def validate_output_links(
     plan_or_steps: Mapping[str, Any] | Sequence[Mapping[str, Any]],
 ) -> List[str]:
-    """Validate that required outputs exist and come from prerequisite steps."""
+    """Validate required outputs and bind every direct dependency to one."""
     steps = _steps(plan_or_steps)
     try:
         by_id = step_index(steps)
+        deps = effective_dependencies(steps)
         closure = transitive_dependencies(steps)
     except PlanGraphError as exc:
         return [str(exc)]
@@ -194,6 +196,13 @@ def validate_output_links(
         except PlanGraphError as exc:
             errors.append(str(exc))
             continue
+        linked_sources = {int(ref["step"]) for ref in required}
+        for parent in deps.get(sid, []):
+            if parent not in linked_sources:
+                errors.append(
+                    "dependency edge %s -> %s has no requires_outputs link; every dependency must be backed by a concrete upstream output"
+                    % (parent, sid)
+                )
         for ref in required:
             source = int(ref["step"])
             name = str(ref["name"])

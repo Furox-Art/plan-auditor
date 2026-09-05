@@ -157,3 +157,46 @@ def test_daemon_records_workspace_events(tmp_path: Path) -> None:
     _request_stop(tmp_path)
     thread.join(timeout=2.0)
     assert not thread.is_alive()
+
+
+def test_daemon_publishes_starting_state_before_initial_assessment(tmp_path: Path, monkeypatch) -> None:
+    import supervisor.daemon as daemon_module
+
+    _write_fast_config(tmp_path)
+    release = threading.Event()
+
+    def delayed_assessment(root: str, profile: str, mode: str) -> dict:
+        release.wait(timeout=2.0)
+        return {"outcome": "PASS", "workspace": root, "profile": profile, "mode": mode}
+
+    monkeypatch.setattr(daemon_module, "_safe_assessment", delayed_assessment)
+    thread = _start_thread(tmp_path)
+    starting = _wait_for_state(tmp_path, "starting", timeout=1.0, pid=os.getpid())
+    assert starting["gate_outcome"] == "UNKNOWN"
+
+    release.set()
+    _wait_for_state(tmp_path, "running", timeout=2.0, pid=os.getpid())
+    _request_stop(tmp_path)
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
+def test_atomic_write_json_retries_transient_permission_error(tmp_path: Path, monkeypatch) -> None:
+    import supervisor.daemon as daemon_module
+
+    target = tmp_path / "state.json"
+    target.write_text('{"old": true}', encoding="utf-8")
+    real_replace = daemon_module.os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(src, dst):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError("transient sharing violation")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(daemon_module.os, "replace", flaky_replace)
+    daemon_module._atomic_write_json(target, {"new": True})
+    assert json.loads(target.read_text(encoding="utf-8")) == {"new": True}
+    assert calls["count"] == 3
+    assert list(tmp_path.glob("state.json.*.tmp")) == []

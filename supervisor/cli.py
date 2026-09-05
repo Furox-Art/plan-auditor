@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+SUPERVISOR_START_TIMEOUT_SEC = 60.0
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -58,6 +60,14 @@ def _build_parser() -> argparse.ArgumentParser:
     integrity_init.add_argument("dir", nargs="?", default=".")
     integrity_status = integrity_sub.add_parser("status", help="show authenticated integrity status")
     integrity_status.add_argument("dir", nargs="?", default=".")
+
+    request = sub.add_parser("request", help="host-owned immutable request contract")
+    request_sub = request.add_subparsers(dest="action", required=True)
+    request_init = request_sub.add_parser("init", help="activate request contract from a host-provided JSON file")
+    request_init.add_argument("dir", nargs="?", default=".")
+    request_init.add_argument("--file", required=True, dest="request_file")
+    request_status_cmd = request_sub.add_parser("status", help="verify request activation and plan alignment")
+    request_status_cmd.add_argument("dir", nargs="?", default=".")
 
     agents = sub.add_parser("agents", help="persistent multi-agent registry")
     agents_sub = agents.add_subparsers(dest="action", required=True)
@@ -136,7 +146,7 @@ def _spawn_daemon(root: Path, profile: str, mode: str) -> subprocess.Popen[bytes
     log_handle = log_path.open("ab", buffering=0)
     kwargs: dict[str, Any] = {
         "cwd": str(root), "stdin": subprocess.DEVNULL, "stdout": log_handle,
-        "stderr": subprocess.STDOUT, "close_fds": os.name != "nt",
+        "stderr": subprocess.STDOUT, "close_fds": True,
     }
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -153,7 +163,7 @@ def _spawn_daemon(root: Path, profile: str, mode: str) -> subprocess.Popen[bytes
 
 
 def cmd_supervisor_start(args: argparse.Namespace) -> int:
-    from .daemon import read_state, pid_alive
+    from .daemon import read_state
     root = _root(args.dir)
     if not root.is_dir():
         print(f"ERROR: directory not found: {root}", file=sys.stderr)
@@ -164,10 +174,14 @@ def cmd_supervisor_start(args: argparse.Namespace) -> int:
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    deadline = time.time() + 5.0
+    deadline = time.time() + SUPERVISOR_START_TIMEOUT_SEC
     while time.time() < deadline:
         state = read_state(root)
-        if state and state.get("state") == "running" and state.get("pid") == process.pid and pid_alive(process.pid):
+        if (
+            state
+            and state.get("state") == "running"
+            and process.poll() is None
+        ):
             _json(state)
             return 0
         if process.poll() is not None:
@@ -265,6 +279,46 @@ def _selected_refs(root: Path, name: str | None = None):
     return refs
 
 
+def _request_gate(root: Path):
+    from .plans import all_plan_refs, load_plan_ref
+    from .request_contract import analyze_request_alignment, verify_request_contract
+
+    status = verify_request_contract(root)
+    if not status.valid or not isinstance(status.request, dict):
+        return status, None, [status.reason or "request contract invalid"]
+    docs: dict[str, Any] = {}
+    errors: list[str] = []
+    for ref in all_plan_refs(root):
+        try:
+            docs[ref.key] = load_plan_ref(ref)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"{ref.key}: {exc}")
+    alignment = analyze_request_alignment(docs, status.request)
+    errors.extend(alignment.errors)
+    return status, alignment, errors
+
+
+def cmd_request(args: argparse.Namespace) -> int:
+    from .request_contract import initialize_request_from_file, verify_request_contract
+
+    root = _root(args.dir)
+    if args.action == "init":
+        try:
+            result = initialize_request_from_file(root, args.request_file)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            _json({"activated": False, "valid": False, "error": str(exc)})
+            return 2
+        _json(result.as_dict())
+        return 0 if result.valid else 2
+    status, alignment, errors = _request_gate(root)
+    payload = status.as_dict()
+    if alignment is not None:
+        payload["alignment"] = alignment.as_dict()
+    payload["errors"] = errors
+    _json(payload)
+    return 0 if status.valid and not errors else 2
+
+
 def _policy_errors(root: Path, cfg) -> list[str]:
     from .policies import load_policy_rules_from_dir
     errors: list[str] = []
@@ -295,6 +349,16 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    request_status, request_alignment, request_errors = _request_gate(root)
+    if request_errors:
+        _json({"outcome": "FAIL", "request_contract": request_status.as_dict(), "request_errors": request_errors})
+        return 2
+    if args.reseal:
+        _json({
+            "outcome": "FAIL",
+            "reason": "automatic --reseal is disabled after request activation; create a new host-approved request generation instead",
+        })
+        return 2
     cfg = load_config(str(root))
     policy_errors = _policy_errors(root, cfg)
     if cfg.errors or policy_errors:
@@ -347,12 +411,12 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
             outputs[ref.key] = output
             final_rc = max(final_rc, 2)
             continue
-        if existing and existing.format_version < 3 and not args.reseal:
+        if existing and existing.format_version < 4:
             output["seal"] = {"status": "legacy", "error": "legacy seal requires --reseal"}
             outputs[ref.key] = output
             final_rc = max(final_rc, 2)
             continue
-        if existing and not args.reseal:
+        if existing:
             monotonic = check_monotonic(existing.as_plan(), plan)
             env_check = check_environment(existing, env)
             if not monotonic.ok or not env_check.ok:
@@ -438,7 +502,10 @@ def cmd_evidence_verify(args: argparse.Namespace) -> int:
     return 0 if result["valid"] else 2
 
 
+
 def cmd_audit(args: argparse.Namespace) -> int:
+    from .agents import MultiAgentRegistry
+    from .audit_session import AuditSessionError, final_audit_session
     from .config import load_config
     from .contracts import environment_contract
     from .orchestrator import evaluate_workspace
@@ -451,6 +518,10 @@ def cmd_audit(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    request_status, request_alignment, request_errors = _request_gate(root)
+    if request_errors:
+        _json({"outcome": "FAIL", "request_contract": request_status.as_dict(), "request_errors": request_errors})
+        return 2
     cfg = load_config(str(root))
     policy_errors = _policy_errors(root, cfg)
     if cfg.errors or policy_errors:
@@ -468,7 +539,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if not seal:
             _json({"outcome": "FAIL", "plan": ref.key, "reason": "plan is not sealed; run plan verify first"})
             return 2
-        if seal.format_version < 3:
+        if seal.format_version < 4:
             _json({"outcome": "FAIL", "plan": ref.key, "reason": "legacy seal requires explicit reseal"})
             return 2
         monotonic = check_monotonic(seal.as_plan(), plan)
@@ -481,22 +552,29 @@ def cmd_audit(args: argparse.Namespace) -> int:
             })
             return 2
 
-    for ref in refs:
-        argv = ["audit", str(root)]
-        if ref.name != "default":
-            argv += ["--plan", ref.name]
-        rc = _forward_core(argv)
-        if rc != 0:
-            return rc
+    registry = MultiAgentRegistry(str(root), owner_timeout=cfg.owner_timeout_sec)
+    try:
+        with final_audit_session(root, registry):
+            for ref in refs:
+                argv = ["audit", str(root)]
+                if ref.name != "default":
+                    argv += ["--plan", ref.name]
+                rc = _forward_core(argv)
+                if rc != 0:
+                    return rc
 
-    assessment = evaluate_workspace(str(root), profile=cfg.profile.value, mode=cfg.mode)
-    if assessment.get("outcome") != "PASS":
-        _json(assessment)
-        return 3 if assessment.get("outcome") == "UNKNOWN" else 2
+            assessment = evaluate_workspace(str(root), profile=cfg.profile.value, mode=cfg.mode)
+            if assessment.get("outcome") != "PASS":
+                _json(assessment)
+                return 3 if assessment.get("outcome") == "UNKNOWN" else 2
+    except AuditSessionError as exc:
+        _json({"outcome": "FAIL", "reason": "final audit quiescence/integrity failure", "detail": str(exc)})
+        return 2
+
     _json({
         "outcome": "PASS",
         "plans": {name: item.get("outcome") for name, item in assessment.get("plans", {}).items()},
-        "deterministic_core": "fresh audit PASS for every active plan",
+        "deterministic_core": "fresh audit PASS for every active plan under workspace-wide freeze",
         "gate": assessment.get("gate"),
     })
     return 0
@@ -607,6 +685,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_evidence_verify(args)
     if args.cmd == "integrity":
         return cmd_integrity(args)
+    if args.cmd == "request":
+        return cmd_request(args)
     if args.cmd == "agents":
         return cmd_agents(args)
     if args.cmd == "audit":

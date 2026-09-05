@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from supervisor.cli import main as cli_main
+from tests.request_fixture import activate_for_plan
 
 
 def _run_hook(cwd, fmt="text", warn_file=None):
@@ -46,6 +47,7 @@ def _write_plan(root: Path, status="pending", *, named: str | None = None):
     else:
         path = pg / "plan.json"
     path.write_text(json.dumps(plan), encoding="utf-8")
+    activate_for_plan(root, plan)
 
 
 def _prepare_real_pass(root: Path):

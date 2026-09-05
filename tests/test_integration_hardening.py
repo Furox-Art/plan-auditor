@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from scripts import audit_check as core
@@ -13,6 +14,7 @@ from supervisor.orchestrator import evaluate_workspace, fresh_full_audit_proof
 from supervisor.policies import PolicyEngine, load_policy_rules_from_dir
 from supervisor.sealing import save_seal, seal_plan
 from supervisor.workspace import capture_workspace
+from tests.request_fixture import activate_for_plan
 
 
 def _plan(status="pending"):
@@ -38,6 +40,7 @@ def _write_plan(root: Path, plan=None):
     pg.mkdir(exist_ok=True)
     value = plan or _plan()
     (pg / "plan.json").write_text(json.dumps(value), encoding="utf-8")
+    activate_for_plan(root, value)
     return value
 
 
@@ -82,7 +85,8 @@ def test_workspace_capture_is_read_only(tmp_path: Path):
     capture_workspace(str(tmp_path))
     after = core.workspace_fingerprint(str(tmp_path))
     assert after == before
-    assert not (tmp_path / "nul").exists()
+    if os.name != "nt":
+        assert not (tmp_path / "nul").exists()
 
 
 def test_integrated_gate_requires_seal(tmp_path: Path):
