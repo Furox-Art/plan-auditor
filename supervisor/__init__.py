@@ -8,6 +8,7 @@ from .config import Config, Profile, Tier, load_config
 from .evidence import verify_anchor_chain
 from .gate import CompletionGate, CompletionReport
 from .lifecycle import States, TaskLifecycle
+from .lock_hardening import install_registry_lock_hardening
 from .orchestrator import evaluate_workspace, fresh_full_audit_proof
 from .plan_verifier import verify_plan
 from .requirements import Requirement, parse_requirements
@@ -17,6 +18,7 @@ from .workspace import WorkspaceState, capture_workspace
 from .cli import main
 
 install_agent_hardening()
+install_registry_lock_hardening()
 
 __all__ = [
     "Config", "Profile", "Tier", "load_config",
