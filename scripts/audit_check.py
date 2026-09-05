@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import zipfile
@@ -184,8 +185,25 @@ def validate_plan(data):
                 errs.append("adım %s: %s kontrolü 'path' ister" % (sid, kind))
             if kind == "regex" and not check.get("pattern"):
                 errs.append("adım %s: regex kontrolü 'pattern' ister" % sid)
-            if kind in ("run", "exec") and not check.get("cmd"):
-                errs.append("adım %s: %s kontrolü 'cmd' ister" % (sid, kind))
+            if kind in ("run", "exec"):
+                cmd = check.get("cmd")
+                argv = check.get("argv")
+                has_cmd = isinstance(cmd, str) and bool(cmd.strip())
+                has_argv = (
+                    isinstance(argv, list) and bool(argv)
+                    and all(isinstance(arg, str) and bool(arg) for arg in argv)
+                )
+                if not (has_cmd or has_argv):
+                    errs.append(
+                        "adım %s: %s kontrolü boş olmayan 'cmd' string veya 'argv' listesi ister"
+                        % (sid, kind)
+                    )
+                if "argv" in check and not has_argv:
+                    errs.append("adım %s: %s argv boş olmayan string listesi olmalı" % (sid, kind))
+                if "shell" in check and not isinstance(check.get("shell"), bool):
+                    errs.append("adım %s: %s shell boolean olmalı" % (sid, kind))
+                if check.get("shell") is True and has_argv:
+                    errs.append("adım %s: %s shell=true ile argv birlikte kullanılamaz" % (sid, kind))
     return errs
 
 
@@ -197,11 +215,20 @@ def norm_check(check):
             "expect_exit": 0,
         }
     if check["type"] == "exec":
-        return {
+        normalized = {
             "type": "run",
-            "cmd": check["cmd"],
             "expect_exit": check.get("expect_exit", 0),
         }
+        if "argv" in check:
+            normalized["argv"] = list(check["argv"])
+        else:
+            normalized["cmd"] = check["cmd"]
+        if check.get("shell") is True:
+            normalized["shell"] = True
+        for key in ("timeout", "output_regex"):
+            if key in check:
+                normalized[key] = check[key]
+        return normalized
     return check
 
 
@@ -219,17 +246,51 @@ def _safe_path(base, relative):
     return target
 
 
+def _command_spec(check):
+    """Return ``(command, use_shell)`` with shell disabled by default.
+
+    ``argv`` is the preferred, cross-platform form. Legacy ``cmd`` strings are
+    parsed with ``shlex`` and executed directly. Shell interpretation is only
+    enabled when a plan explicitly sets ``shell: true``.
+    """
+    if "argv" in check:
+        argv = check.get("argv")
+        if not isinstance(argv, list) or not argv or not all(
+            isinstance(arg, str) and bool(arg) for arg in argv
+        ):
+            raise ValueError("argv boş olmayan string listesi olmalı")
+        if check.get("shell") is True:
+            raise ValueError("shell=true ile argv birlikte kullanılamaz")
+        return list(argv), False
+
+    cmd = check.get("cmd")
+    if not isinstance(cmd, str) or not cmd.strip():
+        raise ValueError("cmd boş olmayan string olmalı")
+    if check.get("shell") is True:
+        return cmd, True
+    try:
+        argv = shlex.split(cmd, posix=True)
+    except ValueError as exc:
+        raise ValueError("cmd ayrıştırılamadı: %s" % exc) from exc
+    if not argv:
+        raise ValueError("cmd boş komuta dönüştü")
+    return argv, False
+
+
 def run_check(check, base, timeout=300):
     """Return ``(passed, detail, output_tail)``."""
     kind = check["type"]
     if kind == "run":
         try:
+            command, use_shell = _command_spec(check)
             proc = subprocess.run(
-                check["cmd"], shell=True, cwd=base, capture_output=True,
+                command, shell=use_shell, cwd=base, capture_output=True,
                 text=True, timeout=check.get("timeout", timeout),
             )
         except subprocess.TimeoutExpired:
             return False, "komut zaman aşımına uğradı", ""
+        except (OSError, ValueError) as exc:
+            return False, "komut başlatılamadı: %s" % exc, ""
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         expected = check.get("expect_exit", 0)
         ok = proc.returncode == expected
@@ -403,7 +464,7 @@ def snapshot_sources(base, plan):
     if not files and os.path.isdir(os.path.join(base, ".git")):
         try:
             proc = subprocess.run(
-                "git ls-files", shell=True, cwd=base, capture_output=True,
+                ["git", "ls-files"], shell=False, cwd=base, capture_output=True,
                 text=True, timeout=60,
             )
             files = [line for line in (proc.stdout or "").splitlines() if line.strip()]

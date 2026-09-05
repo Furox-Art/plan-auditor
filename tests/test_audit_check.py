@@ -134,6 +134,45 @@ def test_run_check_output_regex(tmp_path):
     assert not ok
 
 
+def test_run_check_argv_executes_without_shell(tmp_path):
+    marker = tmp_path / "marker.txt"
+    ok, _, output = ac.run_check(
+        {"type": "run", "argv": [sys.executable, "-c", "print('ARGV_OK')"]},
+        str(tmp_path),
+    )
+    assert ok and "ARGV_OK" in output
+    assert not marker.exists()
+
+
+def test_run_check_legacy_cmd_does_not_interpret_shell_metacharacters(tmp_path):
+    marker = tmp_path / "marker.txt"
+    cmd = sys.executable + ' -c "print(123)" > ' + marker.name
+    ok, _, output = ac.run_check({"type": "run", "cmd": cmd}, str(tmp_path))
+    assert ok
+    assert "123" in output
+    assert not marker.exists()
+
+
+def test_run_check_shell_requires_explicit_opt_in(tmp_path):
+    marker = tmp_path / "marker.txt"
+    ok, _, _ = ac.run_check(
+        {"type": "run", "cmd": f"echo shell-ok > {marker.name}", "shell": True},
+        str(tmp_path),
+    )
+    assert ok
+    assert marker.read_text(encoding="utf-8").strip() == "shell-ok"
+
+
+def test_validate_accepts_structured_argv_and_rejects_shell_argv_mix():
+    plan = valid_plan(verify=[
+        {"type": "run", "argv": [sys.executable, "-c", "print(1)"]}
+    ])
+    assert ac.validate_plan(plan) == []
+    plan["steps"][0]["verify"][0]["shell"] = True
+    errs = ac.validate_plan(plan)
+    assert any("shell=true" in err for err in errs)
+
+
 # ----------------------------------------------------------- evidence chain
 
 def test_chain_ok_and_tamper_detected(tmp_path):

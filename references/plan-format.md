@@ -45,3 +45,18 @@ Kötü — ölçüsüz, reddedilir mantık olarak:
 - `verify` listesi iş başladıktan sonra gevşetilemez; yalnızca sıkılaştırılabilir/eklenebilir.
 - Windows cmd uyumluluğu: komutlar `shell=True` ile çalışır; `/` veya `\\` fark etmez.
 - evidence.jsonl kayıtları `{ts, mode, step, results, status, prev, hash}` biçiminde; her kayıt öncekinin SHA-256'sını `prev` ile taşır (hash zinciri) — sonradan değiştirilirse `status`/`audit` uyarı verir.
+
+## Command execution safety
+
+Behavioral checks disable shell interpretation by default. Prefer structured
+`argv` for exact, cross-platform execution, for example:
+
+```json
+{"type":"run","argv":["python","-m","pytest","tests/","-q"],"expect_exit":0}
+```
+
+Legacy `cmd` strings remain supported, but are parsed into an argument vector
+and executed without a shell. Shell operators such as `>`, `&&`, pipes, globbing,
+and variable expansion are therefore inert unless the check explicitly sets
+`"shell": true`. Shell mode is an explicit trust-boundary opt-in and cannot be
+combined with `argv`.
