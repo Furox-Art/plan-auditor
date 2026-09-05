@@ -1,13 +1,15 @@
 ## Unreleased
 
+# Changelog
+
+## v2.4.0 — 2026-09-06
+
 - **Deterministic automatic formalization:** `plan-auditor-formalize compile` converts structured Plan Auditor requirements, coverage, dependencies, named outputs, `requires_outputs`, and deterministic checks into a conservative grounded STRIPS contract without asking an LLM to invent authoritative symbolic semantics.
 - **Independent formalization proof:** generated contracts carry a `formalization-source:<SHA256>` marker and are independently recompiled from the current plan; stale, weakened, omitted, or manually edited generated contracts are rejected even if their embedded contract SHA is recomputed.
 - **Dataflow-bound symbolic state:** generated actions prove step completion, named-output availability, and canonical `requirement-satisfied:<REQ-ID>` goals; downstream `requires_outputs` become symbolic preconditions while the existing dependency DAG remains independently enforced.
 - **Safe generated/manual split:** automatic formalization refuses to overwrite reviewed manual formal contracts and refuses to mutate already sealed plans. Domain semantics that cannot be derived mechanically remain explicit/manual rather than guessed.
-- **New installed CLI:** adds `plan-auditor-formalize compile|verify`; source/skill identity advances to `2.4.0.dev0` while the latest stable release remains `2.3.0`.
+- **New installed CLI:** adds `plan-auditor-formalize compile|verify`; package and skill identity advance to stable `2.4.0`.
 - **Regression coverage:** tests exercise exact recompilation, source-staleness detection, goal weakening, dropped output preconditions, fake initial requirement goals, idempotence, sealed-plan mutation refusal, and manual-contract preservation.
-
-# Changelog
 
 ## v2.3.0 — 2026-09-06
 

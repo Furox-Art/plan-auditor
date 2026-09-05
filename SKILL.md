@@ -3,7 +3,7 @@ name: plan-auditor
 description: Invoke this skill by name as `plan-auditor` for non-trivial build/implement/fix work or whenever the user wants independent proof that an AI actually completed the requested work. It converts the task into explicit requirements and machine-verifiable steps, automatically compiles those structured requirements/dataflow into a sealed LLM-free STRIPS contract, proves every step with real command evidence, and blocks completion until every active plan has an intact contract and a fresh deterministic audit.
 argument-hint: "<task description>"
 metadata:
-  version: "2.4.0.dev0"
+  version: "2.4.0"
 ---
 
 # Plan Auditor — strict plan + independent verification

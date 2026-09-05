@@ -324,8 +324,8 @@ A malicious same-OS-user process that can read external integrity key material r
 
 ## Version
 
-Latest stable release: **2.3.0**  
-Current development version: **2.4.0.dev0**
+Latest stable release: **2.4.0**  
+Current source version: **2.4.0**
 
 ## License
 
