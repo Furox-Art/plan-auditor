@@ -1,0 +1,85 @@
+name: one-shot Windows supervisor startup fix
+
+on:
+  push:
+    branches:
+      - hardening/full-root-fixes
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: Apply startup handshake hardening
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          cli = Path('supervisor/cli.py')
+          text = cli.read_text(encoding='utf-8')
+          import_anchor = 'from typing import Any\n\n'
+          constant = 'from typing import Any\n\nSUPERVISOR_START_TIMEOUT_SEC = 30.0\n\n'
+          if 'SUPERVISOR_START_TIMEOUT_SEC' not in text:
+              if text.count(import_anchor) != 1:
+                  raise SystemExit('unexpected cli import anchor')
+              text = text.replace(import_anchor, constant, 1)
+          old_deadline = '    deadline = time.time() + 5.0\n'
+          new_deadline = '    deadline = time.time() + SUPERVISOR_START_TIMEOUT_SEC\n'
+          if old_deadline in text:
+              if text.count(old_deadline) != 1:
+                  raise SystemExit('unexpected supervisor startup deadline count')
+              text = text.replace(old_deadline, new_deadline, 1)
+          elif new_deadline not in text:
+              raise SystemExit('supervisor startup deadline anchor missing')
+          cli.write_text(text, encoding='utf-8')
+
+          daemon = Path('supervisor/daemon.py')
+          text = daemon.read_text(encoding='utf-8')
+          old = '''    assessment = _safe_assessment(root, profile, mode)\n    gate_outcome = str(assessment.get("outcome", "UNKNOWN"))\n    _atomic_write_json(assessment_path(root), assessment)\n    write_state("running")\n'''
+          new = '''    # Publish process liveness before the potentially expensive initial assessment.\n    # Callers can distinguish a live startup from a crashed child without\n    # weakening the requirement that only an assessed daemon becomes running.\n    write_state("starting")\n    assessment = _safe_assessment(root, profile, mode)\n    gate_outcome = str(assessment.get("outcome", "UNKNOWN"))\n    _atomic_write_json(assessment_path(root), assessment)\n    write_state("running")\n'''
+          if old in text:
+              if text.count(old) != 1:
+                  raise SystemExit('unexpected daemon initial assessment block count')
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('daemon initial assessment anchor missing')
+          daemon.write_text(text, encoding='utf-8')
+
+          tests = Path('tests/test_daemon.py')
+          text = tests.read_text(encoding='utf-8')
+          marker = 'def test_daemon_publishes_starting_state_before_initial_assessment'
+          if marker not in text:
+              text += '''\n\ndef test_daemon_publishes_starting_state_before_initial_assessment(tmp_path: Path, monkeypatch) -> None:\n    import supervisor.daemon as daemon_module\n\n    _write_fast_config(tmp_path)\n    release = threading.Event()\n\n    def delayed_assessment(root: str, profile: str, mode: str) -> dict:\n        release.wait(timeout=2.0)\n        return {"outcome": "PASS", "workspace": root, "profile": profile, "mode": mode}\n\n    monkeypatch.setattr(daemon_module, "_safe_assessment", delayed_assessment)\n    thread = _start_thread(tmp_path)\n    starting = _wait_for_state(tmp_path, "starting", timeout=1.0, pid=os.getpid())\n    assert starting["gate_outcome"] == "UNKNOWN"\n\n    release.set()\n    _wait_for_state(tmp_path, "running", timeout=2.0, pid=os.getpid())\n    _request_stop(tmp_path)\n    thread.join(timeout=2.0)\n    assert not thread.is_alive()\n'''
+          tests.write_text(text, encoding='utf-8')
+          '@ | python -
+      - name: Install package and tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pytest build
+      - name: Full Windows regression suite
+        run: python -m pytest tests/ -q
+      - name: Fibonacci regression
+        run: python -m pytest examples/fib/test_fib.py -q
+      - name: Build real wheel
+        run: python -m build --wheel
+      - name: Exercise wheel and real supervisor lifecycle
+        run: python tests/wheel_cli_smoke.py --wheel-dir dist
+      - name: Commit verified fix and remove one-shot workflow
+        shell: pwsh
+        run: |
+          git rm -f .github/workflows/one-shot-windows-startup-fix.yml
+          git add supervisor/cli.py supervisor/daemon.py tests/test_daemon.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Harden cross-platform supervisor startup handshake'
+          git push origin HEAD:hardening/full-root-fixes
