@@ -1,4 +1,4 @@
-"""L3 — deterministic policy engine."""
+"""L3 — deterministic policy engine with workspace-confined policy loading."""
 from __future__ import annotations
 
 import ast
@@ -7,6 +7,42 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
+
+from .control_plane import ControlPlanePathError, confined_workspace_path
+
+# ``load_config`` registers the exact lexical policy directories for each
+# workspace before the orchestrator/CLI resolves them.  Resolved paths that came
+# through a symlink are therefore not in this allow-set and are rejected before
+# any external file is read.
+_ALLOWED_POLICY_DIRS: set[Path] = set()
+_POLICY_CONFINEMENT_ACTIVE = False
+
+
+def register_policy_workspace(root: str | Path, configured_relative: str) -> list[str]:
+    """Register policy directories that are physically confined to ``root``.
+
+    Returns validation errors and activates fail-closed policy loading even when
+    no policy directory currently exists.
+    """
+    global _POLICY_CONFINEMENT_ACTIVE
+    _POLICY_CONFINEMENT_ACTIVE = True
+    errors: list[str] = []
+    workspace = Path(root).expanduser().resolve()
+    for relative, label in (
+        (configured_relative, "configured policy directory"),
+        (".plan-auditor/policies", "implicit policy directory"),
+    ):
+        try:
+            path = confined_workspace_path(workspace, relative, require_directory=True)
+        except ControlPlanePathError as exc:
+            errors.append(f"{label}: {exc}")
+            continue
+        if path.exists():
+            try:
+                _ALLOWED_POLICY_DIRS.add(path.resolve(strict=True))
+            except OSError as exc:
+                errors.append(f"{label}: cannot resolve directory: {exc}")
+    return errors
 
 
 @dataclass
@@ -261,17 +297,40 @@ def _parse_simple_toml_rules(text: str) -> tuple[List[Dict[str, Any]], List[str]
 
 
 def load_policy_rules_from_dir(dirpath: str, errors: Optional[List[str]] = None) -> List[PolicyRule]:
-    """Load policy rules, optionally collecting every parse/compile error.
-
-    Integrated supervisor callers pass an ``errors`` list and fail closed when
-    it is non-empty. Legacy direct callers keep the old list-only API.
-    """
+    """Load policy rules only from a pre-authorized workspace directory."""
     root = Path(dirpath)
-    if not root.is_dir():
+    if not root.exists():
         return []
+    if root.is_symlink():
+        if errors is not None:
+            errors.append(f"{root}: policy directory cannot be a symlink")
+        return []
+    if not root.is_dir():
+        if errors is not None:
+            errors.append(f"{root}: policy path is not a directory")
+        return []
+    try:
+        resolved = root.resolve(strict=True)
+    except OSError as exc:
+        if errors is not None:
+            errors.append(f"{root}: cannot resolve policy directory: {exc}")
+        return []
+    if _POLICY_CONFINEMENT_ACTIVE and resolved not in _ALLOWED_POLICY_DIRS:
+        if errors is not None:
+            errors.append(
+                f"{root}: policy directory was not authorized as a symlink-free workspace path"
+            )
+        return []
+
     specs: List[tuple[Path, Dict[str, Any]]] = []
     for path in sorted(root.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".json", ".toml"}:
+        if path.suffix.lower() not in {".json", ".toml"}:
+            continue
+        if path.is_symlink():
+            if errors is not None:
+                errors.append(f"{path}: policy file cannot be a symlink")
+            continue
+        if not path.is_file():
             continue
         try:
             text = path.read_text(encoding="utf-8")
