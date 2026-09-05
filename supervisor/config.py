@@ -62,30 +62,27 @@ _VALID_MODES = {"serial", "parallel-warn", "parallel-strict"}
 
 def _relative_safe(value: str) -> bool:
     path = Path(value)
-    return not path.is_absolute() and ".." not in path.parts
+    return bool(value) and not path.is_absolute() and ".." not in path.parts
 
 
 def _int_value(data: Dict, key: str, default: int, minimum: int, maximum: int,
                errors: List[str]) -> int:
     raw = data.get(key, default)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
+    if isinstance(raw, bool) or not isinstance(raw, int):
         errors.append(f"{key} must be an integer")
         return default
-    if not minimum <= value <= maximum:
+    if not minimum <= raw <= maximum:
         errors.append(f"{key} must be between {minimum} and {maximum}")
         return default
-    return value
+    return raw
 
 
 def load_config(workspace_root: str = ".") -> Config:
-    """Load ``<root>/.plan-auditor/supervisor.json`` and retain validation errors.
+    """Load and strictly validate ``.plan-auditor/supervisor.json``.
 
-    Runtime values fall back to conservative defaults so diagnostics can still
-    be produced, but the integrated completion gate treats any ``errors`` as a
-    blocking configuration failure instead of silently accepting malformed or
-    downgraded configuration.
+    Conservative defaults remain available for diagnostics, but every malformed
+    value is retained in ``errors`` and therefore blocks the integrated gate.
+    No string/float-to-integer coercion is performed at the trust boundary.
     """
     path = Path(workspace_root) / ".plan-auditor" / CONFIG_FILENAME
     if not path.exists():
@@ -102,33 +99,61 @@ def load_config(workspace_root: str = ".") -> Config:
     if not isinstance(data, dict):
         return Config(workspace_root=workspace_root, errors=["supervisor config root must be an object"])
 
-    raw_profile = str(data.get("profile", "standard")).lower()
-    try:
-        profile = Profile(raw_profile)
-    except ValueError:
+    raw_profile = data.get("profile", "standard")
+    if not isinstance(raw_profile, str):
         profile = Profile.STANDARD
-        errors.append(f"invalid profile: {raw_profile!r}")
+        errors.append("profile must be a string")
+    else:
+        try:
+            profile = Profile(raw_profile.lower())
+        except ValueError:
+            profile = Profile.STANDARD
+            errors.append(f"invalid profile: {raw_profile!r}")
 
-    try:
-        tier = Tier(int(data.get("tier", 1)))
-    except (TypeError, ValueError):
+    raw_tier = data.get("tier", 1)
+    if isinstance(raw_tier, bool) or not isinstance(raw_tier, int):
         tier = Tier.NO_LLM
-        errors.append(f"invalid tier: {data.get('tier')!r}")
+        errors.append(f"invalid tier: {raw_tier!r}")
+    else:
+        try:
+            tier = Tier(raw_tier)
+        except ValueError:
+            tier = Tier.NO_LLM
+            errors.append(f"invalid tier: {raw_tier!r}")
 
-    mode = str(data.get("mode", "serial"))
-    if mode not in _VALID_MODES:
-        errors.append(f"invalid mode: {mode!r}")
+    raw_mode = data.get("mode", "serial")
+    if not isinstance(raw_mode, str):
         mode = "serial"
+        errors.append("mode must be a string")
+    else:
+        mode = raw_mode
+        if mode not in _VALID_MODES:
+            errors.append(f"invalid mode: {mode!r}")
+            mode = "serial"
 
-    pg_dir = str(data.get("pg_dir", ".plan-auditor"))
-    if pg_dir != ".plan-auditor":
-        errors.append("pg_dir is fixed to '.plan-auditor' in supervisor mode")
+    raw_pg_dir = data.get("pg_dir", ".plan-auditor")
+    if not isinstance(raw_pg_dir, str):
         pg_dir = ".plan-auditor"
+        errors.append("pg_dir must be a string")
+    else:
+        pg_dir = raw_pg_dir
+        if pg_dir != ".plan-auditor":
+            errors.append("pg_dir is fixed to '.plan-auditor' in supervisor mode")
+            pg_dir = ".plan-auditor"
 
-    policies_dir = str(data.get("policies_dir", "policies"))
-    if not policies_dir or not _relative_safe(policies_dir):
-        errors.append("policies_dir must be a non-empty relative path inside the workspace")
+    raw_policies_dir = data.get("policies_dir", "policies")
+    if not isinstance(raw_policies_dir, str) or not _relative_safe(raw_policies_dir):
         policies_dir = "policies"
+        errors.append("policies_dir must be a non-empty relative path inside the workspace")
+    else:
+        policies_dir = raw_policies_dir
+
+    raw_extra = data.get("extra", {})
+    if not isinstance(raw_extra, dict):
+        extra: Dict = {}
+        errors.append("extra must be an object")
+    else:
+        extra = raw_extra
 
     return Config(
         profile=profile,
@@ -141,6 +166,6 @@ def load_config(workspace_root: str = ".") -> Config:
         heartbeat_sec=_int_value(data, "heartbeat_sec", 30, 1, 3_600, errors),
         rotate_bytes=_int_value(data, "rotate_bytes", 2_000_000, 1_024, 1_000_000_000, errors),
         policies_dir=policies_dir,
-        extra=data.get("extra", {}) if isinstance(data.get("extra", {}), dict) else {},
+        extra=extra,
         errors=errors,
     )
