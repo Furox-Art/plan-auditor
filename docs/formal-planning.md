@@ -1,168 +1,129 @@
 # Sealed classical planning verification
 
-Plan Auditor can attach an **LLM-free classical planning proof** to a normal
-multi-step plan. This extends the existing L5 structural verifier with explicit
-symbolic state, preconditions, add effects, delete effects, final goals, and a
-separate deterministic requirement-to-goal alignment layer.
+Plan Auditor adds an **LLM-free classical planning proof** to non-trivial plans. The formal layer checks symbolic reachability, while the deterministic execution auditor separately proves that the concrete work was actually performed.
 
-The design uses three independent checks:
+The normal path is now **automatic deterministic formalization**. Users and agents do not need to invent STRIPS facts by hand for ordinary structured plans.
 
-1. an in-process grounded STRIPS-style planner that is always available and uses
-   only Python/CPU,
-2. deterministic semantic binding from every `must`/`should` requirement to a
-   canonical formal goal produced by a step that covers that requirement, and
-3. optional PDDL export + Fast Downward execution for an external classical
-   planner cross-check.
+## Default automatic path
 
-The existing deterministic audit remains authoritative for the question
-"was the work actually executed?". Formal planning answers the different
-question "is there a dependency-respecting symbolic action ordering that can
-reach the declared goals?". The requirement-binding layer additionally checks
-that those goals are not disconnected from the requirements the plan claims to
-satisfy.
+After requirements, coverage, dependencies, outputs, and checks are defined—but before sealing—run:
 
-## Why the contract lives inside a `run` check
-
-Formal planning data is stored under `formal_planning` inside an ordinary
-behavioral `run` verification check. Plan Auditor already seals and fingerprints
-the complete verification-check object, so this gives the symbolic model the same
-protection as every other verification criterion without introducing a second,
-weaker plan contract.
-
-A canonical anchor for two requirements looks like this:
-
-```json
-{
-  "type": "run",
-  "argv": [
-    "plan-auditor-formal",
-    "verify",
-    ".",
-    "--contract-sha",
-    "<sha256-of-formal_planning>"
-  ],
-  "formal_planning": {
-    "version": 1,
-    "initial_facts": ["workspace-ready"],
-    "goal_facts": [
-      "artifact-verified",
-      "requirement-satisfied:REQ-001",
-      "requirement-satisfied:REQ-002"
-    ],
-    "actions": [
-      {
-        "step": 1,
-        "preconditions": ["workspace-ready"],
-        "add_effects": [
-          "artifact-built",
-          "requirement-satisfied:REQ-001"
-        ],
-        "del_effects": []
-      },
-      {
-        "step": 2,
-        "preconditions": ["artifact-built"],
-        "add_effects": [
-          "artifact-verified",
-          "requirement-satisfied:REQ-002"
-        ],
-        "del_effects": []
-      }
-    ]
-  }
-}
+```bash
+plan-auditor-formalize compile .
 ```
 
-There must be exactly one formal-planning anchor per plan. The formal action set
-must contain exactly one action for every Plan Auditor step. Existing
-`depends_on` edges are automatically enforced by the classical planner; they are
-not duplicated in the symbolic contract.
+For a named plan:
 
-## Deterministic requirement-to-goal alignment
+```bash
+plan-auditor-formalize compile . --plan <name>
+```
 
-For every plan requirement whose priority is `must` or `should`, L5 derives the
-canonical fact:
+The compiler derives a conservative formal model only from structured Plan Auditor primitives. It deliberately does **not** interpret arbitrary prose or ask another LLM to invent symbolic meaning.
+
+Generated facts are limited to four classes:
 
 ```text
+formalization-source:<SHA256>
+step-completed:<STEP-ID>
+output-available:<STEP-ID>:<NAME-SLUG>:<HASH>
 requirement-satisfied:<REQ-ID>
 ```
 
-The integrated verifier fails closed unless all of the following are true:
+The source fingerprint covers the task, requirements, step coverage, dependency/output dataflow, declared outputs, and non-generated verification checks. Generated formal checks are excluded from the source projection so the fingerprint is non-circular.
 
-- the canonical fact is present in `goal_facts`,
-- it is **not** present in `initial_facts`,
-- at least one formal action produces it,
-- every action that produces it belongs to a Plan Auditor step whose `covers`
-  list contains the same requirement ID, and
-- every formal action has at least one add or delete effect.
+## Two independent generated checks
 
-This means a planner cannot obtain formal credibility from a decorative symbolic
-model that never represents a required outcome. The host-owned request contract
-still remains the authority for the exact requirement text and acceptance
-checks; request alignment binds that text to the plan requirement ID, and this
-layer binds the same ID to the formal goal.
+Automatic formalization installs two behavioral checks into one plan step:
 
-The composition is therefore:
+1. `plan-auditor-formal verify ...`
+   - verifies the embedded grounded STRIPS contract,
+   - enforces the Plan Auditor dependency DAG,
+   - checks symbolic preconditions/effects and final goals,
+   - can optionally cross-check with Fast Downward.
+
+2. `plan-auditor-formalize verify ...`
+   - recomputes the expected generated contract from the current structured plan,
+   - recomputes the source fingerprint,
+   - requires exact equality with the embedded generated contract,
+   - rejects stale, weakened, omitted, or manually edited generated formalizations.
+
+This separation matters. A contract can be internally reachable and still be the wrong contract. The second check proves that a generated contract is exactly the deterministic compilation of the plan source rather than a weaker model proposed by the same AI.
+
+## What the compiler derives
+
+For every plan step, the compiler creates one formal action.
+
+The action receives:
+
+- the current `formalization-source:<SHA256>` marker as a precondition,
+- an `output-available:...` precondition for every `requires_outputs` reference,
+- a `step-completed:<STEP-ID>` add effect,
+- an `output-available:...` add effect for every declared named output,
+- a `requirement-satisfied:<REQ-ID>` add effect for every covered `must`/`should` requirement.
+
+The final goal includes:
+
+- every required `requirement-satisfied:<REQ-ID>` fact,
+- every generated step-completion fact,
+- every generated output-availability fact.
+
+The classical planner independently enforces `depends_on`. The generated output facts additionally bind symbolic reachability to concrete Plan Auditor dataflow.
+
+If an explicit dependency edge is not backed by `requires_outputs`, automatic formalization fails instead of inventing a missing data dependency.
+
+## Requirement binding
+
+For every `must` or `should` requirement `REQ-X`, the canonical formal fact is:
 
 ```text
-host-approved requirement + acceptance checks
-        -> exact plan requirement / covers
-        -> requirement-satisfied:<REQ-ID>
-        -> covering STRIPS action effect
-        -> reachable final symbolic state
+requirement-satisfied:REQ-X
+```
+
+The integrated semantic verifier rejects a plan unless:
+
+- the fact is a final goal,
+- it is not pre-satisfied in the initial state,
+- at least one action produces it,
+- every producer is a step whose `covers` contains `REQ-X`,
+- every formal action has a symbolic effect.
+
+For automatically generated contracts, an additional stronger condition applies: the **entire contract** must exactly equal deterministic recompilation from the structured plan.
+
+So simply changing the contract and recomputing its SHA is not enough to bypass the verifier.
+
+## Source-fingerprint chain
+
+The trust chain for generated contracts is:
+
+```text
+host-owned request + acceptance checks
+        -> exact plan requirements
+        -> covers / dependencies / outputs / requires_outputs / checks
+        -> deterministic source SHA-256
+        -> generated STRIPS contract
+        -> independent deterministic recompilation/equality check
+        -> STRIPS reachability
         -> deterministic execution evidence
+        -> sealed aggregate PASS
 ```
 
-This is a structural semantic alignment check, not natural-language theorem
-proving. A deliberately incorrect symbolic interpretation can still require
-human/domain review for high-assurance work.
+If the structured plan changes after generation, the source SHA changes and the old generated contract becomes invalid. Re-run the compiler before sealing.
 
-## Create a canonical check
+The compiler refuses to mutate a plan once its seal file exists.
 
-Write the symbolic contract alone to `formal-contract.json`, then run:
+## Optional Fast Downward cross-check
 
-```bash
-plan-auditor-formal make-check formal-contract.json
-```
-
-The command prints a complete `run` check with the correct contract SHA-256. Put
-that object in one step's `verify` array before sealing the plan.
-
-To require an independent Fast Downward cross-check during the normal audit:
+Automatic generation can include an external Fast Downward requirement:
 
 ```bash
-plan-auditor-formal make-check formal-contract.json \
+plan-auditor-formalize compile . \
   --fast-downward auto \
   --require-fast-downward
 ```
 
-The external-planner requirement is then part of the sealed `argv`, so removing
-it later is a seal violation.
+The generated `plan-auditor-formal` check then includes the external-planner requirement in its sealed argv.
 
-## Internal planner behavior
-
-For models with no delete effects, facts only accumulate. Plan Auditor uses a
-deterministic forward algorithm: any currently applicable action can be executed
-without invalidating a later action, so reachability is checked efficiently.
-
-When delete effects are present, Plan Auditor performs bounded state-space search
-and tracks both:
-
-- the current symbolic fact set, and
-- the set of Plan Auditor steps already executed.
-
-Every action can execute at most once. A candidate action is applicable only when
-both its existing Plan Auditor dependencies and its symbolic preconditions are
-satisfied. Final PASS requires **all plan steps** to have executed and every
-`goal_fact` to be true.
-
-The search is fail-closed. If the bounded state space is exhausted without a
-solution the contract is REJECTED; if the configured hard state bound is reached
-before a conclusion, L5 returns UNKNOWN/REVISE rather than PASS.
-
-## PDDL / Fast Downward
-
-The same embedded contract can be translated to PDDL `:strips`:
+PDDL export remains available:
 
 ```bash
 plan-auditor-formal export-pddl . \
@@ -174,34 +135,40 @@ The output contains:
 
 - `domain.pddl`
 - `problem.pddl`
-- `facts.json` mapping human-readable facts to sanitized PDDL predicates
+- `facts.json`
 
-Human fact strings are never inserted directly into PDDL syntax. They are mapped
-to generated predicates such as `f0001`, preventing a fact label from injecting
-PDDL syntax.
+Human fact strings are mapped to generated predicates before being inserted into PDDL syntax.
 
-If Fast Downward is installed, it can be used at verification time:
+## Internal planner behavior
+
+The built-in planner is a grounded STRIPS-style planner.
+
+For models with no delete effects, facts only accumulate and Plan Auditor uses a deterministic forward solver. For models with delete effects, it uses bounded state-space search.
+
+Every action can execute at most once. A candidate action is applicable only when:
+
+- all Plan Auditor dependencies are complete, and
+- all symbolic preconditions are currently true.
+
+PASS requires all plan steps to execute and all final goals to be true.
+
+Search is fail-closed. Exceeding the configured state bound produces UNKNOWN/REVISE rather than PASS.
+
+## Manual domain-specific models
+
+Manual STRIPS contracts are still supported when a project genuinely needs domain facts that cannot be derived from Plan Auditor's structured plan.
+
+Create a manual anchor with:
 
 ```bash
-plan-auditor-formal verify . \
-  --contract-sha <sha256> \
-  --fast-downward auto \
-  --require-fast-downward
+plan-auditor-formal make-check formal-contract.json
 ```
 
-`auto` checks `FAST_DOWNWARD`, then `fast-downward.py`, then `fast-downward` on
-`PATH`. A Python script is launched with the current Python interpreter. Planner
-stdout/stderr is written to a temporary file rather than captured without bound,
-and the process tree is terminated on timeout.
+The automatic compiler will **not overwrite** an existing manual formal contract.
 
-The generated PDDL includes `unused-step-N` and `done-step-N` predicates. This
-forces each Plan Auditor step to run exactly once and requires every step to be
-completed in the PDDL goal, so Fast Downward cannot "solve" the formal goal by
-silently skipping unrelated plan steps.
+This is intentional. Domain semantics such as physical states, protocol states, scientific assumptions, or business invariants should not be silently guessed from natural-language prose. They should be explicitly modeled and reviewed.
 
-## Relationship to the existing architecture
-
-This feature strengthens, rather than replaces, the existing layers:
+## Relationship to the architecture
 
 ```text
 Modern AI / coding agent
@@ -210,26 +177,29 @@ Modern AI / coding agent
 Host request + acceptance checks
         |
         v
-Requirements + dependency/output DAG
+Requirements + coverage + dependency/output DAG
         |
         v
-L4 BDI-inspired goal state
+Deterministic auto-formalizer
+        |
+        +--> source SHA-256 provenance
+        +--> requirement goals
+        +--> output/dataflow facts
+        +--> one action per step
         |
         v
-L5 structural verifier
-        |
-        +--> requirement-to-formal-goal binding
-        |
-        +--> sealed STRIPS contract
-        |       |
-        |       +--> internal classical planner (always available)
-        |       +--> PDDL + Fast Downward (optional independent cross-check)
+Independent deterministic recompilation check
         |
         v
-L6 Soar-like lifecycle / L7 subsumption priority
+Grounded STRIPS reachability
+        |
+        +--> PDDL / Fast Downward (optional)
         |
         v
-L10 deterministic subprocess/filesystem audit
+Soar-like lifecycle / subsumption priority
+        |
+        v
+Deterministic subprocess/filesystem audit
         |
         v
 Seal + evidence + aggregate completion gate
@@ -238,20 +208,12 @@ Seal + evidence + aggregate completion gate
 PASS / FAIL / UNKNOWN
 ```
 
-The classical planner does not inspect model chain-of-thought and does not trust
-an AI's narration. It reasons only over explicit symbolic facts and the sealed
-plan graph. The semantic-binding layer independently checks that the formal goals
-cover every required requirement ID. The deterministic audit then independently
-proves the concrete work.
-
 ## Trust boundary
 
-Formal planning cannot fully repair an incorrect formalization. The new binding
-layer prevents omission/disconnection between approved requirements and formal
-goals, but it does not understand arbitrary natural-language meaning. For
-high-assurance work, the host-owned request contract and acceptance checks remain
-authoritative and the symbolic model may still need domain review.
+Automatic formalization closes a major trust gap: the same AI that wrote the implementation no longer needs to be trusted to invent a structurally convenient STRIPS model for ordinary plans.
 
-Fast Downward is an optional external executable and is part of the trusted tool
-surface when used. The default internal planner requires no GPU, no model API,
-and no network connection.
+It does **not** claim to solve arbitrary natural-language semantic formalization. The compiler only derives facts from explicit requirements, coverage, dependency/output dataflow, and checks. Host-owned request acceptance checks remain authoritative for the meaning of the user's request.
+
+For domain semantics that cannot be derived mechanically, fail closed or use a reviewed manual formal model; do not invent facts merely to obtain a formal PASS.
+
+The default internal planner and compiler are local, CPU-only, and require no model API, GPU, or network connection.
