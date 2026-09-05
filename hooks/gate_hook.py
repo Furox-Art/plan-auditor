@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """Platform-agnostic Plan Auditor completion hook.
 
-Unlike the old hook, this does not trust ``status=verified`` by itself and does
-not fabricate seal/evidence validity. It runs the integrated supervisor
-assessment and only returns PASS when the current plan has matching fresh
-full-audit evidence plus valid integrity state.
-
 Exit codes: 0 = PASS/NO_PLAN, 1 = FAIL/BLOCKED, 3 = UNKNOWN.
 """
 from __future__ import annotations
@@ -32,27 +27,41 @@ def run_gate(workspace_dir: str):
     return str(report.get("outcome", "UNKNOWN")), report
 
 
+def _plan_failure_lines(name: str, item: dict) -> list[str]:
+    lines = [f"  Plan {name}: {item.get('outcome', 'FAIL')}"]
+    seal = item.get("seal", {}) if isinstance(item.get("seal"), dict) else {}
+    fresh = item.get("fresh_audit", {}) if isinstance(item.get("fresh_audit"), dict) else {}
+    coverage = item.get("coverage", {}) if isinstance(item.get("coverage"), dict) else {}
+    gate = item.get("gate", {}) if isinstance(item.get("gate"), dict) else {}
+    if seal and not seal.get("ok", False):
+        lines.append("    Seal: invalid/missing — %s" % seal.get("violations", []))
+    if coverage and not coverage.get("valid", False):
+        lines.append("    Requirement coverage: %s" % coverage.get("errors", []))
+    if fresh and not fresh.get("valid", False):
+        lines.append("    Fresh audit: %s" % fresh.get("reason", "missing"))
+    for note in gate.get("notes", []) if isinstance(gate, dict) else []:
+        lines.append("    - %s" % note)
+    return lines
+
+
 def format_text(outcome: str, report: dict, workspace_dir: str) -> str:
     if outcome == "NO_PLAN":
-        return "[plan-auditor] No active plan.json — verification skipped."
+        return "[plan-auditor] No active plans — verification skipped."
     if outcome == "PASS":
-        return "[plan-auditor] PASS — sealed current plan has fresh deterministic full-audit evidence."
-
-    gate = report.get("gate", {}) if isinstance(report, dict) else {}
-    notes = gate.get("notes", []) if isinstance(gate, dict) else []
-    pending = gate.get("pending_steps", []) if isinstance(gate, dict) else []
-    fresh = report.get("fresh_audit", {}) if isinstance(report, dict) else {}
-    seal = report.get("seal", {}) if isinstance(report, dict) else {}
+        count = report.get("active_plan_count", 1) if isinstance(report, dict) else 1
+        return f"[plan-auditor] PASS — all {count} active plan(s) have sealed fresh deterministic audit evidence."
 
     lines = [f"[plan-auditor] {outcome} — completion BLOCKED."]
-    if pending:
-        lines.append("  Pending/unverified steps: %s" % pending)
-    if seal and not seal.get("ok", False):
-        lines.append("  Seal: invalid/missing — %s" % seal.get("violations", []))
-    if fresh and not fresh.get("valid", False):
-        lines.append("  Fresh audit: %s" % fresh.get("reason", "missing"))
-    for note in notes:
-        lines.append("  - %s" % note)
+    if isinstance(report, dict):
+        for message in report.get("configuration_errors", []) or []:
+            lines.append("  Config: %s" % message)
+        for message in report.get("policy_errors", []) or []:
+            lines.append("  Policy: %s" % message)
+        plans = report.get("plans", {})
+        if isinstance(plans, dict):
+            for name, item in plans.items():
+                if isinstance(item, dict) and item.get("outcome") != "PASS":
+                    lines.extend(_plan_failure_lines(name, item))
     lines.append("  Run final gate: plan-auditor plan verify . && plan-auditor audit .")
     return "\n".join(lines)
 
@@ -73,8 +82,7 @@ def main():
         try:
             Path(args.warn_file).parent.mkdir(parents=True, exist_ok=True)
             Path(args.warn_file).write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
+                json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
             )
         except OSError:
             pass
