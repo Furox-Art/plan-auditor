@@ -21,6 +21,12 @@ ENV_KEY_FILE = "PLAN_AUDITOR_HMAC_KEY_FILE"
 MARKER_NAME = "integrity.json"
 MIN_KEY_BYTES = 32
 
+EVIDENCE_RECORD_DOMAIN = "plan-auditor:evidence-record:v1"
+EVIDENCE_HEAD_DOMAIN = "plan-auditor:evidence-head:v1"
+REGISTRY_RECORD_DOMAIN = "plan-auditor:registry-record:v1"
+REGISTRY_HEAD_DOMAIN = "plan-auditor:registry-head:v1"
+MARKER_DOMAIN = "plan-auditor:integrity-marker:v1"
+
 
 class IntegrityKeyError(RuntimeError):
     """Raised when authenticated integrity is configured incorrectly."""
@@ -120,7 +126,7 @@ def write_marker(root: str | Path, key: KeyMaterial) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = _marker_payload(key)
     value = dict(payload)
-    value["auth"] = make_auth(key, "plan-auditor:integrity-marker:v1", payload)
+    value["auth"] = make_auth(key, MARKER_DOMAIN, payload)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(canonical(value) + "\n", encoding="utf-8")
     os.replace(tmp, path)
@@ -139,7 +145,7 @@ def verify_marker(root: str | Path, key: KeyMaterial) -> bool:
     payload = {k: v for k, v in value.items() if k != "auth"}
     return payload == _marker_payload(key) and verify_auth(
         key,
-        "plan-auditor:integrity-marker:v1",
+        MARKER_DOMAIN,
         payload,
         auth,
     )
