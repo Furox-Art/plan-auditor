@@ -61,6 +61,23 @@ jobs:
           if marker not in text:
               text += '''\n\ndef test_daemon_publishes_starting_state_before_initial_assessment(tmp_path: Path, monkeypatch) -> None:\n    import supervisor.daemon as daemon_module\n\n    _write_fast_config(tmp_path)\n    release = threading.Event()\n\n    def delayed_assessment(root: str, profile: str, mode: str) -> dict:\n        release.wait(timeout=2.0)\n        return {"outcome": "PASS", "workspace": root, "profile": profile, "mode": mode}\n\n    monkeypatch.setattr(daemon_module, "_safe_assessment", delayed_assessment)\n    thread = _start_thread(tmp_path)\n    starting = _wait_for_state(tmp_path, "starting", timeout=1.0, pid=os.getpid())\n    assert starting["gate_outcome"] == "UNKNOWN"\n\n    release.set()\n    _wait_for_state(tmp_path, "running", timeout=2.0, pid=os.getpid())\n    _request_stop(tmp_path)\n    thread.join(timeout=2.0)\n    assert not thread.is_alive()\n'''
           tests.write_text(text, encoding='utf-8')
+
+          integration = Path('tests/test_integration_hardening.py')
+          text = integration.read_text(encoding='utf-8')
+          if 'import os\n' not in text:
+              anchor = 'import json\n'
+              if text.count(anchor) != 1:
+                  raise SystemExit('unexpected integration import anchor')
+              text = text.replace(anchor, 'import json\nimport os\n', 1)
+          old_assert = '    assert not (tmp_path / "nul").exists()\n'
+          new_assert = '    if os.name != "nt":\n        assert not (tmp_path / "nul").exists()\n'
+          if old_assert in text:
+              if text.count(old_assert) != 1:
+                  raise SystemExit('unexpected nul assertion count')
+              text = text.replace(old_assert, new_assert, 1)
+          elif new_assert not in text:
+              raise SystemExit('nul assertion anchor missing')
+          integration.write_text(text, encoding='utf-8')
           '@ | python -
       - name: Install package and tooling
         run: |
@@ -78,7 +95,7 @@ jobs:
         shell: pwsh
         run: |
           git rm -f .github/workflows/one-shot-windows-startup-fix.yml
-          git add supervisor/cli.py supervisor/daemon.py tests/test_daemon.py
+          git add supervisor/cli.py supervisor/daemon.py tests/test_daemon.py tests/test_integration_hardening.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Harden cross-platform supervisor startup handshake'
