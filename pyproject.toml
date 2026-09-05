@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "plan-auditor"
-version = "2.3.0"
+version = "2.4.0.dev0"
 description = "Independent multi-layer verification supervisor for AI coding agents"
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,7 @@ dependencies = []
 plan-auditor = "supervisor.cli:entrypoint"
 plan-auditor-migrate-seal = "supervisor.seal_migration:main"
 plan-auditor-formal = "supervisor.formal_planning:main"
+plan-auditor-formalize = "supervisor.formal_compiler:main"
 
 [project.urls]
 Homepage = "https://github.com/Furox-Art/plan-auditor"
