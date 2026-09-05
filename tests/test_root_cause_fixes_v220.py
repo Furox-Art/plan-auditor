@@ -11,12 +11,17 @@ from supervisor.agents import MultiAgentRegistry, RegistryIntegrityError
 from supervisor.config import load_config
 from supervisor.contracts import environment_contract
 from supervisor.evidence import verify_jsonl_chain
-from supervisor.plans import PlanNameError, all_plan_refs
+from supervisor.plans import PlanNameError, PlanRef, all_plan_refs
 from supervisor.policies import load_policy_rules_from_dir
 from supervisor.request_contract import auditor_state_present, initialize_request
 from supervisor.seal_migration import migrate_one
-from supervisor.sealing import check_monotonic, load_seal, save_seal, seal_plan
-from supervisor.plans import PlanRef
+from supervisor.sealing import (
+    Seal,
+    check_monotonic,
+    legacy_v3_plan_hash,
+    load_seal,
+    save_seal,
+)
 
 
 def _symlink_or_skip(target: Path, link: Path, *, directory: bool = False) -> None:
@@ -54,6 +59,44 @@ def _plan() -> dict:
                     }
                 ],
             }
+        ],
+    }
+
+
+def _two_step_legacy_plan() -> dict:
+    """A genuine v3-era implicit sequential plan with raw depends_on omitted."""
+    return {
+        "task": "produce verified result",
+        "created": "2026-09-05T00:00:00+00:00",
+        "requirements": [
+            {"id": "REQ-1", "description": "produce result", "priority": "must"},
+            {"id": "REQ-2", "description": "consume result", "priority": "must"},
+        ],
+        "steps": [
+            {
+                "id": 1,
+                "title": "verify result",
+                "covers": ["REQ-1"],
+                "verify": [_check()],
+                "outputs": [
+                    {
+                        "name": "result",
+                        "verify": [{"type": "file_exists", "path": "result.txt"}],
+                    }
+                ],
+            },
+            {
+                "id": 2,
+                "title": "consume result",
+                "covers": ["REQ-2"],
+                "verify": [
+                    {
+                        "type": "run",
+                        "argv": ["python", "-c", "from pathlib import Path; assert Path('result.txt').exists()"],
+                        "expect_exit": 0,
+                    }
+                ],
+            },
         ],
     }
 
@@ -99,7 +142,31 @@ def test_policy_symlink_is_blocked_before_external_read(tmp_path: Path) -> None:
     errors: list[str] = []
     rules = load_policy_rules_from_dir(str((root / "policies").resolve()), errors=errors)
     assert rules == []
-    assert any("not authorized" in error for error in errors)
+    assert any("unsafe workspace symlink" in error for error in errors)
+
+
+def test_unrelated_direct_policy_loader_remains_usable_after_workspace_registration(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / ".plan-auditor").mkdir(parents=True)
+    assert load_config(str(workspace)).valid
+
+    standalone = tmp_path / "standalone-policies"
+    standalone.mkdir()
+    (standalone / "rule.toml").write_text(
+        """
+[[rules]]
+id = "STANDALONE"
+level = 3
+kind = "require_truthy"
+field = "workspace"
+detail = "workspace missing"
+""".strip(),
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    rules = load_policy_rules_from_dir(str(standalone), errors=errors)
+    assert errors == []
+    assert [rule.rule_id for rule in rules] == ["STANDALONE"]
 
 
 def test_config_only_workspace_is_not_treated_as_activated(tmp_path: Path) -> None:
@@ -190,11 +257,11 @@ def test_evidence_chain_verification_does_not_use_read_text(tmp_path: Path, monk
     assert (valid, count, problem) == (True, 1, "")
 
 
-def test_exact_v3_seal_has_safe_v4_migration_path(tmp_path: Path) -> None:
+def test_genuine_v3_raw_dependency_hash_has_safe_v4_migration_path(tmp_path: Path) -> None:
     root = tmp_path
     pg = root / ".plan-auditor"
     pg.mkdir()
-    plan = _plan()
+    plan = _two_step_legacy_plan()
     (pg / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
     (root / "result.txt").write_text("ok", encoding="utf-8")
 
@@ -209,7 +276,13 @@ def test_exact_v3_seal_has_safe_v4_migration_path(tmp_path: Path) -> None:
                     "description": "produce result",
                     "priority": "must",
                     "acceptance_checks": plan["steps"][0]["verify"],
-                }
+                },
+                {
+                    "id": "REQ-2",
+                    "description": "consume result",
+                    "priority": "must",
+                    "acceptance_checks": plan["steps"][1]["verify"],
+                },
             ],
         },
     )
@@ -217,9 +290,43 @@ def test_exact_v3_seal_has_safe_v4_migration_path(tmp_path: Path) -> None:
     env = environment_contract(root, cfg)
     legacy_env = dict(env)
     legacy_env.pop("request_sha256", None)
-    legacy = seal_plan(plan, "legacy", "2026-09-05T00:00:00+00:00", environment=legacy_env)
-    legacy.format_version = 3
+
+    # Construct the same raw contract shape emitted by released v2.1.0. Both
+    # steps intentionally retain depends_on=None rather than v4 effective [1].
+    legacy_steps = []
+    criteria_count = 0
+    for step in plan["steps"]:
+        contracted = {
+            "id": step.get("id"),
+            "title": step.get("title"),
+            "depends_on": step.get("depends_on"),
+            "requires_outputs": step.get("requires_outputs", []),
+            "outputs": step.get("outputs", []),
+            "covers": step.get("covers", []),
+            "verify": step.get("verify", []),
+        }
+        legacy_steps.append(contracted)
+        criteria_count += len(contracted["verify"])
+        for output in contracted["outputs"]:
+            criteria_count += len(output.get("verify", []))
+    legacy = Seal(
+        plan_id="legacy",
+        sealed_at="2026-09-05T00:00:00+00:00",
+        plan_hash="",
+        criteria_count=criteria_count,
+        steps=legacy_steps,
+        task=plan["task"],
+        requirements=plan["requirements"],
+        required_tools=[],
+        environment=legacy_env,
+        format_version=3,
+    )
+    legacy.plan_hash = legacy_v3_plan_hash(legacy.as_plan())
     save_seal(legacy, str(pg / "seal.json"))
+
+    # Genuine legacy v3 hash must load successfully before migration.
+    loaded = load_seal(str(pg / "seal.json"))
+    assert loaded is not None and loaded.format_version == 3
 
     result = migrate_one(root, PlanRef("default", pg / "plan.json"))
     assert result["status"] == "migrated"
