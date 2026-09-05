@@ -96,6 +96,9 @@ following:
 - valid dependency DAG,
 - concrete output contract for every explicit dependency edge,
 - successful formal reachability when a `formal_planning` anchor is present,
+- when formal planning is present, every `must`/`should` requirement is bound to
+  a non-initial canonical `requirement-satisfied:<REQ-ID>` goal produced by a
+  step that covers the same requirement,
 - intact format-v4 seal,
 - unchanged sealed supervisor profile/mode/tier/policy fingerprint,
 - all steps verified in a fresh full audit,
@@ -185,6 +188,12 @@ inside one ordinary sealed `run` check. The contract includes:
 The internal grounded STRIPS-style planner checks whether all steps can execute
 while reaching the declared goals. Plans with no delete effects use an efficient
 deterministic forward solver; delete-effect plans use bounded state-space search.
+
+For every `must`/`should` requirement `REQ-X`, a formal plan must also include the
+canonical goal fact `requirement-satisfied:REQ-X`. That fact cannot be pre-satisfied
+in `initial_facts`; it must be produced by a formal action whose Plan Auditor step
+covers `REQ-X`. Missing, pre-satisfied, non-covering, and effect-free bindings are
+rejected before a formal PASS can contribute to completion.
 
 The canonical check is generated with:
 
@@ -363,7 +372,7 @@ boundaries.
 
 ## Version
 
-Current development version: **2.2.0**.
+Current development version: **2.3.0**.
 
 ## License
 
