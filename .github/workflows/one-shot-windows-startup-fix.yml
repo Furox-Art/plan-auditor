@@ -61,11 +61,12 @@ jobs:
               raise SystemExit('start daemon import anchor missing')
 
           old_condition = '        if state and state.get("state") == "running" and state.get("pid") == process.pid and pid_alive(process.pid):\n'
-          new_condition = '''        if (\n            state\n            and state.get("state") == "running"\n            and state.get("pid") == process.pid\n            and process.poll() is None\n        ):\n'''
+          intermediate_condition = '''        if (\n            state\n            and state.get("state") == "running"\n            and state.get("pid") == process.pid\n            and process.poll() is None\n        ):\n'''
+          new_condition = '''        if (\n            state\n            and state.get("state") == "running"\n            and process.poll() is None\n        ):\n'''
           if old_condition in text:
-              if text.count(old_condition) != 1:
-                  raise SystemExit('unexpected startup liveness condition count')
               text = text.replace(old_condition, new_condition, 1)
+          elif intermediate_condition in text:
+              text = text.replace(intermediate_condition, new_condition, 1)
           elif new_condition not in text:
               raise SystemExit('startup liveness condition anchor missing')
           cli.write_text(text, encoding='utf-8')
