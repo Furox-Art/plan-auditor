@@ -136,7 +136,7 @@ def main() -> int:
                 "covers": ["REQ-001"],
                 "verify": [{
                     "type": "run",
-                    "argv": [str(vpy), "-c", "from pathlib import Path; Path('wheel-upstream.txt').write_text('upstream-ok', encoding='utf-8')"],
+                    "argv": [str(vpy), "-c", "from pathlib import Path; assert Path('wheel-upstream.txt').read_text(encoding='utf-8') == 'upstream-ok'"],
                     "expect_exit": 0,
                 }],
                 "outputs": [{
@@ -152,7 +152,7 @@ def main() -> int:
                 "covers": ["REQ-002"],
                 "verify": [{
                     "type": "run",
-                    "argv": [str(vpy), "-c", "from pathlib import Path; assert Path('wheel-upstream.txt').read_text(encoding='utf-8') == 'upstream-ok'; Path('wheel-final.txt').write_text('final-ok', encoding='utf-8')"],
+                    "argv": [str(vpy), "-c", "from pathlib import Path; assert Path('wheel-upstream.txt').read_text(encoding='utf-8') == 'upstream-ok'; assert Path('wheel-final.txt').read_text(encoding='utf-8') == 'final-ok'"],
                     "expect_exit": 0,
                 }],
                 "outputs": [{
@@ -175,13 +175,18 @@ def main() -> int:
             "covers": ["REQ-N1"],
             "verify": [{
                 "type": "run",
-                "argv": [str(vpy), "-c", "from pathlib import Path; Path('wheel-named.txt').write_text('named-ok', encoding='utf-8')"],
+                "argv": [str(vpy), "-c", "from pathlib import Path; assert Path('wheel-named.txt').read_text(encoding='utf-8') == 'named-ok'"],
                 "expect_exit": 0,
             }],
         }],
     }
     (pg / "plan.json").write_text(json.dumps(default_plan, indent=2), encoding="utf-8")
     (pg / "plans" / "named.json").write_text(json.dumps(named_plan, indent=2), encoding="utf-8")
+
+    # Product state exists before verification. Audit commands are evidence, not implementation.
+    (workspace / "wheel-upstream.txt").write_text("upstream-ok", encoding="utf-8")
+    (workspace / "wheel-final.txt").write_text("final-ok", encoding="utf-8")
+    (workspace / "wheel-named.txt").write_text("named-ok", encoding="utf-8")
 
     help_result = _run([str(cli), "--help"], cwd=root, env=clean_env, capture=True)
     if "Plan Auditor" not in help_result.stdout or "plan-auditor" not in help_result.stdout:

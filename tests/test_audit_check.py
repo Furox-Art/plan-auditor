@@ -305,3 +305,29 @@ def test_snapshot_and_rollback_roundtrip(tmp_path):
     assert (tmp_path / "kod.txt").read_text(encoding="utf-8") == "v1"
     ok, n, problem = ac.verify_chain(base)
     assert ok and n == 2  # snapshot + rollback kaydı tek zincirde
+
+
+# ----------------------------------------------- audit observational purity
+def test_full_audit_rejects_verifier_workspace_mutation(tmp_path):
+    base = str(tmp_path)
+    plan = valid_plan(verify=[{
+        "type": "run",
+        "argv": [sys.executable, "-c", "from pathlib import Path; Path('created-by-verifier.txt').write_text('bad')"],
+        "expect_exit": 0,
+    }])
+    ok = ac.audit_steps(base, plan, mode="audit")
+    assert ok is False
+    assert plan["steps"][0]["status"] == "failed"
+    evidence = [
+        json.loads(line)
+        for line in (tmp_path / ".plan-auditor" / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    step_record = next(
+        rec for rec in evidence if rec.get("mode") == "audit" and rec.get("step") == 1
+    )
+    assert any(
+        result.get("check", {}).get("type") == "audit_purity"
+        and result.get("passed") is False
+        for result in step_record["results"]
+    )
+

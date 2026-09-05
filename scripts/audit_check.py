@@ -1085,6 +1085,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
                 all_ok = False
                 continue
 
+        audit_workspace_before = workspace_fingerprint(base) if mode == "audit" else None
         ok_all, results = _run_check_list(step.get("verify", []), base)
         output_results = []
         try:
@@ -1097,6 +1098,20 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
             output_result = _run_output_contract(output, base)
             output_results.append(output_result)
             ok_all = ok_all and output_result["passed"]
+
+        if mode == "audit":
+            audit_workspace_after = workspace_fingerprint(base)
+            if audit_workspace_after != audit_workspace_before:
+                ok_all = False
+                results.append({
+                    "check": {"type": "audit_purity"},
+                    "passed": False,
+                    "detail": (
+                        "audit verification mutated workspace content/type/mode; "
+                        "verification must be observational and implementation must happen before audit"
+                    ),
+                    "output_tail": "",
+                })
 
         step["status"] = "verified" if ok_all else "failed"
         passed_this_run[sid] = ok_all
