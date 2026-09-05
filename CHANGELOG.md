@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **External-key authenticated integrity:** optional HMAC-SHA256 protects evidence records, archive records, evidence tail checkpoints, agent-registry records, and registry heads using key material supplied outside the workspace. Explicit `plan-auditor integrity init` prevents silent trust-on-first-use, and authenticated state fails closed on missing/wrong keys or HMAC mismatch.
+- **Anti-truncation checkpoints:** signed evidence and registry heads bind the current tail so deleting otherwise-valid signed suffixes is detected.
 - **Command execution hardening:** behavioral checks now execute without a shell by default. Structured `argv` is supported and preferred; legacy `cmd` strings are parsed into argument vectors, while shell interpretation requires explicit `shell: true` opt-in. Internal `git ls-files` snapshot discovery also runs without a shell.
 - **Agent registry chain hardening:** L14 registry records now use `format_version + seq + prev + hash`, with a persisted head checkpoint for tail-truncation detection. Middle deletion, reordering, record mutation, missing logs with a surviving head, and head mismatches are rejected. Legacy v1 per-record-hash registries are validated and atomically migrated before further writes.
 - **Fail-closed registry gating:** integrated completion policy now blocks PASS when the multi-agent registry chain/head integrity check fails. Mutating registry operations refuse to proceed after an integrity failure.

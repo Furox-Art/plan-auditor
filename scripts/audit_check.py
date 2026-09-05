@@ -21,7 +21,27 @@ import subprocess
 import sys
 import zipfile
 
+try:
+    from scripts.integrity import (
+        EVIDENCE_HEAD_DOMAIN,
+        EVIDENCE_RECORD_DOMAIN,
+        IntegrityKeyError,
+        make_auth,
+        runtime_key,
+        verify_auth,
+    )
+except ImportError:  # direct ``python scripts/audit_check.py`` execution
+    from integrity import (
+        EVIDENCE_HEAD_DOMAIN,
+        EVIDENCE_RECORD_DOMAIN,
+        IntegrityKeyError,
+        make_auth,
+        runtime_key,
+        verify_auth,
+    )
+
 PG_DIR = ".plan-auditor"
+EVIDENCE_HEAD = "evidence.head.json"
 CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
 MAX_ATTEMPTS = 3
 ROTATE_BYTES = 2_000_000
@@ -365,18 +385,97 @@ def _latest_archive_tail(base):
     return _last_record_hash(paths[-1]) if paths else None
 
 
+def _evidence_hash_payload(rec):
+    return {k: v for k, v in rec.items() if k not in {"hash", "auth"}}
+
+
+def _evidence_auth_payload(rec):
+    return {k: v for k, v in rec.items() if k != "auth"}
+
+
+def _base_from_evidence_path(path):
+    return os.path.dirname(os.path.dirname(os.path.realpath(path)))
+
+
+def _record_count(path):
+    if not os.path.isfile(path):
+        return 0
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return sum(1 for line in handle if line.strip())
+    except OSError:
+        return 0
+
+
+def _evidence_head_path(base):
+    return os.path.join(base, PG_DIR, EVIDENCE_HEAD)
+
+
+def _expected_evidence_head(base, key):
+    active = evidence_path(base)
+    archives = _archive_paths(base)
+    return {
+        "format_version": 1,
+        "key_id": key.key_id,
+        "active_count": _record_count(active),
+        "active_tail": _last_record_hash(active),
+        "archive_tail": _last_record_hash(archives[-1]) if archives else None,
+    }
+
+
+def _write_evidence_head(base, key):
+    payload = _expected_evidence_head(base, key)
+    value = dict(payload)
+    value["auth"] = make_auth(key, EVIDENCE_HEAD_DOMAIN, payload)
+    path = _evidence_head_path(base)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(canonical(value) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
+def _verify_evidence_head(base, key):
+    path = _evidence_head_path(base)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False, "evidence authenticated head missing or invalid"
+    if not isinstance(value, dict):
+        return False, "evidence authenticated head is not an object"
+    auth = value.get("auth")
+    payload = {k: v for k, v in value.items() if k != "auth"}
+    if payload != _expected_evidence_head(base, key):
+        return False, "evidence authenticated head checkpoint mismatch"
+    if not verify_auth(key, EVIDENCE_HEAD_DOMAIN, payload, auth):
+        return False, "evidence authenticated head HMAC failed"
+    return True, ""
+
+
 def _write_evidence_record(path, rec, prev=None):
+    base = _base_from_evidence_path(path)
+    key = runtime_key(base)
     previous = prev if prev is not None else _last_record_hash(path)
     rec = dict(rec)
     rec["prev"] = previous
     rec["hash"] = hashlib.sha256(
-        canonical({k: v for k, v in rec.items() if k != "hash"}).encode("utf-8")
+        canonical(_evidence_hash_payload(rec)).encode("utf-8")
     ).hexdigest()
+    if key is not None:
+        rec["auth"] = make_auth(
+            key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec)
+        )
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(canonical(rec) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if key is not None and os.path.realpath(path) == os.path.realpath(evidence_path(base)):
+        _write_evidence_head(base, key)
     return rec["hash"]
-
 
 def maybe_rotate(base):
     """Rotate a large active log and anchor it to the previous archive."""
@@ -431,7 +530,16 @@ def count_failed_attempts(base, step_id, plan="default", mode="run"):
 
 def verify_chain(base):
     path = evidence_path(base)
+    try:
+        key = runtime_key(base)
+    except IntegrityKeyError as exc:
+        return False, 0, str(exc)
     if not os.path.isfile(path):
+        if key is not None:
+            ok, problem = _verify_evidence_head(base, key)
+            return (ok, 0, problem)
+        if os.path.isfile(_evidence_head_path(base)):
+            return False, 0, "authenticated evidence head requires HMAC key"
         return True, 0, ""
     prev = "GENESIS"
     count = 0
@@ -448,16 +556,27 @@ def verify_chain(base):
                 return False, count, "satır %s: prev zinciri kopuk" % line_no
             actual = rec.get("hash")
             expected = hashlib.sha256(
-                canonical({k: v for k, v in rec.items() if k != "hash"}).encode("utf-8")
+                canonical(_evidence_hash_payload(rec)).encode("utf-8")
             ).hexdigest()
             if actual != expected:
                 return False, count, "satır %s: hash uyuşmuyor (kurcalama?)" % line_no
+            auth = rec.get("auth")
+            if key is not None:
+                if not verify_auth(
+                    key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec), auth
+                ):
+                    return False, count, "satır %s: HMAC doğrulaması başarısız" % line_no
+            elif auth is not None:
+                return False, count, "satır %s: authenticated evidence requires HMAC key" % line_no
             prev = actual
             count += 1
+    if key is not None:
+        ok, problem = _verify_evidence_head(base, key)
+        if not ok:
+            return False, count, problem
+    elif os.path.isfile(_evidence_head_path(base)):
+        return False, count, "authenticated evidence head requires HMAC key"
     return True, count, ""
-
-
-# ---------------------------------------------------------------- snapshot
 
 def snapshot_sources(base, plan):
     files = list(plan.get("snapshot") or [])

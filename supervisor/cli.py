@@ -50,6 +50,13 @@ def _build_parser() -> argparse.ArgumentParser:
     evidence_verify = evidence_sub.add_parser("verify")
     evidence_verify.add_argument("dir", nargs="?", default=".")
 
+    integrity = sub.add_parser("integrity", help="external-key authenticated integrity")
+    integrity_sub = integrity.add_subparsers(dest="action", required=True)
+    integrity_init = integrity_sub.add_parser("init", help="authenticate current evidence and registry")
+    integrity_init.add_argument("dir", nargs="?", default=".")
+    integrity_status = integrity_sub.add_parser("status", help="show authenticated integrity status")
+    integrity_status.add_argument("dir", nargs="?", default=".")
+
     agents = sub.add_parser("agents", help="persistent multi-agent registry")
     agents_sub = agents.add_subparsers(dest="action", required=True)
     agents_list = agents_sub.add_parser("list")
@@ -230,6 +237,7 @@ def cmd_supervisor_status(args: argparse.Namespace) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .daemon import pid_alive, read_assessment, read_state
+    from .integrity import integrity_status
     from .orchestrator import evaluate_workspace
     from .workspace import capture_workspace
     root = _root(args.dir)
@@ -243,6 +251,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "state": state,
         },
         "assessment": assessment,
+        "integrity": integrity_status(root),
         "deterministic_core": str(_core_script()) if _core_script() else "module:scripts.audit_check",
     })
     return 0
@@ -302,6 +311,25 @@ def cmd_plan_inspect(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+
+
+def cmd_integrity(args: argparse.Namespace) -> int:
+    from scripts.integrity import IntegrityKeyError
+    from .integrity import initialize_integrity, integrity_status
+    root = _root(args.dir)
+    if args.action == "status":
+        result = integrity_status(root)
+        _json(result)
+        if result.get("authenticated") or not result.get("configured"):
+            return 0
+        return 2
+    try:
+        result = initialize_integrity(root)
+    except (IntegrityKeyError, OSError, ValueError, json.JSONDecodeError) as exc:
+        _json({"authenticated": False, "error": str(exc)})
+        return 2
+    _json(result)
+    return 0
 
 
 def cmd_evidence_verify(args: argparse.Namespace) -> int:
@@ -466,6 +494,8 @@ def main(argv: list[str] | None = None) -> int:
         return {"verify": cmd_plan_verify, "inspect": cmd_plan_inspect}[args.action](args)
     if args.cmd == "evidence":
         return cmd_evidence_verify(args)
+    if args.cmd == "integrity":
+        return cmd_integrity(args)
     if args.cmd == "agents":
         return cmd_agents(args)
     if args.cmd == "audit":

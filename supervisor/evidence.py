@@ -1,9 +1,4 @@
-"""L11 — evidence integrity and cross-archive anchoring.
-
-Evidence is tamper-evident, not immutable. New-format archives are validated
-internally and across rotations. Legacy JSONL files remain discoverable for
-backward compatibility and are marked as legacy integrity state.
-"""
+"""L11 — evidence integrity, archive anchoring, and optional external HMAC auth."""
 from __future__ import annotations
 
 import hashlib
@@ -13,9 +8,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from scripts.integrity import (
+    EVIDENCE_HEAD_DOMAIN,
+    EVIDENCE_RECORD_DOMAIN,
+    IntegrityKeyError,
+    KeyMaterial,
+    canonical as auth_canonical,
+    make_auth,
+    runtime_key,
+    verify_auth,
+)
+
+EVIDENCE_HEAD = "evidence.head.json"
+
 
 def _canonical(obj: Dict) -> str:
     return json.dumps(obj, sort_keys=True, ensure_ascii=False)
+
+
+def _hash_payload(rec: Dict) -> Dict:
+    return {k: v for k, v in rec.items() if k not in {"hash", "auth"}}
+
+
+def _auth_payload(rec: Dict) -> Dict:
+    return {k: v for k, v in rec.items() if k != "auth"}
 
 
 def file_hash(path: str) -> Optional[str]:
@@ -34,13 +50,27 @@ def tail_hash(path: str) -> Optional[str]:
         if not line.strip():
             continue
         try:
-            return json.loads(line).get("hash")
+            value = json.loads(line)
+            return value.get("hash") if isinstance(value, dict) else None
         except json.JSONDecodeError:
             return None
     return None
 
 
-def verify_jsonl_chain(path: str) -> Tuple[Optional[bool], int, str]:
+def _record_count(path: Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
+def verify_jsonl_chain(
+    path: str,
+    *,
+    key: Optional[KeyMaterial] = None,
+    require_auth: bool = False,
+    ignore_auth: bool = False,
+) -> Tuple[Optional[bool], int, str]:
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -66,10 +96,19 @@ def verify_jsonl_chain(path: str) -> Tuple[Optional[bool], int, str]:
         if rec.get("prev") != prev:
             return False, index - 1, f"line {index}: prev chain broken"
         actual = rec.get("hash")
-        unsigned = {k: v for k, v in rec.items() if k != "hash"}
-        expected = hashlib.sha256(_canonical(unsigned).encode("utf-8")).hexdigest()
+        expected = hashlib.sha256(_canonical(_hash_payload(rec)).encode("utf-8")).hexdigest()
         if actual != expected:
             return False, index - 1, f"line {index}: hash mismatch"
+        if not ignore_auth:
+            auth = rec.get("auth")
+            if require_auth:
+                if key is None or not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _auth_payload(rec), auth):
+                    return False, index - 1, f"line {index}: HMAC authentication failed"
+            elif auth is not None and key is None:
+                return False, index - 1, f"line {index}: authenticated record requires HMAC key"
+            elif auth is not None and key is not None:
+                if not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _auth_payload(rec), auth):
+                    return False, index - 1, f"line {index}: HMAC authentication failed"
         prev = actual
     return True, len(records), ""
 
@@ -77,8 +116,11 @@ def verify_jsonl_chain(path: str) -> Tuple[Optional[bool], int, str]:
 @dataclass
 class ArchiveManifest:
     archives: List[Dict]
+    auth_problem: str = ""
 
     def anchored(self) -> bool:
+        if self.auth_problem:
+            return False
         if any(item.get("chain_valid") is False for item in self.archives):
             return False
         for index, item in enumerate(self.archives):
@@ -102,22 +144,39 @@ def _read_stored_link(path: str) -> Optional[str]:
         if not line.strip():
             continue
         try:
-            return json.loads(line).get("previous_archive_hash")
+            value = json.loads(line)
+            return value.get("previous_archive_hash") if isinstance(value, dict) else None
         except json.JSONDecodeError:
             return None
     return None
 
 
+def _workspace_from_archive_dir(archive_dir: str | Path) -> Path:
+    archive = Path(archive_dir).resolve()
+    if archive.name == "archive" and archive.parent.name == ".plan-auditor":
+        return archive.parent.parent
+    return archive.parent
+
+
 def build_archive_manifest(archive_dir: str) -> ArchiveManifest:
     archives: List[Dict] = []
+    root = _workspace_from_archive_dir(archive_dir)
+    try:
+        key = runtime_key(root)
+        auth_problem = ""
+    except IntegrityKeyError as exc:
+        key = None
+        auth_problem = str(exc)
     if not os.path.isdir(archive_dir):
-        return ArchiveManifest(archives=[])
-    # Keep the original behavior of discovering any JSONL in the supplied
-    # directory; production callers pass .plan-auditor/archive.
+        return ArchiveManifest(archives=[], auth_problem=auth_problem)
     files = sorted(name for name in os.listdir(archive_dir) if name.endswith(".jsonl"))
     for filename in files:
         path = os.path.join(archive_dir, filename)
-        chain_valid, record_count, chain_problem = verify_jsonl_chain(path)
+        chain_valid, record_count, chain_problem = verify_jsonl_chain(
+            path,
+            key=key,
+            require_auth=key is not None,
+        )
         archives.append({
             "file": filename,
             "sha256": file_hash(path),
@@ -126,8 +185,9 @@ def build_archive_manifest(archive_dir: str) -> ArchiveManifest:
             "chain_valid": chain_valid,
             "record_count": record_count,
             "chain_problem": chain_problem,
+            "authenticated": bool(key) and chain_valid is True,
         })
-    return ArchiveManifest(archives)
+    return ArchiveManifest(archives, auth_problem=auth_problem)
 
 
 def verify_anchor_chain(archive_dir: str) -> Dict:
@@ -137,11 +197,17 @@ def verify_anchor_chain(archive_dir: str) -> Dict:
         "archives": manifest.archives,
         "broken_at": _first_break(manifest),
         "legacy_archives": manifest.legacy_count(),
-        "integrity_ok": all(item.get("chain_valid") is not False for item in manifest.archives),
+        "integrity_ok": (
+            not manifest.auth_problem
+            and all(item.get("chain_valid") is not False for item in manifest.archives)
+        ),
+        "auth_problem": manifest.auth_problem,
     }
 
 
 def _first_break(manifest: ArchiveManifest) -> Optional[int]:
+    if manifest.auth_problem:
+        return 0
     for index, item in enumerate(manifest.archives):
         if item.get("chain_valid") is False:
             return index
@@ -151,3 +217,83 @@ def _first_break(manifest: ArchiveManifest) -> Optional[int]:
         if item.get("previous_archive_hash") != previous.get("tail_hash"):
             return index
     return None
+
+
+def _sign_jsonl(path: Path, key: KeyMaterial) -> None:
+    if not path.exists():
+        return
+    valid, _count, problem = verify_jsonl_chain(
+        str(path), key=key, require_auth=False, ignore_auth=True
+    )
+    if valid is False:
+        raise IntegrityKeyError(f"cannot authenticate invalid evidence {path.name}: {problem}")
+    if valid is None:
+        raise IntegrityKeyError(f"cannot authenticate legacy unchained evidence {path.name}")
+    output: List[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        payload = _auth_payload(rec)
+        rec["auth"] = make_auth(key, EVIDENCE_RECORD_DOMAIN, payload)
+        output.append(_canonical(rec))
+    tmp = path.with_name(path.name + ".auth.tmp")
+    tmp.write_text("\n".join(output) + ("\n" if output else ""), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _evidence_head_payload(root: Path, key: KeyMaterial) -> Dict:
+    active = root / ".plan-auditor" / "evidence.jsonl"
+    archive_dir = root / ".plan-auditor" / "archive"
+    archives = sorted(archive_dir.glob("*.jsonl")) if archive_dir.is_dir() else []
+    return {
+        "format_version": 1,
+        "key_id": key.key_id,
+        "active_count": _record_count(active),
+        "active_tail": tail_hash(str(active)) or "GENESIS",
+        "archive_tail": tail_hash(str(archives[-1])) if archives else None,
+    }
+
+
+def write_evidence_head(root: str | Path, key: KeyMaterial) -> Path:
+    root_path = Path(root).resolve()
+    payload = _evidence_head_payload(root_path, key)
+    value = dict(payload)
+    value["auth"] = make_auth(key, EVIDENCE_HEAD_DOMAIN, payload)
+    path = root_path / ".plan-auditor" / EVIDENCE_HEAD
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(auth_canonical(value) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def verify_evidence_head(root: str | Path, key: KeyMaterial) -> Tuple[bool, str]:
+    root_path = Path(root).resolve()
+    path = root_path / ".plan-auditor" / EVIDENCE_HEAD
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, "evidence authenticated head missing or invalid"
+    if not isinstance(value, dict):
+        return False, "evidence authenticated head is not an object"
+    auth = value.get("auth")
+    payload = {k: v for k, v in value.items() if k != "auth"}
+    if payload != _evidence_head_payload(root_path, key):
+        return False, "evidence authenticated head checkpoint mismatch"
+    if not verify_auth(key, EVIDENCE_HEAD_DOMAIN, payload, auth):
+        return False, "evidence authenticated head HMAC failed"
+    return True, ""
+
+
+def initialize_evidence_auth(root: str | Path, key: KeyMaterial) -> None:
+    root_path = Path(root).resolve()
+    pg = root_path / ".plan-auditor"
+    archive_dir = pg / "archive"
+    files = sorted(archive_dir.glob("*.jsonl")) if archive_dir.is_dir() else []
+    active = pg / "evidence.jsonl"
+    if active.exists():
+        files.append(active)
+    for path in files:
+        _sign_jsonl(path, key)
+    write_evidence_head(root_path, key)
