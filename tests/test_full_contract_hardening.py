@@ -36,7 +36,7 @@ def _plan(task: str = "full hardening test", *, marker: str = "done.txt") -> dic
                 "argv": [
                     os.sys.executable,
                     "-c",
-                    f"from pathlib import Path; Path({marker!r}).write_text('ok', encoding='utf-8')",
+                    "print('verified')",
                 ],
             }],
         }],
