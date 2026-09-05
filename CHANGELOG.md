@@ -4,6 +4,17 @@
 
 # Changelog
 
+## v2.3.0 — 2026-09-06
+
+- **Sealed classical planning:** non-trivial multi-step plans can embed one sealed `formal_planning` contract with explicit initial facts, final goals, one grounded STRIPS-style action per Plan Auditor step, symbolic preconditions, add effects and delete effects.
+- **Native LLM-free reachability:** monotonic contracts use deterministic forward reasoning while delete-effect contracts use bounded state-space search. Exhausting the configured state budget returns UNKNOWN instead of manufacturing PASS.
+- **PDDL / Fast Downward cross-check:** the same normalized contract can be exported as sanitized PDDL `:strips` and optionally cross-checked with Fast Downward without making an external planner or GPU a package dependency.
+- **Requirement-to-formal-goal binding:** every `must`/`should` requirement in a formalized plan must map to the canonical `requirement-satisfied:<REQ-ID>` final goal, may not be pre-satisfied in `initial_facts`, and must be produced by an action whose Plan Auditor step covers that same requirement.
+- **Semantic fail-closed hardening:** missing requirement goals, non-covering producers, pre-satisfied required goals, duplicate formal anchors and effect-free formal actions are rejected before formal reachability can contribute to PASS.
+- **Direct skill-name invocation:** `SKILL.md` and README now make `plan-auditor` the user-facing invocation; users do not need to hand-author plan JSON, STRIPS/PDDL contracts, seal metadata or evidence files for the normal skill workflow.
+- **Regression coverage:** dedicated formal-planning and semantic-binding tests cover reachable/unreachable contracts, delete-effect dead ends, alternate valid orderings, bounded search, PDDL sanitization, duplicate anchors, requirement omissions and formal-contract mutation.
+- **Version identity:** source/package/skill version advances to `2.3.0`, so the post-v2.2.0 formal-planning and semantic-binding code is no longer distributed under the already-published `2.2.0` identity.
+
 ## v2.2.0 — 2026-09-05
 
 - **Physical control-plane confinement:** existing `.plan-auditor`, plan, seal, request/activation and policy path components are inspected with `lstat`; symlinked parents/leaves cannot redefine the workspace trust root.
