@@ -63,7 +63,8 @@ jobs:
         id: gate
         shell: bash
         run: |
-          if curl -sfL "https://pypi.org/pypi/${{ steps.meta.outputs.name }}/${{ steps.meta.outputs.version }}/json" > /dev/null; then
+          if curl --retry 3 --retry-delay 2 --retry-all-errors -sfL \
+            "https://pypi.org/pypi/${{ steps.meta.outputs.name }}/${{ steps.meta.outputs.version }}/json" > /dev/null; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -92,19 +93,46 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
         continue-on-error: true
-      - name: Verify PyPI publication
+      - name: Require successful PyPI upload
         if: steps.gate.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          url="https://pypi.org/pypi/${{ steps.meta.outputs.name }}/${{ steps.meta.outputs.version }}/json"
-          for attempt in 1 2 3 4 5 6; do
-            if curl -sfL "$url" > /dev/null; then exit 0; fi
-            sleep 10
-          done
-          echo "Trusted publishing outcome: ${{ steps.trusted_publish.outcome }}"
-          echo "Token fallback outcome: ${{ steps.token_publish.outcome }}"
+          trusted="${{ steps.trusted_publish.outcome }}"
+          token="${{ steps.token_publish.outcome }}"
+          if [ "$trusted" = "success" ] || [ "$token" = "success" ]; then
+            echo "PyPI upload action succeeded."
+            exit 0
+          fi
+          echo "PyPI upload failed. Trusted publishing outcome: $trusted"
+          echo "PyPI upload failed. Token fallback outcome: $token"
           exit 1
+      - name: Wait for PyPI propagation
+        if: steps.gate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          json_url="https://pypi.org/pypi/${{ steps.meta.outputs.name }}/${{ steps.meta.outputs.version }}/json"
+          simple_url="https://pypi.org/simple/${{ steps.meta.outputs.name }}/"
+          version="${{ steps.meta.outputs.version }}"
+
+          # PyPI's JSON/simple indexes can lag a successful upload. The upload
+          # action is authoritative for release failure; propagation is retried
+          # for observability and must not create a false-red CI run.
+          for attempt in $(seq 1 20); do
+            if curl --retry 2 --retry-delay 2 --retry-all-errors -sfL "$json_url" > /dev/null; then
+              echo "PyPI JSON endpoint sees ${version} on attempt ${attempt}."
+              exit 0
+            fi
+            if curl --retry 2 --retry-delay 2 --retry-all-errors -sfL "$simple_url" | grep -Fq "$version"; then
+              echo "PyPI simple index sees ${version} on attempt ${attempt}."
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "::warning::PyPI upload succeeded, but public indexes have not propagated yet."
+          exit 0
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
