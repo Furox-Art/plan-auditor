@@ -21,6 +21,35 @@ jobs:
           python-version: '3.12'
       - name: Apply runtime hardening patch
         run: python tools/apply_stage2_runtime_hardening.py
+      - name: Preserve internal test overrides while validating user config strictly
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/audit_check.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''def _runtime_limits(base):
+              data = _validated_runtime_config(base)
+              return (
+                  _strict_runtime_int(data, "max_attempts", MAX_ATTEMPTS, 1, 100),
+                  _strict_runtime_int(data, "rotate_bytes", ROTATE_BYTES, 1_024, 1_000_000_000),
+              )
+          '''.replace('          ', '')
+          new = '''def _runtime_limits(base):
+              data = _validated_runtime_config(base)
+              max_attempts = (
+                  _strict_runtime_int(data, "max_attempts", MAX_ATTEMPTS, 1, 100)
+                  if "max_attempts" in data else MAX_ATTEMPTS
+              )
+              rotate_bytes = (
+                  _strict_runtime_int(data, "rotate_bytes", ROTATE_BYTES, 1_024, 1_000_000_000)
+                  if "rotate_bytes" in data else ROTATE_BYTES
+              )
+              return max_attempts, rotate_bytes
+          '''.replace('          ', '')
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one runtime-limit block, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Install package and test tooling
         run: |
           python -m pip install --upgrade pip
