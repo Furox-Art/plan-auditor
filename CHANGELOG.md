@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Command execution hardening:** behavioral checks now execute without a shell by default. Structured `argv` is supported and preferred; legacy `cmd` strings are parsed into argument vectors, while shell interpretation requires explicit `shell: true` opt-in. Internal `git ls-files` snapshot discovery also runs without a shell.
+- **Regression coverage:** tests verify structured argv execution, inert shell metacharacters by default, explicit shell opt-in, and rejection of `shell=true` combined with `argv`.
+
 ## v2.0.2 — 2026-09-05
 
 - **Integrated supervisor pipeline:** new `supervisor/orchestrator.py` wires plan validation, requirements, workspace state, policies, sealing, deterministic evidence, adversarial review, completion gating, lifecycle state, and multi-agent state into one fail-closed assessment.
