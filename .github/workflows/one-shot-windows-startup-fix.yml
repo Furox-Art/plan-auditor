@@ -90,7 +90,26 @@ jobs:
       - name: Build real wheel
         run: python -m build --wheel
       - name: Exercise wheel and real supervisor lifecycle
+        id: wheel_smoke
+        continue-on-error: true
         run: python tests/wheel_cli_smoke.py --wheel-dir dist
+      - name: Dump supervisor diagnostics on failure
+        if: steps.wheel_smoke.outcome != 'success'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'plan-auditor-wheel-cli-smoke\workspace\.plan-auditor'
+          Write-Host "=== runtime directory ==="
+          if (Test-Path $root) { Get-ChildItem -Force $root | Format-Table -AutoSize }
+          foreach ($name in @('supervisor-runtime.json','supervisor-assessment.json','supervisor.log','supervisor.json')) {
+            $p = Join-Path $root $name
+            Write-Host "=== $name ==="
+            if (Test-Path $p) { Get-Content -Raw $p } else { Write-Host '<missing>' }
+          }
+          Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime,Path | Format-Table -AutoSize
+      - name: Require wheel lifecycle success
+        if: steps.wheel_smoke.outcome != 'success'
+        shell: pwsh
+        run: exit 1
       - name: Commit verified fix and remove one-shot workflow
         shell: pwsh
         run: |
