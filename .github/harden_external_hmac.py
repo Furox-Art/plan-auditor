@@ -1,0 +1,493 @@
+from pathlib import Path
+
+
+def replace_once(text, old, new, label):
+    if text.count(old) != 1:
+        raise SystemExit(f"{label}: expected anchor exactly once, got {text.count(old)}")
+    return text.replace(old, new, 1)
+
+
+def replace_func(text, name, next_name, new_body):
+    start = text.index(f"def {name}(")
+    end = text.index(f"\ndef {next_name}(", start)
+    return text[:start] + new_body.rstrip() + "\n\n" + text[end + 1:]
+
+
+# ---------------- audit core ----------------
+path = Path("scripts/audit_check.py")
+text = path.read_text(encoding="utf-8")
+text = replace_once(
+    text,
+    'import zipfile\n\nPG_DIR = ".plan-auditor"\n',
+    '''import zipfile\n\ntry:\n    from scripts.integrity import (\n        EVIDENCE_HEAD_DOMAIN,\n        EVIDENCE_RECORD_DOMAIN,\n        IntegrityKeyError,\n        make_auth,\n        runtime_key,\n        verify_auth,\n    )\nexcept ImportError:  # direct ``python scripts/audit_check.py`` execution\n    from integrity import (\n        EVIDENCE_HEAD_DOMAIN,\n        EVIDENCE_RECORD_DOMAIN,\n        IntegrityKeyError,\n        make_auth,\n        runtime_key,\n        verify_auth,\n    )\n\nPG_DIR = ".plan-auditor"\nEVIDENCE_HEAD = "evidence.head.json"\n''',
+    "audit imports",
+)
+
+new_write = r'''def _evidence_hash_payload(rec):
+    return {k: v for k, v in rec.items() if k not in {"hash", "auth"}}
+
+
+def _evidence_auth_payload(rec):
+    return {k: v for k, v in rec.items() if k != "auth"}
+
+
+def _base_from_evidence_path(path):
+    return os.path.dirname(os.path.dirname(os.path.realpath(path)))
+
+
+def _record_count(path):
+    if not os.path.isfile(path):
+        return 0
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return sum(1 for line in handle if line.strip())
+    except OSError:
+        return 0
+
+
+def _evidence_head_path(base):
+    return os.path.join(base, PG_DIR, EVIDENCE_HEAD)
+
+
+def _expected_evidence_head(base, key):
+    active = evidence_path(base)
+    archives = _archive_paths(base)
+    return {
+        "format_version": 1,
+        "key_id": key.key_id,
+        "active_count": _record_count(active),
+        "active_tail": _last_record_hash(active),
+        "archive_tail": _last_record_hash(archives[-1]) if archives else None,
+    }
+
+
+def _write_evidence_head(base, key):
+    payload = _expected_evidence_head(base, key)
+    value = dict(payload)
+    value["auth"] = make_auth(key, EVIDENCE_HEAD_DOMAIN, payload)
+    path = _evidence_head_path(base)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(canonical(value) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
+def _verify_evidence_head(base, key):
+    path = _evidence_head_path(base)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False, "evidence authenticated head missing or invalid"
+    if not isinstance(value, dict):
+        return False, "evidence authenticated head is not an object"
+    auth = value.get("auth")
+    payload = {k: v for k, v in value.items() if k != "auth"}
+    if payload != _expected_evidence_head(base, key):
+        return False, "evidence authenticated head checkpoint mismatch"
+    if not verify_auth(key, EVIDENCE_HEAD_DOMAIN, payload, auth):
+        return False, "evidence authenticated head HMAC failed"
+    return True, ""
+
+
+def _write_evidence_record(path, rec, prev=None):
+    base = _base_from_evidence_path(path)
+    key = runtime_key(base)
+    previous = prev if prev is not None else _last_record_hash(path)
+    rec = dict(rec)
+    rec["prev"] = previous
+    rec["hash"] = hashlib.sha256(
+        canonical(_evidence_hash_payload(rec)).encode("utf-8")
+    ).hexdigest()
+    if key is not None:
+        rec["auth"] = make_auth(
+            key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec)
+        )
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(canonical(rec) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if key is not None and os.path.realpath(path) == os.path.realpath(evidence_path(base)):
+        _write_evidence_head(base, key)
+    return rec["hash"]'''
+text = replace_func(text, "_write_evidence_record", "maybe_rotate", new_write)
+
+new_verify = r'''def verify_chain(base):
+    path = evidence_path(base)
+    try:
+        key = runtime_key(base)
+    except IntegrityKeyError as exc:
+        return False, 0, str(exc)
+    if not os.path.isfile(path):
+        if key is not None:
+            ok, problem = _verify_evidence_head(base, key)
+            return (ok, 0, problem)
+        if os.path.isfile(_evidence_head_path(base)):
+            return False, 0, "authenticated evidence head requires HMAC key"
+        return True, 0, ""
+    prev = "GENESIS"
+    count = 0
+    with open(path, encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                return False, count, "satır %s JSON değil" % line_no
+            if rec.get("prev") != prev:
+                return False, count, "satır %s: prev zinciri kopuk" % line_no
+            actual = rec.get("hash")
+            expected = hashlib.sha256(
+                canonical(_evidence_hash_payload(rec)).encode("utf-8")
+            ).hexdigest()
+            if actual != expected:
+                return False, count, "satır %s: hash uyuşmuyor (kurcalama?)" % line_no
+            auth = rec.get("auth")
+            if key is not None:
+                if not verify_auth(
+                    key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec), auth
+                ):
+                    return False, count, "satır %s: HMAC doğrulaması başarısız" % line_no
+            elif auth is not None:
+                return False, count, "satır %s: authenticated evidence requires HMAC key" % line_no
+            prev = actual
+            count += 1
+    if key is not None:
+        ok, problem = _verify_evidence_head(base, key)
+        if not ok:
+            return False, count, problem
+    elif os.path.isfile(_evidence_head_path(base)):
+        return False, count, "authenticated evidence head requires HMAC key"
+    return True, count, ""'''
+text = replace_func(text, "verify_chain", "snapshot_sources", new_verify)
+path.write_text(text, encoding="utf-8")
+
+
+# ---------------- agent registry ----------------
+path = Path("supervisor/agents.py")
+text = path.read_text(encoding="utf-8")
+text = replace_once(
+    text,
+    "from typing import Dict, Iterator, List, Optional, Set, Tuple\n\n\nREGISTRY_FORMAT_VERSION = 2\n",
+    '''from typing import Dict, Iterator, List, Optional, Set, Tuple\n\nfrom scripts.integrity import (\n    IntegrityKeyError,\n    KeyMaterial,\n    REGISTRY_HEAD_DOMAIN,\n    REGISTRY_RECORD_DOMAIN,\n    make_auth,\n    runtime_key,\n    verify_auth,\n)\n\n\nREGISTRY_FORMAT_VERSION = 2\n''',
+    "agents imports",
+)
+text = replace_once(
+    text,
+    '''def _legacy_hash(rec: Dict) -> str:\n    # Exact v1 encoding, retained only so existing registries can be validated\n    # before the one-time migration to the chained format.\n    return hashlib.sha256(json.dumps(rec, sort_keys=True).encode("utf-8")).hexdigest()\n\n\nclass MultiAgentRegistry:\n''',
+    '''def _legacy_hash(rec: Dict) -> str:\n    # Exact v1 encoding, retained only so existing registries can be validated\n    # before the one-time migration to the chained format.\n    return hashlib.sha256(json.dumps(rec, sort_keys=True).encode("utf-8")).hexdigest()\n\n\ndef _registry_auth_payload(envelope: Dict) -> Dict:\n    return {k: v for k, v in envelope.items() if k != "auth"}\n\n\nclass MultiAgentRegistry:\n''',
+    "registry auth helper",
+)
+
+start = text.index("    def _write_head(self, seq: int, tail_hash: str) -> None:")
+end = text.index("\n    @staticmethod\n    def _apply_record", start)
+new = r'''    def _write_head(self, seq: int, tail_hash: str) -> None:
+        self._ensure_dirs()
+        payload = {
+            "format_version": REGISTRY_FORMAT_VERSION,
+            "seq": seq,
+            "hash": tail_hash,
+        }
+        value = dict(payload)
+        key = runtime_key(self.root)
+        if key is not None:
+            value["auth"] = make_auth(key, REGISTRY_HEAD_DOMAIN, payload)
+        tmp = self.head_path.with_name(self.head_path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(_canonical(value) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, self.head_path)
+
+'''
+text = text[:start] + new + text[end + 1:]
+
+insert_at = text.index("    def _refresh_from_disk(self) -> None:")
+auth_method = r'''    def _verify_registry_auth(self) -> Tuple[bool, str]:
+        try:
+            key = runtime_key(self.root)
+        except IntegrityKeyError as exc:
+            return False, str(exc)
+
+        if key is None:
+            if self.registry_path.exists():
+                try:
+                    for line in self.registry_path.read_text(encoding="utf-8").splitlines():
+                        if not line.strip():
+                            continue
+                        value = json.loads(line)
+                        if isinstance(value, dict) and value.get("auth") is not None:
+                            return False, "authenticated registry requires HMAC key"
+                except (OSError, json.JSONDecodeError):
+                    return False, "registry authentication scan failed"
+            head = self._read_head()
+            if isinstance(head, dict) and head.get("auth") is not None:
+                return False, "authenticated registry head requires HMAC key"
+            if not self.registry_path.exists() and head is not None:
+                return False, "registry head exists without records"
+            return True, ""
+
+        if not self.head_path.exists():
+            return False, "authenticated registry head missing"
+        if self.registry_path.exists():
+            try:
+                lines = self.registry_path.read_text(encoding="utf-8").splitlines()
+            except OSError as exc:
+                return False, "registry unreadable during HMAC verification: %s" % exc
+            for line_no, line in enumerate(lines, 1):
+                if not line.strip():
+                    continue
+                try:
+                    envelope = json.loads(line)
+                except json.JSONDecodeError:
+                    return False, "registry line %s is not JSON" % line_no
+                if not isinstance(envelope, dict) or not verify_auth(
+                    key,
+                    REGISTRY_RECORD_DOMAIN,
+                    _registry_auth_payload(envelope),
+                    envelope.get("auth"),
+                ):
+                    return False, "registry line %s HMAC authentication failed" % line_no
+        try:
+            head = json.loads(self.head_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False, "authenticated registry head unreadable"
+        if not isinstance(head, dict):
+            return False, "authenticated registry head malformed"
+        payload = {k: v for k, v in head.items() if k != "auth"}
+        if not verify_auth(key, REGISTRY_HEAD_DOMAIN, payload, head.get("auth")):
+            return False, "registry head HMAC authentication failed"
+        if self.registry_path.exists():
+            if payload.get("seq") != self._registry_seq or payload.get("hash") != self._registry_tail:
+                return False, "registry authenticated head checkpoint mismatch"
+        elif payload.get("seq") != 0 or payload.get("hash") != REGISTRY_GENESIS:
+            return False, "empty registry authenticated head mismatch"
+        return True, ""
+
+'''
+text = text[:insert_at] + auth_method + text[insert_at:]
+text = replace_once(
+    text,
+    '''        elif self.head_path.exists():\n            tampered = True\n            problem = "registry log missing while head checkpoint exists"\n\n        self._agents = agents\n''',
+    '''        elif self.head_path.exists():\n            # Authenticated mode uses a signed seq=0/GENESIS checkpoint even\n            # before the first registry event. HMAC validation below decides\n            # whether that empty checkpoint is trusted.\n            head = self._read_head()\n            if not (\n                isinstance(head, dict)\n                and head.get("format_version") == REGISTRY_FORMAT_VERSION\n                and head.get("seq") == 0\n                and head.get("hash") == REGISTRY_GENESIS\n            ):\n                tampered = True\n                problem = "registry log missing while head checkpoint exists"\n\n        self._agents = agents\n''',
+    "empty authenticated registry head",
+)
+text = replace_once(
+    text,
+    '''        self.registry_tampered = tampered\n        self.registry_legacy = legacy\n        self.registry_problem = problem\n\n    def _legacy_records(self) -> List[Dict]:\n''',
+    '''        self.registry_tampered = tampered\n        self.registry_legacy = legacy\n        self.registry_problem = problem\n        if not self.registry_tampered:\n            auth_ok, auth_problem = self._verify_registry_auth()\n            if not auth_ok:\n                self.registry_tampered = True\n                self.registry_problem = auth_problem\n\n    def _legacy_records(self) -> List[Dict]:\n''',
+    "registry auth verification hook",
+)
+text = replace_once(
+    text,
+    '''            envelope = {\n                "format_version": REGISTRY_FORMAT_VERSION,\n                "seq": seq,\n                "prev": prev,\n                "hash": current_hash,\n                "rec": rec,\n            }\n            with self.registry_path.open("a", encoding="utf-8") as handle:\n''',
+    '''            envelope = {\n                "format_version": REGISTRY_FORMAT_VERSION,\n                "seq": seq,\n                "prev": prev,\n                "hash": current_hash,\n                "rec": rec,\n            }\n            key = runtime_key(self.root)\n            if key is not None:\n                envelope["auth"] = make_auth(\n                    key, REGISTRY_RECORD_DOMAIN, _registry_auth_payload(envelope)\n                )\n            with self.registry_path.open("a", encoding="utf-8") as handle:\n''',
+    "registry append HMAC",
+)
+
+init_func = r'''
+
+def initialize_registry_auth(root: str | Path, key: KeyMaterial) -> None:
+    """Validate current registry state, normalize v1 to v2, and HMAC-sign it."""
+    root_path = Path(root).resolve()
+    agents_dir = root_path / ".plan-auditor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    registry_path = agents_dir / "registry.jsonl"
+    head_path = agents_dir / "registry.head.json"
+    envelopes: List[Dict] = []
+
+    if registry_path.exists():
+        raw_values: List[Dict] = []
+        for line_no, line in enumerate(
+            registry_path.read_text(encoding="utf-8", errors="strict").splitlines(), 1
+        ):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict) or not isinstance(value.get("rec"), dict):
+                raise RegistryIntegrityError("registry line %s malformed" % line_no)
+            raw_values.append(value)
+
+        v2 = all(
+            value.get("format_version") == REGISTRY_FORMAT_VERSION
+            and isinstance(value.get("seq"), int)
+            and isinstance(value.get("prev"), str)
+            for value in raw_values
+        ) if raw_values else True
+        legacy = all(
+            "format_version" not in value and "seq" not in value and "prev" not in value
+            for value in raw_values
+        ) if raw_values else False
+        if raw_values and not (v2 or legacy):
+            raise RegistryIntegrityError("mixed or unknown registry format")
+
+        seq = 0
+        prev = REGISTRY_GENESIS
+        if legacy:
+            for line_no, value in enumerate(raw_values, 1):
+                rec = value["rec"]
+                if value.get("hash") != _legacy_hash(rec):
+                    raise RegistryIntegrityError("legacy registry line %s hash mismatch" % line_no)
+                seq += 1
+                current_hash = _registry_hash(seq, prev, rec)
+                envelope = {
+                    "format_version": REGISTRY_FORMAT_VERSION,
+                    "seq": seq,
+                    "prev": prev,
+                    "hash": current_hash,
+                    "rec": rec,
+                }
+                envelopes.append(envelope)
+                prev = current_hash
+        else:
+            for line_no, value in enumerate(raw_values, 1):
+                rec = value["rec"]
+                seq += 1
+                if value.get("seq") != seq or value.get("prev") != prev:
+                    raise RegistryIntegrityError("registry line %s sequence/prev mismatch" % line_no)
+                expected = _registry_hash(seq, prev, rec)
+                if value.get("hash") != expected:
+                    raise RegistryIntegrityError("registry line %s hash mismatch" % line_no)
+                envelope = {k: v for k, v in value.items() if k != "auth"}
+                envelopes.append(envelope)
+                prev = expected
+
+            if raw_values:
+                try:
+                    existing_head = json.loads(head_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise RegistryIntegrityError(
+                        "v2 registry head missing or invalid before HMAC init"
+                    ) from exc
+                if (
+                    not isinstance(existing_head, dict)
+                    or existing_head.get("seq") != seq
+                    or existing_head.get("hash") != prev
+                ):
+                    raise RegistryIntegrityError("v2 registry head mismatch before HMAC init")
+    else:
+        seq = 0
+        prev = REGISTRY_GENESIS
+
+    for envelope in envelopes:
+        envelope["auth"] = make_auth(
+            key, REGISTRY_RECORD_DOMAIN, _registry_auth_payload(envelope)
+        )
+    if envelopes:
+        tmp = registry_path.with_name(registry_path.name + ".auth.tmp")
+        tmp.write_text("".join(_canonical(value) + "\n" for value in envelopes), encoding="utf-8")
+        os.replace(tmp, registry_path)
+    elif registry_path.exists():
+        registry_path.write_text("", encoding="utf-8")
+
+    head_payload = {
+        "format_version": REGISTRY_FORMAT_VERSION,
+        "seq": seq,
+        "hash": prev,
+    }
+    head = dict(head_payload)
+    head["auth"] = make_auth(key, REGISTRY_HEAD_DOMAIN, head_payload)
+    tmp_head = head_path.with_name(head_path.name + ".auth.tmp")
+    tmp_head.write_text(_canonical(head) + "\n", encoding="utf-8")
+    os.replace(tmp_head, head_path)
+'''
+marker = "\n\ndef _pid_alive(pid: int) -> bool:"
+if text.count(marker) != 1:
+    raise SystemExit("agent init insertion marker not found")
+text = text.replace(marker, init_func + marker, 1)
+path.write_text(text, encoding="utf-8")
+
+
+# ---------------- CLI ----------------
+path = Path("supervisor/cli.py")
+text = path.read_text(encoding="utf-8")
+text = replace_once(
+    text,
+    '''    evidence_verify = evidence_sub.add_parser("verify")\n    evidence_verify.add_argument("dir", nargs="?", default=".")\n\n    agents = sub.add_parser("agents", help="persistent multi-agent registry")\n''',
+    '''    evidence_verify = evidence_sub.add_parser("verify")\n    evidence_verify.add_argument("dir", nargs="?", default=".")\n\n    integrity = sub.add_parser("integrity", help="external-key authenticated integrity")\n    integrity_sub = integrity.add_subparsers(dest="action", required=True)\n    integrity_init = integrity_sub.add_parser("init", help="authenticate current evidence and registry")\n    integrity_init.add_argument("dir", nargs="?", default=".")\n    integrity_status = integrity_sub.add_parser("status", help="show authenticated integrity status")\n    integrity_status.add_argument("dir", nargs="?", default=".")\n\n    agents = sub.add_parser("agents", help="persistent multi-agent registry")\n''',
+    "CLI parser integrity",
+)
+func = r'''
+
+def cmd_integrity(args: argparse.Namespace) -> int:
+    from scripts.integrity import IntegrityKeyError
+    from .integrity import initialize_integrity, integrity_status
+    root = _root(args.dir)
+    if args.action == "status":
+        result = integrity_status(root)
+        _json(result)
+        if result.get("authenticated") or not result.get("configured"):
+            return 0
+        return 2
+    try:
+        result = initialize_integrity(root)
+    except (IntegrityKeyError, OSError, ValueError, json.JSONDecodeError) as exc:
+        _json({"authenticated": False, "error": str(exc)})
+        return 2
+    _json(result)
+    return 0
+'''
+anchor = "\n\ndef cmd_evidence_verify(args: argparse.Namespace) -> int:"
+if text.count(anchor) != 1:
+    raise SystemExit("CLI integrity function marker not found")
+text = text.replace(anchor, func + anchor, 1)
+text = replace_once(
+    text,
+    '''    if args.cmd == "evidence":\n        return cmd_evidence_verify(args)\n    if args.cmd == "agents":\n''',
+    '''    if args.cmd == "evidence":\n        return cmd_evidence_verify(args)\n    if args.cmd == "integrity":\n        return cmd_integrity(args)\n    if args.cmd == "agents":\n''',
+    "CLI dispatch integrity",
+)
+text = replace_once(
+    text,
+    '''    from .daemon import pid_alive, read_assessment, read_state\n    from .orchestrator import evaluate_workspace\n    from .workspace import capture_workspace\n''',
+    '''    from .daemon import pid_alive, read_assessment, read_state\n    from .integrity import integrity_status\n    from .orchestrator import evaluate_workspace\n    from .workspace import capture_workspace\n''',
+    "doctor integrity import",
+)
+text = replace_once(
+    text,
+    '''        "assessment": assessment,\n        "deterministic_core": str(_core_script()) if _core_script() else "module:scripts.audit_check",\n''',
+    '''        "assessment": assessment,\n        "integrity": integrity_status(root),\n        "deterministic_core": str(_core_script()) if _core_script() else "module:scripts.audit_check",\n''',
+    "doctor integrity output",
+)
+path.write_text(text, encoding="utf-8")
+
+
+# ---------------- threat model + changelog ----------------
+path = Path("docs/threat-model.md")
+text = path.read_text(encoding="utf-8")
+text = replace_once(
+    text,
+    '| Evidence tampering | Append-only JSONL + cross-archive anchoring (tamper-**evident**, not immutable). |',
+    '| Evidence tampering | Append-only JSONL + cross-archive anchoring; optional external-key HMAC authenticates records and signed tail checkpoints. |',
+    "threat evidence row",
+)
+text = replace_once(
+    text,
+    '| Concurrent agent file conflicts | L14 ownership registry warns or blocks overlapping writes. |',
+    '| Concurrent agent file conflicts | L14 ownership registry warns or blocks overlapping writes; external-key HMAC can authenticate the registry chain/head. |',
+    "threat registry row",
+)
+if "## External-key authenticated integrity" not in text:
+    text += '''\n\n## External-key authenticated integrity\n\nFor stronger same-user tamper resistance, set exactly one of `PLAN_AUDITOR_HMAC_KEY`\nor `PLAN_AUDITOR_HMAC_KEY_FILE`. Key files are rejected if they resolve inside the\nworkspace and must contain at least 32 bytes. Then run:\n\n```bash\nplan-auditor integrity init .\nplan-auditor integrity status .\n```\n\nInitialization is explicit: configuring a key never automatically blesses the\ncurrent unsigned state. The initializer first validates existing SHA-256 chains,\nthen HMAC-signs evidence records, archive records, the evidence tail checkpoint,\nregistry records, and the registry head; the signed integrity marker is written\nlast. Once initialized, missing/wrong key material, HMAC mismatch, tail truncation,\nor marker loss fails closed.\n\nThis strengthens workspace-file tamper detection but does **not** replace OS\nisolation. A same-user process that can also read the external HMAC key can still\nforge authenticated state; keep the key outside the workspace and outside the\nuntrusted agent's accessible environment where the platform permits it.\n'''
+path.write_text(text, encoding="utf-8")
+
+path = Path("CHANGELOG.md")
+text = path.read_text(encoding="utf-8")
+anchor = "## Unreleased\n\n"
+addition = (
+    "- **External-key authenticated integrity:** optional HMAC-SHA256 protects evidence records, "
+    "archive records, evidence tail checkpoints, agent-registry records, and registry heads using "
+    "key material supplied outside the workspace. Explicit `plan-auditor integrity init` prevents "
+    "silent trust-on-first-use, and authenticated state fails closed on missing/wrong keys or HMAC mismatch.\n"
+    "- **Anti-truncation checkpoints:** signed evidence and registry heads bind the current tail so deleting "
+    "otherwise-valid signed suffixes is detected.\n"
+)
+if addition not in text:
+    text = replace_once(text, anchor, anchor + addition, "changelog hmac")
+path.write_text(text, encoding="utf-8")
