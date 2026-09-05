@@ -24,6 +24,8 @@ from scripts.integrity import (
     verify_auth,
 )
 
+from .control_plane import ControlPlanePathError, confined_workspace_path
+
 REQUEST_FORMAT_VERSION = 1
 ACTIVATION_FORMAT_VERSION = 1
 REQUEST_NAME = "request.json"
@@ -42,17 +44,28 @@ def _sha256(value: Dict[str, Any]) -> str:
     return hashlib.sha256(_canonical(_payload(value)).encode("utf-8")).hexdigest()
 
 
+def _request_control_path(root: str | Path, name: str) -> Path:
+    try:
+        return confined_workspace_path(root, f".plan-auditor/{name}")
+    except ControlPlanePathError as exc:
+        raise ValueError(f"unsafe request control-plane path: {exc}") from exc
+
+
 def request_path(root: str | Path) -> Path:
-    return Path(root).resolve() / ".plan-auditor" / REQUEST_NAME
+    return _request_control_path(root, REQUEST_NAME)
 
 
 def activation_path(root: str | Path) -> Path:
-    return Path(root).resolve() / ".plan-auditor" / ACTIVATION_NAME
+    return _request_control_path(root, ACTIVATION_NAME)
 
 
 def _atomic_write(path: Path, value: Dict[str, Any]) -> None:
+    if path.exists() and path.is_symlink():
+        raise ValueError(f"refusing to write request metadata through symlink: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
+    if tmp.exists() and tmp.is_symlink():
+        raise ValueError(f"refusing symlinked request temp path: {tmp}")
     tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     tmp.replace(path)
 
@@ -135,6 +148,8 @@ class RequestAlignment:
 
 
 def _read_object(path: Path) -> Dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{path.name} is not a safe regular file")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} root must be an object")
@@ -205,8 +220,11 @@ def initialize_request_auth(root: str | Path, key: KeyMaterial) -> None:
 
 def verify_request_contract(root: str | Path) -> RequestStatus:
     workspace = Path(root).resolve()
-    rpath = request_path(workspace)
-    apath = activation_path(workspace)
+    try:
+        rpath = request_path(workspace)
+        apath = activation_path(workspace)
+    except ValueError as exc:
+        return RequestStatus(True, False, str(exc))
     if not rpath.exists() and not apath.exists():
         return RequestStatus(False, False, "request contract is not activated")
     if not rpath.is_file() or not apath.is_file():
@@ -308,10 +326,42 @@ def analyze_request_alignment(plans: Dict[str, Dict[str, Any]], request: Dict[st
 
 
 def auditor_state_present(root: str | Path) -> bool:
-    pg = Path(root).resolve() / ".plan-auditor"
+    """Return True only for state that proves Plan Auditor was actually activated.
+
+    A lone config/log/cache file must not turn an otherwise unused workspace into
+    a failed task.  Conversely, request/seal/evidence/plan/registry state means a
+    deleted plan must fail closed instead of degrading to ``NO_PLAN``.
+    """
+    workspace = Path(root).resolve()
+    try:
+        pg = confined_workspace_path(workspace, ".plan-auditor")
+    except ControlPlanePathError:
+        return True
     if not pg.exists():
         return False
-    try:
-        return any(pg.iterdir())
-    except OSError:
+    activating_files = (
+        REQUEST_NAME,
+        ACTIVATION_NAME,
+        "plan.json",
+        "seal.json",
+        "evidence.jsonl",
+        "integrity.json",
+    )
+    for name in activating_files:
+        path = pg / name
+        if path.exists():
+            return True
+    for dirname in ("plans", "seals"):
+        directory = pg / dirname
+        if directory.exists():
+            if directory.is_symlink():
+                return True
+            try:
+                if any(path.suffix.lower() == ".json" for path in directory.iterdir()):
+                    return True
+            except OSError:
+                return True
+    registry = pg / "agents" / "registry.jsonl"
+    if registry.exists():
         return True
+    return False

@@ -1,27 +1,34 @@
 ## Unreleased
 
-- Introduce host-owned immutable request activation and deterministic acceptance-check binding.
-- Reject active-workspace plan deletion as FAIL instead of NO_PLAN.
-- Remove automatic reseal baseline reset; request generations are immutable.
-- Require explicit dependency declarations and concrete output bindings for every multi-step edge.
-- Upgrade seals to format v4 with canonical effective dependency graphs and full runtime-config/request fingerprints.
-- Make authenticated-integrity initialization idempotent and refuse re-signing a broken initialized state.
-- Pin GitHub Actions dependencies to immutable commit SHAs.
-- Harden Windows supervisor lifecycle handling with a distinct `starting` state, owned-process startup checks, non-destructive PID probes, closed inherited handles, and retry-safe atomic runtime JSON replacement.
-- Expand permanent CI to Python 3.10–3.13 plus real wheel/supervisor lifecycle smoke tests on Ubuntu, Windows, and macOS.
+- None yet.
 
 # Changelog
+
+## v2.2.0 — 2026-09-05
+
+- **Physical control-plane confinement:** existing `.plan-auditor`, plan, seal, request/activation and policy path components are inspected with `lstat`; symlinked parents/leaves cannot redefine the workspace trust root.
+- **Policy read confinement:** `load_config` authorizes only symlink-free workspace policy directories before policy loading; a resolved external symlink target is rejected before its files are read.
+- **Sealed scope freeze:** automatic monotonic strengthening remains available for extra deterministic checks/prerequisites, but new steps, requirements, tools, coverage assignments or declared outputs now require a new host-approved request generation.
+- **Safe v3→v4 migration:** `plan-auditor-migrate-seal` provides a representation-only migration path for exact full-contract v3 seals. It requires authoritative request alignment and refuses any plan-scope change.
+- **Seal self-consistency:** v3/v4 seals validate their contract hash and criteria count on load/save before being trusted or authenticated.
+- **Streaming evidence verification:** JSONL verification, hashing and HMAC migration retain one record/chunk at a time instead of reading complete evidence/archive files into RAM.
+- **PID-aware registry locking:** registry transaction locks carry PID + random token; live owners are never evicted because of age alone, and stale cleanup requires a provably dead PID plus unchanged lock identity.
+- **Activation semantics:** a lone `.plan-auditor/supervisor.json`, log or cache no longer makes a plans-free workspace look like an activated failed task; request/seal/evidence/plan/integrity/registry state still prevents deletion from degrading to `NO_PLAN`.
+- **Single audit freeze implementation:** the unused `workspace.audit.lock` implementation was removed; `audit.freeze.lock`/`final_audit_session` remains the sole workspace final-audit freeze path.
+- **Version identity:** source/package version advances to `2.2.0`, preventing post-v2.1.0 hardening from producing a different wheel under the already-published `2.1.0` version.
+- **Trust-boundary documentation:** deliberate same-OS-user interference is explicitly treated as an OS isolation problem; separate account/container/VM deployment is required when that attacker is in scope.
+- **Regression coverage:** new tests cover plan/policy symlink escapes, scope expansion, config-only activation, PID-aware registry locks, streaming evidence verification and exact legacy-seal migration.
 
 ## v2.1.0 — 2026-09-05
 
 - **Aggregate multi-plan completion:** the integrated supervisor now enumerates the default plan and every safe `.plan-auditor/plans/<name>.json` plan. Global PASS requires every active plan to PASS; a passing default plan cannot hide an unfinished named plan, and a named-only workspace is no longer misclassified as `NO_PLAN`.
 - **Explicit requirement coverage:** Supervisor Mode requires explicit requirements and deterministic `covers` links from steps. Every `must`/`should` requirement must be covered; omitted user requirements, unknown coverage IDs and duplicate requirement contracts block plan approval/PASS.
-- **Full-contract format-v3 seals:** seals now bind task, requirements, required tools, step identity/order/title, requirement coverage, dependencies, required outputs, output contracts/checks, step checks, and the supervisor profile/mode/tier/policy fingerprint. Existing criteria may only be strengthened.
-- **Authenticated seals:** external-key HMAC integrity now authenticates plan seals in addition to evidence, checkpoints, registry state and the integrity marker. Seal tampering or missing/wrong key material fails closed after integrity initialization.
+- **Full-contract format-v3 seals:** seals bind task, requirements, required tools, step identity/order/title, requirement coverage, dependencies, required outputs, output contracts/checks, step checks, and the supervisor profile/mode/tier/policy fingerprint. Existing criteria may only be strengthened.
+- **Authenticated seals:** external-key HMAC integrity authenticates plan seals in addition to evidence, checkpoints, registry state and the integrity marker. Seal tampering or missing/wrong key material fails closed after integrity initialization.
 - **Configuration/policy downgrade prevention:** malformed supervisor configuration and configured policy files are explicit blocking errors. Profile/mode/tier and policy-file fingerprint are part of the sealed environment contract, so a post-seal downgrade is detected.
 - **Evidence concurrency and rotation continuity:** evidence append/rotation uses a cross-process exclusive lock, active evidence links the latest archive tail, and failed-attempt limits are counted across archived plus active evidence instead of resetting after rotation.
-- **Complete evidence verification:** `plan-auditor evidence verify` now checks both active evidence and anchored archives.
-- **Safe plan addressing:** named plan IDs are validated as safe basenames and cannot traverse outside `.plan-auditor/plans`.
+- **Complete evidence verification:** `plan-auditor evidence verify` checks both active evidence and anchored archives.
+- **Safe plan addressing:** named plan IDs are validated as safe basenames and cannot use lexical `..` traversal outside `.plan-auditor/plans`.
 - **Canonical multi-agent ownership:** agent IDs are safe basenames and ownership paths are canonical workspace-relative paths before conflict comparison, preventing alternate spellings from evading `parallel-strict` overlap detection.
 - **Transactional full-scope rollback:** default snapshots carry a manifest with file type, mode and hash; rollback restores that state and removes files introduced after the snapshot. Explicit snapshot lists remain intentionally scoped.
 - **Stronger fresh-audit fingerprint:** workspace fingerprints include directories, file type and mode/executable bits in addition to contents and symlink targets.
@@ -32,7 +39,7 @@
 - **Three-platform packaging and release gates:** real wheels are built and installed in clean virtual environments on Ubuntu, Windows and macOS. Smoke tests exercise multi-plan discovery, DAG/output dependencies, requirement coverage, full-contract seals, external-key HMAC, integrated audit, doctor, and evidence/integrity CLI paths. PyPI publishing waits for the same three-platform wheel preflight.
 - **Versioning:** development version advanced to `2.1.0` so the hardened source cannot be confused with the already-published `2.0.2` artifact.
 - **Regression hardening:** dedicated failure-injection tests cover named-plan bypasses, seal-contract weakening, environment downgrade, HMAC seal tampering, invalid config/policies, path traversal, evidence races/rotation/retry history, active-log tampering, rollback cleanup, executable-bit fingerprint changes, canonical agent conflicts, missing tools and bounded verifier output.
-- **Observational final audit:** a full audit now fails if a verifier mutates product workspace content, type, or mode. Verification must prove pre-existing implementation state rather than creating the claimed result during the audit itself.
+- **Observational final audit:** a full audit fails if a verifier mutates product workspace content, type, or mode. Verification must prove pre-existing implementation state rather than creating the claimed result during the audit itself.
 
 ## v2.0.2 — 2026-09-05
 

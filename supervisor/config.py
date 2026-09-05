@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List
 
+from .control_plane import ControlPlanePathError, confined_workspace_path
+
 
 class Profile(str, Enum):
     LIGHT = "light"
@@ -62,7 +64,7 @@ _VALID_MODES = {"serial", "parallel-warn", "parallel-strict"}
 
 def _relative_safe(value: str) -> bool:
     path = Path(value)
-    return bool(value) and not path.is_absolute() and ".." not in path.parts
+    return bool(value) and not path.is_absolute() and ".." not in path.parts and "." not in path.parts
 
 
 def _int_value(data: Dict, key: str, default: int, minimum: int, maximum: int,
@@ -77,27 +79,64 @@ def _int_value(data: Dict, key: str, default: int, minimum: int, maximum: int,
     return raw
 
 
+def _safe_path(root: Path, relative: str, errors: List[str], label: str) -> Path | None:
+    try:
+        return confined_workspace_path(root, relative)
+    except ControlPlanePathError as exc:
+        errors.append(f"{label}: {exc}")
+        return None
+
+
+def _register_policy_roots(workspace: Path, policies_dir: str, errors: List[str]) -> None:
+    # Import lazily to keep config parsing independent from policy compilation.
+    from .policies import register_policy_workspace
+
+    for error in register_policy_workspace(workspace, policies_dir):
+        if error not in errors:
+            errors.append(error)
+
+
 def load_config(workspace_root: str = ".") -> Config:
     """Load and strictly validate ``.plan-auditor/supervisor.json``.
 
     Conservative defaults remain available for diagnostics, but every malformed
-    value is retained in ``errors`` and therefore blocks the integrated gate.
-    No string/float-to-integer coercion is performed at the trust boundary.
+    or physically unsafe value is retained in ``errors`` and therefore blocks
+    the integrated gate. Existing control-plane path components may not be
+    symlinks; a symlinked parent cannot redefine the workspace trust root.
     """
-    path = Path(workspace_root) / ".plan-auditor" / CONFIG_FILENAME
-    if not path.exists():
-        return Config(workspace_root=workspace_root)
-
+    workspace = Path(workspace_root).expanduser().resolve()
     errors: List[str] = []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+    config_path = _safe_path(
+        workspace, f".plan-auditor/{CONFIG_FILENAME}", errors, "supervisor config path"
+    )
+    if config_path is None:
+        _register_policy_roots(workspace, "policies", errors)
+        return Config(workspace_root=str(workspace), errors=errors)
+    if not config_path.exists():
+        _safe_path(workspace, ".plan-auditor/policies", errors, "implicit policy directory")
+        _register_policy_roots(workspace, "policies", errors)
+        return Config(workspace_root=str(workspace), errors=errors)
+    if not config_path.is_file():
+        _register_policy_roots(workspace, "policies", errors)
         return Config(
-            workspace_root=workspace_root,
-            errors=[f"invalid supervisor config: {type(exc).__name__}: {exc}"],
+            workspace_root=str(workspace),
+            errors=errors + ["supervisor config path is not a regular file"],
+        )
+
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        _register_policy_roots(workspace, "policies", errors)
+        return Config(
+            workspace_root=str(workspace),
+            errors=errors + [f"invalid supervisor config: {type(exc).__name__}: {exc}"],
         )
     if not isinstance(data, dict):
-        return Config(workspace_root=workspace_root, errors=["supervisor config root must be an object"])
+        _register_policy_roots(workspace, "policies", errors)
+        return Config(
+            workspace_root=str(workspace),
+            errors=errors + ["supervisor config root must be an object"],
+        )
 
     raw_profile = data.get("profile", "standard")
     if not isinstance(raw_profile, str):
@@ -148,6 +187,13 @@ def load_config(workspace_root: str = ".") -> Config:
     else:
         policies_dir = raw_policies_dir
 
+    if _safe_path(workspace, policies_dir, errors, "configured policy directory") is None:
+        # Do not leave an unsafe path available to downstream loaders even
+        # though the config is already blocking.
+        policies_dir = ".plan-auditor/__invalid_policies__"
+    _safe_path(workspace, ".plan-auditor/policies", errors, "implicit policy directory")
+    _register_policy_roots(workspace, policies_dir, errors)
+
     raw_extra = data.get("extra", {})
     if not isinstance(raw_extra, dict):
         extra: Dict = {}
@@ -159,7 +205,7 @@ def load_config(workspace_root: str = ".") -> Config:
         profile=profile,
         tier=tier,
         mode=mode,
-        workspace_root=workspace_root,
+        workspace_root=str(workspace),
         pg_dir=pg_dir,
         max_attempts=_int_value(data, "max_attempts", 3, 1, 100, errors),
         owner_timeout_sec=_int_value(data, "owner_timeout_sec", 300, 1, 86_400, errors),
