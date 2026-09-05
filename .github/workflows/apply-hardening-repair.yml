@@ -33,6 +33,6 @@ jobs:
         run: |
           git config user.name "plan-auditor-hardening-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/audit_check.py tests/wheel_cli_smoke.py tests/test_audit_check.py
+          git add scripts/audit_check.py tests/wheel_cli_smoke.py tests/test_audit_check.py tests/test_full_contract_hardening.py
           git commit -m "Make full audits observational across multi-plan workspaces"
           git push origin HEAD:hardening/full-verification-contract
