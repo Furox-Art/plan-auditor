@@ -1,4 +1,4 @@
-"""L5 — deterministic structural plan verifier."""
+"""L5 — deterministic structural and classical symbolic plan verifier."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,6 +15,7 @@ from scripts.plan_graph import (
 )
 
 from .coverage import CoverageResult, analyze_coverage
+from .formal_planning import FormalPlanningResult, analyze_formal_contract
 
 
 @dataclass
@@ -41,6 +42,7 @@ class PlanAnalysis:
     topological_order: List[int] = field(default_factory=list)
     dependencies: Dict[int, List[int]] = field(default_factory=dict)
     coverage: Optional[CoverageResult] = None
+    formal_planning: Optional[FormalPlanningResult] = None
 
     @property
     def weakest_verification(self) -> Optional[str]:
@@ -170,10 +172,27 @@ def verify_plan(plan: Dict, *, require_coverage: bool = False) -> PlanAnalysis:
         if not analysis.coverage.valid:
             analysis.rationale.append("explicit requirement coverage is incomplete or invalid")
 
+    formal = analyze_formal_contract(plan)
+    if formal.enabled:
+        analysis.formal_planning = formal
+        if formal.verdict == "REJECT":
+            analysis.contradictions.extend(formal.errors)
+            analysis.rationale.append("sealed classical planning contract is unreachable or invalid")
+        elif formal.verdict == "UNKNOWN":
+            analysis.rationale.append("sealed classical planning search did not reach a conclusive result")
+        else:
+            analysis.rationale.append(
+                "sealed classical planning contract is reachable in dependency-respecting order"
+            )
+
     if not graph_valid:
+        analysis.verdict = "REJECT"
+    elif formal.enabled and formal.verdict == "REJECT":
         analysis.verdict = "REJECT"
     elif analysis.coverage is not None and not analysis.coverage.valid:
         analysis.verdict = "REJECT" if require_coverage else "REVISE"
+    elif formal.enabled and formal.verdict == "UNKNOWN":
+        analysis.verdict = "REVISE"
     elif analysis.step_analyses and weak_steps == len(analysis.step_analyses):
         analysis.verdict = "REJECT"
         analysis.rationale.append("no step has behavioral verification")
