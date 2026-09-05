@@ -165,6 +165,6 @@ def test_integrated_gate_fails_on_registry_tamper(tmp_path: Path):
     assert report["outcome"] == "FAIL"
     assert report["agents"]["registry_valid"] is False
     assert any(
-        item["rule_id"] == "AGENT_REGISTRY_VALID"
+        item["rule"] == "AGENT_REGISTRY_VALID"
         for item in report["gate"]["policy_findings"]
     )
