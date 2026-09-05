@@ -22,6 +22,45 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _AUDIT_FREEZE = "audit.freeze.lock"
 
 
+def _safe_pid_alive(pid: int) -> bool:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            process_query_limited_information = 0x1000
+            still_active = 259
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            open_process = kernel32.OpenProcess
+            open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            open_process.restype = wintypes.HANDLE
+            get_exit_code = kernel32.GetExitCodeProcess
+            get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            get_exit_code.restype = wintypes.BOOL
+            close_handle = kernel32.CloseHandle
+            close_handle.argtypes = [wintypes.HANDLE]
+            close_handle.restype = wintypes.BOOL
+            handle = open_process(process_query_limited_information, False, pid)
+            if not handle:
+                return False
+            try:
+                code = wintypes.DWORD()
+                return bool(get_exit_code(handle, ctypes.byref(code))) and code.value == still_active
+            finally:
+                close_handle(handle)
+        except (AttributeError, OSError, ValueError):
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
 def validate_agent_id(value: str) -> str:
     if not isinstance(value, str) or value in {".", ".."} or not _ID_RE.fullmatch(value):
         raise ValueError("agent_id must be a safe basename using only [A-Za-z0-9._-]")
@@ -64,7 +103,7 @@ def _audit_freeze_active(registry: MultiAgentRegistry) -> bool:
         pid = value.get("pid") if isinstance(value, dict) else None
     except (OSError, json.JSONDecodeError):
         return True
-    if isinstance(pid, int) and pid > 0 and not _agents._pid_alive(pid):
+    if isinstance(pid, int) and pid > 0 and not _safe_pid_alive(pid):
         try:
             path.unlink()
             return False
@@ -169,7 +208,6 @@ def install_agent_hardening() -> None:
         return
 
     original_write_lock = MultiAgentRegistry.write_lock
-    original_is_lock_stale = MultiAgentRegistry.is_lock_stale
 
     def verify_registry_chain(self: MultiAgentRegistry) -> bool:
         with self._write_lock():
@@ -319,7 +357,15 @@ def install_agent_hardening() -> None:
 
     def is_lock_stale(self: MultiAgentRegistry, agent_id: str) -> bool:
         validate_agent_id(agent_id)
-        return original_is_lock_stale(self, agent_id)
+        lock_path = self.agents_dir / f"{agent_id}.lock"
+        if not lock_path.exists():
+            return False
+        try:
+            data = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return True
+        pid = data.get("pid")
+        return not (isinstance(pid, int) and not isinstance(pid, bool) and _safe_pid_alive(pid))
 
     MultiAgentRegistry.verify_registry_chain = verify_registry_chain
     MultiAgentRegistry.register = register
