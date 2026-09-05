@@ -7,6 +7,8 @@
 - Upgrade seals to format v4 with canonical effective dependency graphs and full runtime-config/request fingerprints.
 - Make authenticated-integrity initialization idempotent and refuse re-signing a broken initialized state.
 - Pin GitHub Actions dependencies to immutable commit SHAs.
+- Harden Windows supervisor lifecycle handling with a distinct `starting` state, owned-process startup checks, non-destructive PID probes, closed inherited handles, and retry-safe atomic runtime JSON replacement.
+- Expand permanent CI to Python 3.10–3.13 plus real wheel/supervisor lifecycle smoke tests on Ubuntu, Windows, and macOS.
 
 # Changelog
 
