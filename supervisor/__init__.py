@@ -1,8 +1,9 @@
 """Plan Auditor — AI Agent Verification Supervisor."""
-__version__ = "2.0.2"
+__version__ = "2.1.0"
 
 from .adversarial import run_adversarial_review
 from .agents import Agent, MultiAgentRegistry
+from .agents_hardening import install_agent_hardening
 from .config import Config, Profile, Tier, load_config
 from .evidence import verify_anchor_chain
 from .gate import CompletionGate, CompletionReport
@@ -14,6 +15,8 @@ from .sealing import Seal, check_monotonic, seal_plan
 from .watchdog import Watchdog
 from .workspace import WorkspaceState, capture_workspace
 from .cli import main
+
+install_agent_hardening()
 
 __all__ = [
     "Config", "Profile", "Tier", "load_config",

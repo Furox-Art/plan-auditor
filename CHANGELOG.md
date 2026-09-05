@@ -1,42 +1,48 @@
 # Changelog
 
-## Unreleased
+## v2.1.0 — Unreleased
 
-- **Cross-platform wheel/CLI packaging gate:** GitHub Actions now builds a real wheel on Ubuntu, Windows, and macOS, installs that wheel into a fresh virtual environment outside the source checkout, verifies packaged runtime files and the console entry point, then runs `plan-auditor --help`, schema validation, plan verify/seal, integrated audit, doctor PASS, task/agent inspection, and evidence verification through the installed CLI.
-- **Dependency DAG enforcement:** plan steps now have deterministic prerequisite semantics. Legacy plans are sequential by default; explicit `depends_on` graphs reject cycles/self/unknown edges and each explicit edge must bind to a concrete upstream `requires_outputs` contract. Required outputs are rechecked before dependent steps, producer outputs are independently verified, blocked prerequisites do not consume retry budget, and full-audit fingerprints/evidence bind graph order plus output contracts.
-- **External-key authenticated integrity:** optional HMAC-SHA256 protects evidence records, archive records, evidence tail checkpoints, agent-registry records, and registry heads using key material supplied outside the workspace. Explicit `plan-auditor integrity init` prevents silent trust-on-first-use, and authenticated state fails closed on missing/wrong keys or HMAC mismatch.
-- **Anti-truncation checkpoints:** signed evidence and registry heads bind the current tail so deleting otherwise-valid signed suffixes is detected.
-- **Command execution hardening:** behavioral checks now execute without a shell by default. Structured `argv` is supported and preferred; legacy `cmd` strings are parsed into argument vectors, while shell interpretation requires explicit `shell: true` opt-in. Internal `git ls-files` snapshot discovery also runs without a shell.
-- **Agent registry chain hardening:** L14 registry records now use `format_version + seq + prev + hash`, with a persisted head checkpoint for tail-truncation detection. Middle deletion, reordering, record mutation, missing logs with a surviving head, and head mismatches are rejected. Legacy v1 per-record-hash registries are validated and atomically migrated before further writes.
-- **Fail-closed registry gating:** integrated completion policy now blocks PASS when the multi-agent registry chain/head integrity check fails. Mutating registry operations refuse to proceed after an integrity failure.
-- **Cross-process registry serialization:** registry migration and append operations use an exclusive write lock so independent agent processes cannot race sequence/previous-hash assignment.
-- **Regression coverage:** tests verify structured argv execution, inert shell metacharacters by default, explicit shell opt-in, rejection of `shell=true` combined with `argv`, registry sequence/previous-hash continuity, mutation/deletion/reordering/tail-truncation detection, legacy migration, and integrated gate failure on registry tampering.
+- **Aggregate multi-plan completion:** the integrated supervisor now enumerates the default plan and every safe `.plan-auditor/plans/<name>.json` plan. Global PASS requires every active plan to PASS; a passing default plan cannot hide an unfinished named plan, and a named-only workspace is no longer misclassified as `NO_PLAN`.
+- **Explicit requirement coverage:** Supervisor Mode requires explicit requirements and deterministic `covers` links from steps. Every `must`/`should` requirement must be covered; omitted user requirements, unknown coverage IDs and duplicate requirement contracts block plan approval/PASS.
+- **Full-contract format-v3 seals:** seals now bind task, requirements, required tools, step identity/order/title, requirement coverage, dependencies, required outputs, output contracts/checks, step checks, and the supervisor profile/mode/tier/policy fingerprint. Existing criteria may only be strengthened.
+- **Authenticated seals:** external-key HMAC integrity now authenticates plan seals in addition to evidence, checkpoints, registry state and the integrity marker. Seal tampering or missing/wrong key material fails closed after integrity initialization.
+- **Configuration/policy downgrade prevention:** malformed supervisor configuration and configured policy files are explicit blocking errors. Profile/mode/tier and policy-file fingerprint are part of the sealed environment contract, so a post-seal downgrade is detected.
+- **Evidence concurrency and rotation continuity:** evidence append/rotation uses a cross-process exclusive lock, active evidence links the latest archive tail, and failed-attempt limits are counted across archived plus active evidence instead of resetting after rotation.
+- **Complete evidence verification:** `plan-auditor evidence verify` now checks both active evidence and anchored archives.
+- **Safe plan addressing:** named plan IDs are validated as safe basenames and cannot traverse outside `.plan-auditor/plans`.
+- **Canonical multi-agent ownership:** agent IDs are safe basenames and ownership paths are canonical workspace-relative paths before conflict comparison, preventing alternate spellings from evading `parallel-strict` overlap detection.
+- **Transactional full-scope rollback:** default snapshots carry a manifest with file type, mode and hash; rollback restores that state and removes files introduced after the snapshot. Explicit snapshot lists remain intentionally scoped.
+- **Stronger fresh-audit fingerprint:** workspace fingerprints include directories, file type and mode/executable bits in addition to contents and symlink targets.
+- **Internal shell removal:** workspace/world-model and watchdog Git probes use structured argv with `shell=False`; behavioral plan checks still require explicit `shell: true` for shell interpretation.
+- **Bounded verifier output:** command output is spooled/bounded instead of being captured without limit in memory; output-limit overflow fails the check.
+- **Doctor fail-closed exit codes:** `doctor` recomputes a current assessment and returns nonzero on FAIL/UNKNOWN instead of hiding a failed assessment behind exit 0.
+- **Authoritative hook unification:** `hooks/gate_hook.py` is the single integrated gate. `scripts/stop_gate.py` remains only as an exit-code-2 compatibility adapter and delegates to the same multi-plan full-contract assessment instead of trusting `status=verified`.
+- **Three-platform packaging and release gates:** real wheels are built and installed in clean virtual environments on Ubuntu, Windows and macOS. Smoke tests exercise multi-plan discovery, DAG/output dependencies, requirement coverage, full-contract seals, external-key HMAC, integrated audit, doctor, and evidence/integrity CLI paths. PyPI publishing waits for the same three-platform wheel preflight.
+- **Versioning:** development version advanced to `2.1.0` so the hardened source cannot be confused with the already-published `2.0.2` artifact.
+- **Regression hardening:** dedicated failure-injection tests cover named-plan bypasses, seal-contract weakening, environment downgrade, HMAC seal tampering, invalid config/policies, path traversal, evidence races/rotation/retry history, active-log tampering, rollback cleanup, executable-bit fingerprint changes, canonical agent conflicts, missing tools and bounded verifier output.
 
 ## v2.0.2 — 2026-09-05
 
 - **Integrated supervisor pipeline:** new `supervisor/orchestrator.py` wires plan validation, requirements, workspace state, policies, sealing, deterministic evidence, adversarial review, completion gating, lifecycle state, and multi-agent state into one fail-closed assessment.
 - **Real hook enforcement:** `hooks/gate_hook.py` no longer trusts `status=verified` or fabricated integrity flags; PASS requires a valid seal and matching fresh full-audit evidence.
-- **Deterministic audit freshness:** full audits now record SHA-256 fingerprints of the verification contract and workspace contents. Any post-audit content change invalidates completion without relying on filesystem mtimes.
-- **Cross-archive evidence anchoring:** rotations write archive anchors and L11 verifies both internal JSONL hash chains and links between archives.
+- **Deterministic audit freshness:** full audits record SHA-256 fingerprints of the verification contract and workspace contents instead of relying on filesystem mtimes.
+- **Cross-archive evidence anchoring:** rotations write archive anchors and L11 verifies internal JSONL hash chains and links between archives.
 - **Persistent multi-agent state:** ownership and heartbeat updates are written to the shared registry; separate processes see the same state, and `parallel-strict` rejects overlapping file claims.
 - **Adversarial gate integration:** high/critical L12 findings with no deterministic follow-up prevent PASS and produce UNKNOWN instead of being ignored.
-- **User policy loading:** deterministic JSON/TOML policies now load from configured policy directories.
+- **User policy loading:** deterministic JSON/TOML policies load from configured policy directories.
 - **Workspace safety:** file checks and rollback are path-confined; workspace observation is read-only and uses `shutil.which()` instead of shell redirections that could create files.
-- **Daemon integration:** the background supervisor now persists an integrated assessment and final gate outcome on every observation cycle.
-- **Regression coverage:** integration-hardening tests cover stale `verified` labels, fingerprints, archive anchors, cross-process ownership, strict conflicts, policy loading, and read-only workspace observation.
+- **Daemon integration:** the background supervisor persists an integrated assessment and final gate outcome on every observation cycle.
 
 ## v1.1.0 — 2026-09-03
 
-- **Portable skill paths:** `SKILL.md` no longer hardcodes an install path; agents resolve `scripts/audit_check.py` relative to the skill directory. The package now drops into any Agent-Skills tool (Command Code, Claude Code, Codex CLI, Cursor, Grok Build, OpenCode).
-- **Hard attempt cap:** `run` refuses to execute a step that already failed `MAX_ATTEMPTS` (3) times — evidence-based, agent can't grind past it. `--force` overrides explicitly.
-- **Multi-plan support:** `--plan <name>` operates on `.plan-auditor/plans/<name>.json`; the default remains `plan.json`. Evidence records are scoped per plan; `stop_gate.py` checks all active plans.
-- **Snapshot / rollback:** `snapshot` archives the files listed in the plan's optional `snapshot` field (falls back to `git ls-files`) into a zip; `rollback` restores the latest (`--to` to pick one). Both actions are recorded in the evidence chain.
-- **Evidence rotation:** logs over 2 MB are moved to `.plan-auditor/archive/` automatically; the chain restarts cleanly.
-- **Test suite:** 25 unit tests covering schema, checks, chain/tamper, caps, multi-plan, rotation, snapshot/rollback.
+- **Portable skill paths:** `SKILL.md` resolves auditor scripts relative to the skill directory.
+- **Hard attempt cap:** `run` refuses a step after the configured failed-attempt cap unless explicitly forced.
+- **Multi-plan core support:** `--plan <name>` operates on `.plan-auditor/plans/<name>.json`; evidence is scoped per plan.
+- **Snapshot / rollback:** snapshot and rollback support were introduced and recorded in evidence.
+- **Evidence rotation:** large evidence logs rotate into `.plan-auditor/archive/`.
 
 ## v1.0.0 — 2026-09-03
 
-- Initial release: strict plan + independent auditor Agent Skill.
-- `plan.json` schema with machine-checkable `verify` checks (`run`, `exec`, `file_exists`, `regex`, `pytest`).
-- Deterministic auditor: fresh-shell execution, append-only SHA-256 hash-chained evidence log, tamper detection (exit 2), full-audit final gate.
-- Mandatory behavioral check per step; recovery-loop rules; self-audit CI gate (GitHub Actions); Command Code Stop-hook enforcement gate.
+- Initial strict plan + independent auditor Agent Skill.
+- Machine-checkable `verify` checks (`run`, `exec`, `file_exists`, `regex`, `pytest`).
+- Deterministic fresh execution, append-only SHA-256 evidence, tamper detection, and full-audit final gate.

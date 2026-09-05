@@ -34,10 +34,15 @@ class Config:
     rotate_bytes: int = 2_000_000
     policies_dir: str = "policies"
     extra: Dict = field(default_factory=dict)
+    errors: List[str] = field(default_factory=list)
 
     @property
     def pg_path(self) -> Path:
         return Path(self.workspace_root) / self.pg_dir
+
+    @property
+    def valid(self) -> bool:
+        return not self.errors
 
     def active_layers(self) -> List[str]:
         if self.profile == Profile.LIGHT:
@@ -55,45 +60,87 @@ CONFIG_FILENAME = "supervisor.json"
 _VALID_MODES = {"serial", "parallel-warn", "parallel-strict"}
 
 
-def _profile(value) -> Profile:
-    try:
-        return Profile(str(value).lower())
-    except ValueError:
-        return Profile.STANDARD
+def _relative_safe(value: str) -> bool:
+    path = Path(value)
+    return not path.is_absolute() and ".." not in path.parts
 
 
-def _tier(value) -> Tier:
+def _int_value(data: Dict, key: str, default: int, minimum: int, maximum: int,
+               errors: List[str]) -> int:
+    raw = data.get(key, default)
     try:
-        return Tier(int(value))
+        value = int(raw)
     except (TypeError, ValueError):
-        return Tier.NO_LLM
+        errors.append(f"{key} must be an integer")
+        return default
+    if not minimum <= value <= maximum:
+        errors.append(f"{key} must be between {minimum} and {maximum}")
+        return default
+    return value
 
 
 def load_config(workspace_root: str = ".") -> Config:
-    """Load ``<root>/.plan-auditor/supervisor.json`` conservatively."""
+    """Load ``<root>/.plan-auditor/supervisor.json`` and retain validation errors.
+
+    Runtime values fall back to conservative defaults so diagnostics can still
+    be produced, but the integrated completion gate treats any ``errors`` as a
+    blocking configuration failure instead of silently accepting malformed or
+    downgraded configuration.
+    """
     path = Path(workspace_root) / ".plan-auditor" / CONFIG_FILENAME
     if not path.exists():
         return Config(workspace_root=workspace_root)
+
+    errors: List[str] = []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return Config(workspace_root=workspace_root)
+    except (json.JSONDecodeError, OSError) as exc:
+        return Config(
+            workspace_root=workspace_root,
+            errors=[f"invalid supervisor config: {type(exc).__name__}: {exc}"],
+        )
     if not isinstance(data, dict):
-        return Config(workspace_root=workspace_root)
+        return Config(workspace_root=workspace_root, errors=["supervisor config root must be an object"])
+
+    raw_profile = str(data.get("profile", "standard")).lower()
+    try:
+        profile = Profile(raw_profile)
+    except ValueError:
+        profile = Profile.STANDARD
+        errors.append(f"invalid profile: {raw_profile!r}")
+
+    try:
+        tier = Tier(int(data.get("tier", 1)))
+    except (TypeError, ValueError):
+        tier = Tier.NO_LLM
+        errors.append(f"invalid tier: {data.get('tier')!r}")
 
     mode = str(data.get("mode", "serial"))
     if mode not in _VALID_MODES:
+        errors.append(f"invalid mode: {mode!r}")
         mode = "serial"
+
+    pg_dir = str(data.get("pg_dir", ".plan-auditor"))
+    if pg_dir != ".plan-auditor":
+        errors.append("pg_dir is fixed to '.plan-auditor' in supervisor mode")
+        pg_dir = ".plan-auditor"
+
+    policies_dir = str(data.get("policies_dir", "policies"))
+    if not policies_dir or not _relative_safe(policies_dir):
+        errors.append("policies_dir must be a non-empty relative path inside the workspace")
+        policies_dir = "policies"
+
     return Config(
-        profile=_profile(data.get("profile", "standard")),
-        tier=_tier(data.get("tier", 1)),
+        profile=profile,
+        tier=tier,
         mode=mode,
         workspace_root=workspace_root,
-        pg_dir=str(data.get("pg_dir", ".plan-auditor")),
-        max_attempts=int(data.get("max_attempts", 3)),
-        owner_timeout_sec=int(data.get("owner_timeout_sec", 300)),
-        heartbeat_sec=int(data.get("heartbeat_sec", 30)),
-        rotate_bytes=int(data.get("rotate_bytes", 2_000_000)),
-        policies_dir=str(data.get("policies_dir", "policies")),
+        pg_dir=pg_dir,
+        max_attempts=_int_value(data, "max_attempts", 3, 1, 100, errors),
+        owner_timeout_sec=_int_value(data, "owner_timeout_sec", 300, 1, 86_400, errors),
+        heartbeat_sec=_int_value(data, "heartbeat_sec", 30, 1, 3_600, errors),
+        rotate_bytes=_int_value(data, "rotate_bytes", 2_000_000, 1_024, 1_000_000_000, errors),
+        policies_dir=policies_dir,
         extra=data.get("extra", {}) if isinstance(data.get("extra", {}), dict) else {},
+        errors=errors,
     )

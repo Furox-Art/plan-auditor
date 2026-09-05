@@ -1,8 +1,4 @@
-"""L2 — side-effect-free workspace / world model.
-
-Captures repository, filesystem, language and tool state without mutating the
-workspace being observed.
-"""
+"""L2 — side-effect-free workspace / world model."""
 from __future__ import annotations
 
 import json
@@ -11,7 +7,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Sequence
 
 
 @dataclass
@@ -52,15 +48,15 @@ class WorkspaceState:
         }
 
 
-def _run(cmd: str, cwd: str, timeout: int = 30) -> Optional[str]:
+def _run(argv: Sequence[str], cwd: str, timeout: int = 30) -> Optional[str]:
     try:
         process = subprocess.run(
-            cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+            list(argv), shell=False, cwd=cwd, capture_output=True, text=True, timeout=timeout,
         )
         if process.returncode != 0:
             return None
         return process.stdout.strip()
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
         return None
 
 
@@ -80,10 +76,9 @@ def _detect_language(root: str) -> Optional[str]:
 
 
 def _detect_tools(_root: str) -> Dict[str, bool]:
-    """Detect executables without shell redirections or workspace writes."""
     tools = [
         "git", "python", "python3", "node", "npm", "cargo", "go",
-        "pytest", "make", "docker", "gcc", "clang",
+        "pytest", "make", "docker", "gcc", "clang", "java", "dotnet",
     ]
     return {tool: shutil.which(tool) is not None for tool in tools}
 
@@ -103,16 +98,15 @@ def _inventory_files(root: Path) -> Set[str]:
 
 
 def capture_workspace(root: str) -> WorkspaceState:
-    """Capture a point-in-time, read-only snapshot of the workspace."""
     root_path = Path(root).resolve()
     state = WorkspaceState(repository_root=str(root_path))
 
     git_dir = root_path / ".git"
     if git_dir.exists():
         state.git.is_repo = True
-        state.git.branch = _run("git rev-parse --abbrev-ref HEAD", str(root_path))
-        state.git.head_sha = _run("git rev-parse HEAD", str(root_path))
-        status = _run("git status --porcelain", str(root_path)) or ""
+        state.git.branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], str(root_path))
+        state.git.head_sha = _run(["git", "rev-parse", "HEAD"], str(root_path))
+        status = _run(["git", "status", "--porcelain"], str(root_path)) or ""
         for raw_line in status.splitlines():
             if not raw_line:
                 continue

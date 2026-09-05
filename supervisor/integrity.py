@@ -14,12 +14,7 @@ from scripts.integrity import (
 
 
 def initialize_integrity(workspace: str | Path) -> Dict[str, Any]:
-    """Authenticate current evidence/registry state with an external HMAC key.
-
-    Initialization is explicit so merely configuring a key can never bless an
-    arbitrary unsigned state. Existing hash chains are validated first; only
-    then are HMAC tags/checkpoints added. The signed marker is written last.
-    """
+    """Authenticate current evidence, registry, and seal state with an external HMAC key."""
     root = Path(workspace).resolve()
     key = load_key(root, required=True)
     assert key is not None
@@ -29,9 +24,11 @@ def initialize_integrity(workspace: str | Path) -> Dict[str, Any]:
 
     from .agents import initialize_registry_auth
     from .evidence import initialize_evidence_auth
+    from .sealing import initialize_seal_auth
 
     initialize_evidence_auth(root, key)
     initialize_registry_auth(root, key)
+    initialize_seal_auth(root, key)
     write_marker(root, key)
 
     status = integrity_status(root)
@@ -84,12 +81,33 @@ def integrity_status(workspace: str | Path) -> Dict[str, Any]:
     from scripts import audit_check as core
     from .agents import MultiAgentRegistry
     from .evidence import verify_anchor_chain
+    from .plans import all_plan_refs, seal_path
+    from .sealing import SealIntegrityError, load_seal
 
     evidence_ok, evidence_count, evidence_problem = core.verify_chain(str(root))
     archive = verify_anchor_chain(str(root / ".plan-auditor" / "archive"))
     registry = MultiAgentRegistry(str(root))
     registry_ok = registry.verify_registry_chain()
-    authenticated = evidence_ok and archive.get("anchored") is True and registry_ok
+
+    seal_errors: list[str] = []
+    seal_count = 0
+    for ref in all_plan_refs(root):
+        try:
+            seal = load_seal(str(seal_path(root, ref.name)))
+        except SealIntegrityError as exc:
+            seal_errors.append(f"{ref.name}: {exc}")
+            continue
+        if seal is None:
+            seal_errors.append(f"{ref.name}: authenticated plan has no seal")
+        else:
+            seal_count += 1
+
+    authenticated = (
+        evidence_ok
+        and archive.get("anchored") is True
+        and registry_ok
+        and not seal_errors
+    )
     return {
         "authenticated": authenticated,
         "configured": True,
@@ -105,6 +123,11 @@ def integrity_status(workspace: str | Path) -> Dict[str, Any]:
         "registry": {
             "valid": registry_ok,
             "problem": registry.registry_problem,
+        },
+        "seals": {
+            "valid": not seal_errors,
+            "count": seal_count,
+            "errors": seal_errors,
         },
         "problem": "" if authenticated else "authenticated integrity verification failed",
     }

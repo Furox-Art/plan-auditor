@@ -37,22 +37,24 @@ def _build_parser() -> argparse.ArgumentParser:
     task_inspect.add_argument("task_id")
     task_inspect.add_argument("--dir", default=".")
 
-    plan = sub.add_parser("plan", help="verify, seal, or inspect a plan")
+    plan = sub.add_parser("plan", help="verify, seal, or inspect plans")
     plan_sub = plan.add_subparsers(dest="action", required=True)
     plan_verify = plan_sub.add_parser("verify")
     plan_verify.add_argument("dir", nargs="?", default=".")
+    plan_verify.add_argument("--plan", help="named plan; omitted = every active plan")
     plan_verify.add_argument("--reseal", action="store_true")
     plan_inspect = plan_sub.add_parser("inspect")
     plan_inspect.add_argument("dir", nargs="?", default=".")
+    plan_inspect.add_argument("--plan", help="named plan; omitted = default or all if no default")
 
-    evidence = sub.add_parser("evidence", help="verify cross-archive evidence anchors")
+    evidence = sub.add_parser("evidence", help="verify active and archived evidence")
     evidence_sub = evidence.add_subparsers(dest="action", required=True)
     evidence_verify = evidence_sub.add_parser("verify")
     evidence_verify.add_argument("dir", nargs="?", default=".")
 
     integrity = sub.add_parser("integrity", help="external-key authenticated integrity")
     integrity_sub = integrity.add_subparsers(dest="action", required=True)
-    integrity_init = integrity_sub.add_parser("init", help="authenticate current evidence and registry")
+    integrity_init = integrity_sub.add_parser("init", help="authenticate current evidence, registry and seals")
     integrity_init.add_argument("dir", nargs="?", default=".")
     integrity_status = integrity_sub.add_parser("status", help="show authenticated integrity status")
     integrity_status.add_argument("dir", nargs="?", default=".")
@@ -79,8 +81,9 @@ def _build_parser() -> argparse.ArgumentParser:
     agents_release.add_argument("agent_id")
     agents_release.add_argument("--dir", default=".")
 
-    audit = sub.add_parser("audit", help="run the integrated final gate")
+    audit = sub.add_parser("audit", help="run integrated final gate across active plans")
     audit.add_argument("dir", nargs="?", default=".")
+    audit.add_argument("--plan", help="execute one named plan audit; overall gate still checks all active plans")
     doctor = sub.add_parser("doctor", help="environment and supervisor capability report")
     doctor.add_argument("dir", nargs="?", default=".")
 
@@ -96,20 +99,6 @@ def _root(value: str) -> Path:
 
 def _json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
-
-
-def _plan_path(root: Path) -> Path:
-    return root / ".plan-auditor" / "plan.json"
-
-
-def _load_plan(root: Path) -> dict[str, Any]:
-    path = _plan_path(root)
-    if not path.exists():
-        raise FileNotFoundError(f"plan.json not found: {path}")
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError("plan.json root must be an object")
-    return value
 
 
 def _persist_supervisor_config(root: Path, profile: str, mode: str) -> None:
@@ -243,91 +232,181 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     root = _root(args.dir)
     ws = capture_workspace(str(root))
     state = read_state(root)
-    assessment = read_assessment(root) or evaluate_workspace(str(root))
-    _json({
+    assessment = evaluate_workspace(str(root))
+    payload = {
         "workspace": ws.to_dict(),
         "supervisor": {
             "running": bool(state and state.get("state") == "running" and pid_alive(state.get("pid"))),
             "state": state,
+            "persisted_assessment": read_assessment(root),
         },
         "assessment": assessment,
         "integrity": integrity_status(root),
         "deterministic_core": str(_core_script()) if _core_script() else "module:scripts.audit_check",
-    })
-    return 0
+    }
+    _json(payload)
+    outcome = assessment.get("outcome")
+    if outcome in {"PASS", "NO_PLAN"}:
+        return 0
+    return 3 if outcome == "UNKNOWN" else 2
 
 
-def _existing_seal_plan(root: Path):
-    from .sealing import load_seal
-    seal = load_seal(str(root / ".plan-auditor" / "seal.json"))
-    return seal, seal.as_plan() if seal else None
+def _selected_refs(root: Path, name: str | None = None):
+    from .plans import all_plan_refs, plan_path, validate_plan_name, PlanRef
+    if name:
+        safe = validate_plan_name(name)
+        path = plan_path(root, safe)
+        if not path.is_file():
+            raise FileNotFoundError(f"plan not found: {path}")
+        return [PlanRef(safe, path)]
+    refs = all_plan_refs(root)
+    if not refs:
+        raise FileNotFoundError(f"no active plans under {root / '.plan-auditor'}")
+    return refs
+
+
+def _policy_errors(root: Path, cfg) -> list[str]:
+    from .policies import load_policy_rules_from_dir
+    errors: list[str] = []
+    seen: set[Path] = set()
+    for directory in (root / cfg.policies_dir, root / ".plan-auditor" / "policies"):
+        resolved = directory.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        load_policy_rules_from_dir(str(resolved), errors=errors)
+    return errors
 
 
 def cmd_plan_verify(args: argparse.Namespace) -> int:
+    from scripts import audit_check as core
+    from .config import load_config
+    from .contracts import environment_contract
+    from .plans import load_plan_ref, seal_path
     from .plan_verifier import verify_plan
-    from .sealing import check_monotonic, save_seal, seal_plan
+    from .sealing import (
+        SealIntegrityError, check_environment, check_monotonic,
+        load_seal, save_seal, seal_plan,
+    )
+
     root = _root(args.dir)
     try:
-        plan = _load_plan(root)
-    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        refs = _selected_refs(root, args.plan)
+    except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    analysis = verify_plan(plan)
-    output = {
-        "verdict": analysis.verdict,
-        "rationale": analysis.rationale,
-        "weakest_verification": analysis.weakest_verification,
-        "graph_errors": analysis.graph_errors,
-        "topological_order": analysis.topological_order,
-        "dependencies": analysis.dependencies,
-        "steps": [
-            {
-                "id": s.step_id,
-                "behavioral": s.has_behavioral_verification,
-                "dependencies": s.dependencies,
-                "required_outputs": s.required_outputs,
-                "declared_outputs": s.declared_outputs,
-                "risks": s.risks,
-            }
-            for s in analysis.step_analyses
-        ],
-    }
-    if analysis.verdict != "PASS":
-        _json(output)
-        return 1
-    seal, before = _existing_seal_plan(root)
-    if seal and seal.format_version < 2 and not args.reseal:
-        output["seal"] = {"status": "legacy", "error": "legacy seal requires --reseal"}
-        _json(output)
+    cfg = load_config(str(root))
+    policy_errors = _policy_errors(root, cfg)
+    if cfg.errors or policy_errors:
+        _json({"outcome": "FAIL", "configuration_errors": cfg.errors, "policy_errors": policy_errors})
         return 2
-    if seal and before and not args.reseal:
-        monotonic = check_monotonic(before, plan)
-        if not monotonic.ok:
-            output["seal"] = {"status": "rejected", "violations": monotonic.violations,
-                              "improvements": monotonic.improvements}
-            _json(output)
-            return 2
-    plan_id = str(plan.get("id") or plan.get("task") or "default")
-    new_seal = seal_plan(plan, plan_id, _dt.datetime.now(_dt.timezone.utc).isoformat())
-    save_seal(new_seal, str(root / ".plan-auditor" / "seal.json"))
-    output["seal"] = {"status": "sealed", "format_version": new_seal.format_version,
-                      "criteria_count": new_seal.criteria_count, "plan_hash": new_seal.plan_hash}
-    _json(output)
-    return 0
+    env = environment_contract(root, cfg)
+    outputs: dict[str, Any] = {}
+    final_rc = 0
+
+    for ref in refs:
+        try:
+            plan = load_plan_ref(ref)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            outputs[ref.key] = {"verdict": "REJECT", "error": str(exc)}
+            final_rc = max(final_rc, 1)
+            continue
+        schema_errors = core.validate_plan(plan)
+        analysis = verify_plan(plan, require_coverage=True)
+        output = {
+            "verdict": analysis.verdict,
+            "schema_errors": schema_errors,
+            "rationale": analysis.rationale,
+            "weakest_verification": analysis.weakest_verification,
+            "graph_errors": analysis.graph_errors,
+            "coverage": analysis.coverage.as_dict() if analysis.coverage else None,
+            "topological_order": analysis.topological_order,
+            "dependencies": analysis.dependencies,
+            "steps": [
+                {
+                    "id": s.step_id,
+                    "behavioral": s.has_behavioral_verification,
+                    "dependencies": s.dependencies,
+                    "required_outputs": s.required_outputs,
+                    "declared_outputs": s.declared_outputs,
+                    "risks": s.risks,
+                }
+                for s in analysis.step_analyses
+            ],
+        }
+        if schema_errors or analysis.verdict != "PASS":
+            outputs[ref.key] = output
+            final_rc = max(final_rc, 1)
+            continue
+
+        target = seal_path(root, ref.name)
+        try:
+            existing = load_seal(str(target))
+        except SealIntegrityError as exc:
+            output["seal"] = {"status": "invalid", "error": str(exc)}
+            outputs[ref.key] = output
+            final_rc = max(final_rc, 2)
+            continue
+        if existing and existing.format_version < 3 and not args.reseal:
+            output["seal"] = {"status": "legacy", "error": "legacy seal requires --reseal"}
+            outputs[ref.key] = output
+            final_rc = max(final_rc, 2)
+            continue
+        if existing and not args.reseal:
+            monotonic = check_monotonic(existing.as_plan(), plan)
+            env_check = check_environment(existing, env)
+            if not monotonic.ok or not env_check.ok:
+                output["seal"] = {
+                    "status": "rejected",
+                    "violations": monotonic.violations + env_check.violations,
+                    "improvements": monotonic.improvements,
+                }
+                outputs[ref.key] = output
+                final_rc = max(final_rc, 2)
+                continue
+
+        plan_id = str(plan.get("id") or plan.get("task") or ref.key)
+        new_seal = seal_plan(
+            plan, plan_id, _dt.datetime.now(_dt.timezone.utc).isoformat(), environment=env
+        )
+        try:
+            save_seal(new_seal, str(target))
+        except SealIntegrityError as exc:
+            output["seal"] = {"status": "error", "error": str(exc)}
+            outputs[ref.key] = output
+            final_rc = max(final_rc, 2)
+            continue
+        output["seal"] = {
+            "status": "sealed", "format_version": new_seal.format_version,
+            "criteria_count": new_seal.criteria_count, "plan_hash": new_seal.plan_hash,
+            "environment": env,
+        }
+        outputs[ref.key] = output
+
+    _json({"plans": outputs, "outcome": "PASS" if final_rc == 0 else "FAIL"})
+    return final_rc
 
 
 def cmd_plan_inspect(args: argparse.Namespace) -> int:
+    from .plans import load_plan_ref
+    root = _root(args.dir)
     try:
-        _json(_load_plan(_root(args.dir)))
-        return 0
-    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        refs = _selected_refs(root, args.plan)
+        payload = {ref.key: load_plan_ref(ref) for ref in refs}
+    except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    if len(payload) == 1:
+        _json(next(iter(payload.values())))
+    else:
+        _json(payload)
+    return 0
 
 
 def cmd_integrity(args: argparse.Namespace) -> int:
     from scripts.integrity import IntegrityKeyError
     from .integrity import initialize_integrity, integrity_status
+    from .sealing import SealIntegrityError
     root = _root(args.dir)
     if args.action == "status":
         result = integrity_status(root)
@@ -337,7 +416,7 @@ def cmd_integrity(args: argparse.Namespace) -> int:
         return 2
     try:
         result = initialize_integrity(root)
-    except (IntegrityKeyError, OSError, ValueError, json.JSONDecodeError) as exc:
+    except (IntegrityKeyError, SealIntegrityError, OSError, ValueError, json.JSONDecodeError) as exc:
         _json({"authenticated": False, "error": str(exc)})
         return 2
     _json(result)
@@ -345,71 +424,87 @@ def cmd_integrity(args: argparse.Namespace) -> int:
 
 
 def cmd_evidence_verify(args: argparse.Namespace) -> int:
+    from scripts import audit_check as core
     from .evidence import verify_anchor_chain
     root = _root(args.dir)
-    result = verify_anchor_chain(str(root / ".plan-auditor" / "archive"))
+    active_ok, count, active_problem = core.verify_chain(str(root))
+    archive = verify_anchor_chain(str(root / ".plan-auditor" / "archive"))
+    result = {
+        "valid": active_ok and archive.get("anchored") is True,
+        "active": {"valid": active_ok, "records": count, "problem": active_problem},
+        "archive": archive,
+    }
     _json(result)
-    return 0 if result["anchored"] else 2
+    return 0 if result["valid"] else 2
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
     from .config import load_config
-    from .evidence import verify_anchor_chain
+    from .contracts import environment_contract
     from .orchestrator import evaluate_workspace
-    from .sealing import check_monotonic, load_seal
+    from .plans import load_plan_ref, seal_path
+    from .sealing import SealIntegrityError, check_environment, check_monotonic, load_seal
 
     root = _root(args.dir)
     try:
-        plan = _load_plan(root)
-    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        refs = _selected_refs(root, args.plan)
+    except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    seal = load_seal(str(root / ".plan-auditor" / "seal.json"))
-    if not seal:
-        print("ERROR: plan is not sealed; run 'plan-auditor plan verify <dir>' first", file=sys.stderr)
-        return 2
-    if seal.format_version < 2:
-        print("ERROR: legacy seal requires explicit reseal", file=sys.stderr)
-        return 2
-    monotonic = check_monotonic(seal.as_plan(), plan)
-    if not monotonic.ok:
-        _json({"outcome": "FAIL", "reason": "sealed plan criteria changed", "violations": monotonic.violations})
-        return 2
-    archive_dir = root / ".plan-auditor" / "archive"
-    anchors = verify_anchor_chain(str(archive_dir))
-    if not anchors["anchored"]:
-        _json({"outcome": "FAIL", "reason": "archive anchor chain broken", **anchors})
-        return 2
-
-    rc = _forward_core(["audit", str(root)])
-    if rc != 0:
-        return rc
-
     cfg = load_config(str(root))
+    policy_errors = _policy_errors(root, cfg)
+    if cfg.errors or policy_errors:
+        _json({"outcome": "FAIL", "configuration_errors": cfg.errors, "policy_errors": policy_errors})
+        return 2
+    env = environment_contract(root, cfg)
+
+    for ref in refs:
+        try:
+            plan = load_plan_ref(ref)
+            seal = load_seal(str(seal_path(root, ref.name)))
+        except (OSError, ValueError, json.JSONDecodeError, SealIntegrityError) as exc:
+            _json({"outcome": "FAIL", "plan": ref.key, "reason": str(exc)})
+            return 2
+        if not seal:
+            _json({"outcome": "FAIL", "plan": ref.key, "reason": "plan is not sealed; run plan verify first"})
+            return 2
+        if seal.format_version < 3:
+            _json({"outcome": "FAIL", "plan": ref.key, "reason": "legacy seal requires explicit reseal"})
+            return 2
+        monotonic = check_monotonic(seal.as_plan(), plan)
+        env_check = check_environment(seal, env)
+        if not monotonic.ok or not env_check.ok:
+            _json({
+                "outcome": "FAIL", "plan": ref.key,
+                "reason": "sealed verification contract changed",
+                "violations": monotonic.violations + env_check.violations,
+            })
+            return 2
+
+    for ref in refs:
+        argv = ["audit", str(root)]
+        if ref.name != "default":
+            argv += ["--plan", ref.name]
+        rc = _forward_core(argv)
+        if rc != 0:
+            return rc
+
     assessment = evaluate_workspace(str(root), profile=cfg.profile.value, mode=cfg.mode)
     if assessment.get("outcome") != "PASS":
         _json(assessment)
         return 3 if assessment.get("outcome") == "UNKNOWN" else 2
     _json({
         "outcome": "PASS",
-        "deterministic_core": "fresh audit PASS",
-        "seal": "unchanged",
-        "archive_chain": "anchored",
+        "plans": {name: item.get("outcome") for name, item in assessment.get("plans", {}).items()},
+        "deterministic_core": "fresh audit PASS for every active plan",
         "gate": assessment.get("gate"),
     })
     return 0
 
 
 def _iter_plan_files(root: Path) -> list[Path]:
-    pg = root / ".plan-auditor"
-    files: list[Path] = []
-    default = pg / "plan.json"
-    if default.exists():
-        files.append(default)
-    plans = pg / "plans"
-    if plans.is_dir():
-        files.extend(sorted(plans.glob("*.json")))
-    return files
+    from .plans import all_plan_refs
+    return [ref.path for ref in all_plan_refs(root)]
 
 
 def _task_summary(path: Path) -> dict[str, Any]:
@@ -447,35 +542,39 @@ def cmd_task_inspect(args: argparse.Namespace) -> int:
 
 
 def cmd_agents(args: argparse.Namespace) -> int:
-    from .agents import Agent, MultiAgentRegistry
+    from .agents import Agent, MultiAgentRegistry, RegistryIntegrityError
     from .config import load_config
     root = _root(args.dir)
     cfg = load_config(str(root))
     registry = MultiAgentRegistry(str(root), owner_timeout=cfg.owner_timeout_sec)
-
-    if args.action == "list":
-        _json({"agents": [a.to_dict() for a in registry.active_agents()],
-               "count": len(registry.active_agents()),
-               "registry": str(registry.registry_path),
-               "registry_valid": registry.verify_registry_chain()})
-        return 0
-    if args.action == "register":
-        registry.register(Agent(args.agent_id, args.task_id, args.plan_id, pid=args.pid))
-        _json({"registered": args.agent_id})
-        return 0
-    if args.action == "heartbeat":
-        registry.heartbeat(args.agent_id, action=args.action_text)
-        _json({"heartbeat": args.agent_id})
-        return 0
-    if args.action == "claim":
-        ok, conflicts = registry.claim_files(args.agent_id, set(args.files), mode=cfg.mode)
-        _json({"claimed": ok, "agent": args.agent_id,
-               "conflicts": [c.__dict__ for c in conflicts], "mode": cfg.mode})
-        return 0 if ok else 2
-    if args.action == "release":
-        registry.unregister(args.agent_id)
-        _json({"released": args.agent_id})
-        return 0
+    try:
+        if args.action == "list":
+            active = registry.active_agents()
+            valid = registry.verify_registry_chain()
+            _json({"agents": [a.to_dict() for a in active], "count": len(active),
+                   "registry": str(registry.registry_path), "registry_valid": valid,
+                   "problem": registry.registry_problem})
+            return 0 if valid else 2
+        if args.action == "register":
+            registry.register(Agent(args.agent_id, args.task_id, args.plan_id, pid=args.pid))
+            _json({"registered": args.agent_id})
+            return 0
+        if args.action == "heartbeat":
+            registry.heartbeat(args.agent_id, action=args.action_text)
+            _json({"heartbeat": args.agent_id})
+            return 0
+        if args.action == "claim":
+            ok, conflicts = registry.claim_files(args.agent_id, set(args.files), mode=cfg.mode)
+            _json({"claimed": ok, "agent": args.agent_id,
+                   "conflicts": [c.__dict__ for c in conflicts], "mode": cfg.mode})
+            return 0 if ok else 2
+        if args.action == "release":
+            registry.unregister(args.agent_id)
+            _json({"released": args.agent_id})
+            return 0
+    except (RegistryIntegrityError, ValueError) as exc:
+        _json({"error": str(exc), "registry_valid": False})
+        return 2
     return 1
 
 

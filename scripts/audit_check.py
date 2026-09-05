@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Deterministic Plan Auditor core.
 
-The core never trusts an agent's narrative. It executes concrete checks, keeps
-append-only SHA-256 evidence, limits retries, supports multi-plan operation and
-snapshot/rollback, anchors evidence rotations, and binds every full audit to a
-deterministic plan/workspace fingerprint.
+The core never trusts an agent narrative. It executes concrete checks, keeps a
+cross-archive append-only evidence chain, limits retries across rotations,
+supports safe multi-plan addressing and transactional snapshots, and binds full
+audits to deterministic plan/workspace fingerprints.
 
 Exit codes: 0 pass, 1 verification failure, 2 evidence-integrity failure.
 """
@@ -17,9 +17,13 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
+import tempfile
+import time
 import zipfile
+from contextlib import contextmanager
 
 try:
     from scripts.integrity import (
@@ -30,7 +34,7 @@ try:
         runtime_key,
         verify_auth,
     )
-except ImportError:  # direct ``python scripts/audit_check.py`` execution
+except ImportError:
     from integrity import (
         EVIDENCE_HEAD_DOMAIN,
         EVIDENCE_RECORD_DOMAIN,
@@ -49,7 +53,7 @@ try:
         topological_order,
         validate_output_links,
     )
-except ImportError:  # direct ``python scripts/audit_check.py`` execution
+except ImportError:
     from plan_graph import (
         PlanGraphError,
         effective_dependencies,
@@ -65,6 +69,11 @@ CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
 MAX_ATTEMPTS = 3
 ROTATE_BYTES = 2_000_000
 SNAPSHOT_DIR = "snapshots"
+MAX_OUTPUT_BYTES = 2_000_000
+EVIDENCE_LOCK_TIMEOUT = 10.0
+EVIDENCE_LOCK_STALE = 60.0
+SNAPSHOT_MANIFEST = "__plan_auditor_manifest__.json"
+_PLAN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _FINGERPRINT_SKIP_DIRS = {".git", PG_DIR, "__pycache__", ".pytest_cache"}
 
 
@@ -72,12 +81,22 @@ def canonical(obj):
     return json.dumps(obj, sort_keys=True, ensure_ascii=False)
 
 
+def validate_plan_name(name):
+    if name in (None, "", "default"):
+        return None
+    value = str(name)
+    if value in {".", ".."} or not _PLAN_NAME_RE.fullmatch(value) or "/" in value or "\\" in value:
+        raise ValueError("geçersiz plan adı; yalnız [A-Za-z0-9._-] ve güvenli basename kullanılabilir")
+    return value
+
+
 def plan_contract_fingerprint(plan):
     """Hash the immutable verification contract, ignoring runtime status."""
     contract = {
-        "contract_version": 2,
+        "contract_version": 3,
         "task": plan.get("task"),
         "requirements": plan.get("requirements"),
+        "required_tools": plan.get("required_tools", []),
         "steps": [
             {
                 "id": step.get("id"),
@@ -85,6 +104,7 @@ def plan_contract_fingerprint(plan):
                 "depends_on": step.get("depends_on"),
                 "requires_outputs": step.get("requires_outputs", []),
                 "outputs": step.get("outputs", []),
+                "covers": step.get("covers", []),
                 "verify": step.get("verify", []),
             }
             for step in plan.get("steps", [])
@@ -95,31 +115,37 @@ def plan_contract_fingerprint(plan):
 
 
 def workspace_fingerprint(base):
-    """Content hash of product/source state outside auditor/git/cache metadata.
+    """Content/type/mode hash of workspace product state.
 
-    File mtimes are deliberately ignored: they are not stable across processes,
-    filesystems, checkouts, or fast consecutive writes. Symlinks are hashed as
-    links (target text), never followed outside the workspace.
+    Auditor/git/cache metadata and mtimes are excluded. Symlinks are hashed as
+    links and never followed. Directory entries are included so empty-directory
+    and executable/permission changes invalidate a fresh audit.
     """
     root = os.path.realpath(base)
     digest = hashlib.sha256()
     entries = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = sorted(d for d in dirnames if d not in _FINGERPRINT_SKIP_DIRS)
+        for dirname in dirnames:
+            path = os.path.join(dirpath, dirname)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            entries.append((rel, path, "dir"))
         for filename in sorted(filenames):
             path = os.path.join(dirpath, filename)
             rel = os.path.relpath(path, root).replace(os.sep, "/")
-            entries.append((rel, path))
+            entries.append((rel, path, "file"))
 
-    for rel, path in sorted(entries):
+    for rel, path, hint in sorted(entries):
         digest.update(b"PATH\0")
         digest.update(rel.encode("utf-8", errors="surrogateescape"))
         digest.update(b"\0")
         try:
-            if os.path.islink(path):
+            info = os.lstat(path)
+            digest.update(("MODE:%o\0" % stat.S_IMODE(info.st_mode)).encode("ascii"))
+            if stat.S_ISLNK(info.st_mode):
                 digest.update(b"LINK\0")
                 digest.update(os.readlink(path).encode("utf-8", errors="surrogateescape"))
-            elif os.path.isfile(path):
+            elif stat.S_ISREG(info.st_mode):
                 digest.update(b"FILE\0")
                 with open(path, "rb") as handle:
                     while True:
@@ -127,6 +153,8 @@ def workspace_fingerprint(base):
                         if not chunk:
                             break
                         digest.update(chunk)
+            elif stat.S_ISDIR(info.st_mode) or hint == "dir":
+                digest.update(b"DIR\0")
             else:
                 digest.update(b"OTHER\0")
         except OSError as exc:
@@ -139,13 +167,18 @@ def workspace_fingerprint(base):
 # ---------------------------------------------------------------- plan io
 
 def plan_path(base, name=None):
-    if name:
-        return os.path.join(base, PG_DIR, "plans", name + ".json")
+    safe = validate_plan_name(name)
+    if safe:
+        root = os.path.realpath(os.path.join(base, PG_DIR, "plans"))
+        target = os.path.realpath(os.path.join(root, safe + ".json"))
+        if os.path.commonpath([root, target]) != root:
+            raise ValueError("plan yolu .plan-auditor/plans dışına çıkıyor")
+        return target
     return os.path.join(base, PG_DIR, "plan.json")
 
 
 def plan_key(name=None):
-    return name if name else "default"
+    return validate_plan_name(name) or "default"
 
 
 def all_plan_paths(base):
@@ -156,13 +189,22 @@ def all_plan_paths(base):
     plans_dir = os.path.join(base, PG_DIR, "plans")
     if os.path.isdir(plans_dir):
         for filename in sorted(os.listdir(plans_dir)):
-            if filename.endswith(".json"):
-                paths.append((filename[:-5], os.path.join(plans_dir, filename)))
+            if not filename.endswith(".json"):
+                continue
+            stem = filename[:-5]
+            try:
+                validate_plan_name(stem)
+            except ValueError:
+                continue
+            paths.append((stem, os.path.join(plans_dir, filename)))
     return paths
 
 
 def load_plan(base, name=None):
-    path = plan_path(base, name)
+    try:
+        path = plan_path(base, name)
+    except ValueError as exc:
+        sys.exit("HATA: %s" % exc)
     if not os.path.isfile(path):
         where = path if not name else "%s (--plan %s)" % (path, name)
         sys.exit("HATA: plan yok: %s" % where)
@@ -176,6 +218,8 @@ def save_plan(base, plan, name=None):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as handle:
         json.dump(plan, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)
 
 
@@ -195,21 +239,24 @@ def validate_plan(data):
             cmd = check.get("cmd")
             argv = check.get("argv")
             has_cmd = isinstance(cmd, str) and bool(cmd.strip())
-            has_argv = (
-                isinstance(argv, list) and bool(argv)
-                and all(isinstance(arg, str) and bool(arg) for arg in argv)
+            has_argv = isinstance(argv, list) and bool(argv) and all(
+                isinstance(arg, str) and bool(arg) for arg in argv
             )
             if not (has_cmd or has_argv):
-                errs.append(
-                    "%s: %s kontrolü boş olmayan 'cmd' string veya 'argv' listesi ister"
-                    % (label, kind)
-                )
+                errs.append("%s: %s kontrolü boş olmayan 'cmd' string veya 'argv' listesi ister" % (label, kind))
             if "argv" in check and not has_argv:
                 errs.append("%s: %s argv boş olmayan string listesi olmalı" % (label, kind))
             if "shell" in check and not isinstance(check.get("shell"), bool):
                 errs.append("%s: %s shell boolean olmalı" % (label, kind))
             if check.get("shell") is True and has_argv:
                 errs.append("%s: %s shell=true ile argv birlikte kullanılamaz" % (label, kind))
+            if "max_output_bytes" in check:
+                try:
+                    value = int(check["max_output_bytes"])
+                    if value < 1024 or value > 50_000_000:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errs.append("%s: max_output_bytes 1024..50000000 arası int olmalı" % label)
 
     if not isinstance(data, dict):
         return ["plan kökü bir obje olmalı"]
@@ -219,6 +266,34 @@ def validate_plan(data):
         errs.append("created: ISO zaman damgası olmalı")
     if "snapshot" in data and not isinstance(data["snapshot"], list):
         errs.append("snapshot: dosya yolu listesi olmalı (opsiyonel)")
+    if "required_tools" in data and (
+        not isinstance(data["required_tools"], list)
+        or any(not isinstance(item, str) or not item.strip() for item in data["required_tools"])
+    ):
+        errs.append("required_tools: boş olmayan string listesi olmalı")
+    if "requirements" in data:
+        if not isinstance(data["requirements"], list) or not data["requirements"]:
+            errs.append("requirements: verildiyse boş olmayan liste olmalı")
+        else:
+            seen_req = set()
+            for index, req in enumerate(data["requirements"], 1):
+                if isinstance(req, str):
+                    continue
+                if not isinstance(req, dict):
+                    errs.append("requirement %s obje veya string olmalı" % index)
+                    continue
+                rid = req.get("id")
+                if not isinstance(rid, str) or not rid.strip():
+                    errs.append("requirement %s id ister" % index)
+                elif rid in seen_req:
+                    errs.append("requirement id tekrarlı: %s" % rid)
+                else:
+                    seen_req.add(rid)
+                if not isinstance(req.get("description"), str) or not req.get("description", "").strip():
+                    errs.append("requirement %s description ister" % (rid or index))
+                if str(req.get("priority", "must")).lower() not in {"must", "should", "may"}:
+                    errs.append("requirement %s priority must/should/may olmalı" % (rid or index))
+
     steps = data.get("steps")
     if not isinstance(steps, list) or not steps:
         errs.append("steps: boş olmayan liste olmalı")
@@ -237,20 +312,19 @@ def validate_plan(data):
         seen.add(sid)
         if not isinstance(step.get("title"), str) or not step["title"].strip():
             errs.append("adım %s: title boş olamaz" % sid)
+        if "covers" in step and (
+            not isinstance(step.get("covers"), list)
+            or any(not isinstance(item, str) or not item.strip() for item in step.get("covers", []))
+        ):
+            errs.append("adım %s: covers string listesi olmalı" % sid)
 
         checks = step.get("verify")
         if not isinstance(checks, list) or not checks:
             errs.append("adım %s: verify boş olamaz" % sid)
         else:
-            behavioral = [
-                check for check in checks
-                if isinstance(check, dict) and check.get("type") in ("run", "pytest", "exec")
-            ]
+            behavioral = [check for check in checks if isinstance(check, dict) and check.get("type") in ("run", "pytest", "exec")]
             if not behavioral:
-                errs.append(
-                    "adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest/exec) zorunlu — "
-                    "yalnızca file_exists/regex ile adım doğrulanamaz" % sid
-                )
+                errs.append("adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest/exec) zorunlu — yalnızca file_exists/regex ile adım doğrulanamaz" % sid)
             for check in checks:
                 validate_check(check, sid, "adım %s" % sid)
 
@@ -276,6 +350,7 @@ def validate_plan(data):
             errs.append(message)
     return errs
 
+
 def norm_check(check):
     if check["type"] == "pytest":
         return {
@@ -284,17 +359,14 @@ def norm_check(check):
             "expect_exit": 0,
         }
     if check["type"] == "exec":
-        normalized = {
-            "type": "run",
-            "expect_exit": check.get("expect_exit", 0),
-        }
+        normalized = {"type": "run", "expect_exit": check.get("expect_exit", 0)}
         if "argv" in check:
             normalized["argv"] = list(check["argv"])
         else:
             normalized["cmd"] = check["cmd"]
         if check.get("shell") is True:
             normalized["shell"] = True
-        for key in ("timeout", "output_regex"):
+        for key in ("timeout", "output_regex", "max_output_bytes"):
             if key in check:
                 normalized[key] = check[key]
         return normalized
@@ -304,6 +376,8 @@ def norm_check(check):
 # ---------------------------------------------------------------- confinement / checks
 
 def _safe_path(base, relative):
+    if not isinstance(relative, str) or not relative:
+        raise ValueError("path boş olmayan string olmalı")
     root = os.path.realpath(base)
     target = os.path.realpath(os.path.join(root, relative))
     try:
@@ -315,35 +389,60 @@ def _safe_path(base, relative):
     return target
 
 
-def _command_spec(check):
-    """Return ``(command, use_shell)`` with shell disabled by default.
+def _legacy_split(cmd):
+    try:
+        argv = shlex.split(cmd, posix=(os.name != "nt"))
+    except ValueError as exc:
+        raise ValueError("cmd ayrıştırılamadı: %s" % exc) from exc
+    if os.name == "nt":
+        argv = [arg[1:-1] if len(arg) >= 2 and arg[0] == arg[-1] == '"' else arg for arg in argv]
+    if not argv:
+        raise ValueError("cmd boş komuta dönüştü")
+    return argv
 
-    ``argv`` is the preferred, cross-platform form. Legacy ``cmd`` strings are
-    parsed with ``shlex`` and executed directly. Shell interpretation is only
-    enabled when a plan explicitly sets ``shell: true``.
-    """
+
+def _command_spec(check):
+    """Return ``(command, use_shell)`` with shell disabled by default."""
     if "argv" in check:
         argv = check.get("argv")
-        if not isinstance(argv, list) or not argv or not all(
-            isinstance(arg, str) and bool(arg) for arg in argv
-        ):
+        if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and bool(arg) for arg in argv):
             raise ValueError("argv boş olmayan string listesi olmalı")
         if check.get("shell") is True:
             raise ValueError("shell=true ile argv birlikte kullanılamaz")
         return list(argv), False
-
     cmd = check.get("cmd")
     if not isinstance(cmd, str) or not cmd.strip():
         raise ValueError("cmd boş olmayan string olmalı")
     if check.get("shell") is True:
         return cmd, True
-    try:
-        argv = shlex.split(cmd, posix=True)
-    except ValueError as exc:
-        raise ValueError("cmd ayrıştırılamadı: %s" % exc) from exc
-    if not argv:
-        raise ValueError("cmd boş komuta dönüştü")
-    return argv, False
+    return _legacy_split(cmd), False
+
+
+def _bounded_command(command, use_shell, base, timeout, max_output):
+    with tempfile.TemporaryFile(mode="w+b") as output_file:
+        try:
+            proc = subprocess.Popen(
+                command,
+                shell=use_shell,
+                cwd=base,
+                stdout=output_file,
+                stderr=subprocess.STDOUT,
+            )
+            try:
+                returncode = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                return None, "timeout", "", False
+        except (OSError, ValueError) as exc:
+            return None, "start", str(exc), False
+        size = output_file.tell()
+        overflow = size > max_output
+        read_size = min(size, max_output)
+        output_file.seek(max(0, size - read_size))
+        raw = output_file.read(read_size)
+        text = raw.decode("utf-8", errors="replace")
+        return returncode, "ok", text, overflow
 
 
 def run_check(check, base, timeout=300):
@@ -352,21 +451,31 @@ def run_check(check, base, timeout=300):
     if kind == "run":
         try:
             command, use_shell = _command_spec(check)
-            proc = subprocess.run(
-                command, shell=use_shell, cwd=base, capture_output=True,
-                text=True, timeout=check.get("timeout", timeout),
-            )
-        except subprocess.TimeoutExpired:
-            return False, "komut zaman aşımına uğradı", ""
-        except (OSError, ValueError) as exc:
+            max_output = int(check.get("max_output_bytes", MAX_OUTPUT_BYTES))
+        except (TypeError, ValueError) as exc:
             return False, "komut başlatılamadı: %s" % exc, ""
-        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        rc, state, output, overflow = _bounded_command(
+            command,
+            use_shell,
+            base,
+            check.get("timeout", timeout),
+            max_output,
+        )
+        if state == "timeout":
+            return False, "komut zaman aşımına uğradı", ""
+        if state == "start":
+            return False, "komut başlatılamadı: %s" % output, ""
         expected = check.get("expect_exit", 0)
-        ok = proc.returncode == expected
-        detail = "exit=%s (beklenen %s)" % (proc.returncode, expected)
+        ok = rc == expected and not overflow
+        detail = "exit=%s (beklenen %s)" % (rc, expected)
+        if overflow:
+            detail += "; çıktı limiti aşıldı (%s byte)" % max_output
         pattern = check.get("output_regex")
         if pattern:
-            matched = re.search(pattern, output) is not None
+            try:
+                matched = re.search(pattern, output) is not None
+            except re.error as exc:
+                return False, "geçersiz output_regex: %s" % exc, output[-1500:]
             ok = ok and matched
             detail += "; output_regex=%s" % ("eşleşti" if matched else "EŞLEŞMEDİ")
         return ok, detail, output[-1500:]
@@ -388,7 +497,10 @@ def run_check(check, base, timeout=300):
             return False, "%s YOK" % check["path"], ""
         with open(path, encoding="utf-8", errors="replace") as handle:
             content = handle.read()
-        ok = re.search(check["pattern"], content) is not None
+        try:
+            ok = re.search(check["pattern"], content) is not None
+        except re.error as exc:
+            return False, "geçersiz regex: %s" % exc, ""
         return ok, "pattern %s" % ("eşleşti" if ok else "EŞLEŞMEDİ"), ""
 
     return False, "bilinmeyen kontrol tipi: %s" % kind, ""
@@ -464,7 +576,7 @@ def _expected_evidence_head(base, key):
     active = evidence_path(base)
     archives = _archive_paths(base)
     return {
-        "format_version": 1,
+        "format_version": 2,
         "key_id": key.key_id,
         "active_count": _record_count(active),
         "active_tail": _last_record_hash(active),
@@ -497,7 +609,8 @@ def _verify_evidence_head(base, key):
         return False, "evidence authenticated head is not an object"
     auth = value.get("auth")
     payload = {k: v for k, v in value.items() if k != "auth"}
-    if payload != _expected_evidence_head(base, key):
+    expected = _expected_evidence_head(base, key)
+    if payload != expected:
         return False, "evidence authenticated head checkpoint mismatch"
     if not verify_auth(key, EVIDENCE_HEAD_DOMAIN, payload, auth):
         return False, "evidence authenticated head HMAC failed"
@@ -507,16 +620,19 @@ def _verify_evidence_head(base, key):
 def _write_evidence_record(path, rec, prev=None):
     base = _base_from_evidence_path(path)
     key = runtime_key(base)
-    previous = prev if prev is not None else _last_record_hash(path)
+    if prev is not None:
+        previous = prev
+    elif os.path.isfile(path) and _record_count(path):
+        previous = _last_record_hash(path)
+    elif os.path.realpath(path) == os.path.realpath(evidence_path(base)):
+        previous = _latest_archive_tail(base) or "GENESIS"
+    else:
+        previous = "GENESIS"
     rec = dict(rec)
     rec["prev"] = previous
-    rec["hash"] = hashlib.sha256(
-        canonical(_evidence_hash_payload(rec)).encode("utf-8")
-    ).hexdigest()
+    rec["hash"] = hashlib.sha256(canonical(_evidence_hash_payload(rec)).encode("utf-8")).hexdigest()
     if key is not None:
-        rec["auth"] = make_auth(
-            key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec)
-        )
+        rec["auth"] = make_auth(key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(canonical(rec) + "\n")
@@ -525,6 +641,40 @@ def _write_evidence_record(path, rec, prev=None):
     if key is not None and os.path.realpath(path) == os.path.realpath(evidence_path(base)):
         _write_evidence_head(base, key)
     return rec["hash"]
+
+
+@contextmanager
+def _evidence_lock(base):
+    pg = os.path.join(base, PG_DIR)
+    os.makedirs(pg, exist_ok=True)
+    lock_path = os.path.join(pg, "evidence.write.lock")
+    deadline = time.monotonic() + EVIDENCE_LOCK_TIMEOUT
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                os.write(fd, canonical({"pid": os.getpid(), "ts": time.time()}).encode("utf-8"))
+            finally:
+                os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(lock_path).st_mtime > EVIDENCE_LOCK_STALE:
+                    os.unlink(lock_path)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("evidence write lock timeout")
+            time.sleep(0.02)
+    try:
+        yield
+    finally:
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            pass
+
 
 def maybe_rotate(base):
     """Rotate a large active log and anchor it to the previous archive."""
@@ -550,30 +700,37 @@ def maybe_rotate(base):
 
 
 def append_evidence(base, rec):
-    maybe_rotate(base)
-    return _write_evidence_record(evidence_path(base), rec)
+    with _evidence_lock(base):
+        maybe_rotate(base)
+        return _write_evidence_record(evidence_path(base), rec)
+
+
+def _all_evidence_paths(base):
+    return _archive_paths(base) + ([evidence_path(base)] if os.path.isfile(evidence_path(base)) else [])
 
 
 def count_failed_attempts(base, step_id, plan="default", mode="run"):
-    path = evidence_path(base)
     count = 0
-    if not os.path.isfile(path):
-        return count
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if (
-                rec.get("mode") == mode
-                and rec.get("step") == step_id
-                and rec.get("plan", "default") == plan
-                and rec.get("status") == "failed"
-            ):
-                count += 1
+    for path in _all_evidence_paths(base):
+        try:
+            handle = open(path, encoding="utf-8")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    rec.get("mode") == mode
+                    and rec.get("step") == step_id
+                    and rec.get("plan", "default") == plan
+                    and rec.get("status") == "failed"
+                ):
+                    count += 1
     return count
 
 
@@ -586,11 +743,12 @@ def verify_chain(base):
     if not os.path.isfile(path):
         if key is not None:
             ok, problem = _verify_evidence_head(base, key)
-            return (ok, 0, problem)
+            return ok, 0, problem
         if os.path.isfile(_evidence_head_path(base)):
             return False, 0, "authenticated evidence head requires HMAC key"
         return True, 0, ""
-    prev = "GENESIS"
+
+    prev = _latest_archive_tail(base) or "GENESIS"
     count = 0
     with open(path, encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, 1):
@@ -604,16 +762,12 @@ def verify_chain(base):
             if rec.get("prev") != prev:
                 return False, count, "satır %s: prev zinciri kopuk" % line_no
             actual = rec.get("hash")
-            expected = hashlib.sha256(
-                canonical(_evidence_hash_payload(rec)).encode("utf-8")
-            ).hexdigest()
+            expected = hashlib.sha256(canonical(_evidence_hash_payload(rec)).encode("utf-8")).hexdigest()
             if actual != expected:
                 return False, count, "satır %s: hash uyuşmuyor (kurcalama?)" % line_no
             auth = rec.get("auth")
             if key is not None:
-                if not verify_auth(
-                    key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec), auth
-                ):
+                if not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec), auth):
                     return False, count, "satır %s: HMAC doğrulaması başarısız" % line_no
             elif auth is not None:
                 return False, count, "satır %s: authenticated evidence requires HMAC key" % line_no
@@ -627,24 +781,31 @@ def verify_chain(base):
         return False, count, "authenticated evidence head requires HMAC key"
     return True, count, ""
 
+
+# ---------------------------------------------------------------- snapshot / rollback
+
+def _workspace_snapshot_files(base):
+    root = os.path.realpath(base)
+    result = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if d not in _FINGERPRINT_SKIP_DIRS)
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            result.append(rel)
+    return result
+
+
 def snapshot_sources(base, plan):
-    files = list(plan.get("snapshot") or [])
-    if not files and os.path.isdir(os.path.join(base, ".git")):
-        try:
-            proc = subprocess.run(
-                ["git", "ls-files"], shell=False, cwd=base, capture_output=True,
-                text=True, timeout=60,
-            )
-            files = [line for line in (proc.stdout or "").splitlines() if line.strip()]
-        except Exception:
-            files = []
+    explicit = list(plan.get("snapshot") or [])
+    files = explicit if explicit else _workspace_snapshot_files(base)
     safe = []
     for rel in files:
         try:
             path = _safe_path(base, rel)
         except ValueError:
             continue
-        if os.path.isfile(path):
+        if os.path.isfile(path) or os.path.islink(path):
             safe.append(rel)
     return safe
 
@@ -653,47 +814,129 @@ def snapshots_dir(base):
     return os.path.join(base, PG_DIR, SNAPSHOT_DIR)
 
 
+def _snapshot_manifest_entry(base, rel):
+    path = _safe_path(base, rel)
+    info = os.lstat(path)
+    entry = {"path": rel.replace(os.sep, "/"), "mode": stat.S_IMODE(info.st_mode)}
+    if stat.S_ISLNK(info.st_mode):
+        entry["type"] = "symlink"
+        entry["target"] = os.readlink(path)
+    else:
+        entry["type"] = "file"
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        entry["sha256"] = digest.hexdigest()
+    return entry
+
+
 def make_snapshot(base, plan, label="snapshot"):
     sources = snapshot_sources(base, plan)
     if not sources:
-        print("ANLIK GÖRÜNTÜ YOK: plan 'snapshot' listesi boş ve git deposu bulunamadı.")
+        print("ANLIK GÖRÜNTÜ YOK: workspace içinde snapshot alınacak dosya bulunamadı.")
         return None
     os.makedirs(snapshots_dir(base), exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
     zpath = os.path.join(snapshots_dir(base), "%s-%s.zip" % (label, stamp))
+    scope = "explicit" if plan.get("snapshot") else "full-workspace"
+    manifest = {
+        "format_version": 2,
+        "scope": scope,
+        "files": [_snapshot_manifest_entry(base, rel) for rel in sources],
+    }
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as archive:
-        for rel in sources:
-            archive.write(_safe_path(base, rel), rel)
+        archive.writestr(SNAPSHOT_MANIFEST, canonical(manifest))
+        for entry in manifest["files"]:
+            if entry["type"] == "file":
+                archive.write(_safe_path(base, entry["path"]), entry["path"])
     append_evidence(base, {
-        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
         "mode": label,
         "step": 0,
         "results": [],
         "status": "verified",
         "files": len(sources),
         "archive": os.path.basename(zpath),
+        "scope": scope,
     })
     print("ANLIK GÖRÜNTÜ: %s (%s dosya)" % (os.path.basename(zpath), len(sources)))
     return zpath
 
 
+def _remove_introduced_files(base, allowed):
+    for rel in _workspace_snapshot_files(base):
+        normalized = rel.replace(os.sep, "/")
+        if normalized in allowed:
+            continue
+        try:
+            path = _safe_path(base, normalized)
+            if os.path.isfile(path) or os.path.islink(path):
+                os.unlink(path)
+        except OSError:
+            pass
+
+
 def restore_snapshot(base, zpath):
     names = []
     with zipfile.ZipFile(zpath) as archive:
-        for info in archive.infolist():
-            try:
+        manifest = None
+        if SNAPSHOT_MANIFEST in archive.namelist():
+            manifest = json.loads(archive.read(SNAPSHOT_MANIFEST).decode("utf-8"))
+        if isinstance(manifest, dict) and manifest.get("format_version") == 2:
+            entries = manifest.get("files", [])
+            if not isinstance(entries, list):
+                raise ValueError("snapshot manifest files listesi geçersiz")
+            allowed = {str(item.get("path")) for item in entries if isinstance(item, dict)}
+            if manifest.get("scope") == "full-workspace":
+                _remove_introduced_files(base, allowed)
+            for entry in entries:
+                if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                    raise ValueError("snapshot manifest kaydı geçersiz")
+                rel = entry["path"]
+                target = _safe_path(base, rel)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                if os.path.lexists(target):
+                    if os.path.isdir(target) and not os.path.islink(target):
+                        raise ValueError("snapshot dosyası mevcut dizinle çakışıyor: %s" % rel)
+                    os.unlink(target)
+                if entry.get("type") == "symlink":
+                    os.symlink(str(entry.get("target", "")), target)
+                else:
+                    if rel not in archive.namelist():
+                        raise ValueError("snapshot archive dosyası eksik: %s" % rel)
+                    with archive.open(rel) as src, open(target, "wb") as dst:
+                        while True:
+                            chunk = src.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                    if os.name != "nt" and isinstance(entry.get("mode"), int):
+                        os.chmod(target, entry["mode"])
+                    expected = entry.get("sha256")
+                    if expected:
+                        digest = hashlib.sha256(open(target, "rb").read()).hexdigest()
+                        if digest != expected:
+                            raise ValueError("snapshot hash uyuşmuyor: %s" % rel)
+                names.append(rel)
+        else:
+            for info in archive.infolist():
+                if info.filename == SNAPSHOT_MANIFEST:
+                    continue
                 target = _safe_path(base, info.filename)
-            except ValueError:
-                raise ValueError("snapshot workspace dışına yazmaya çalışıyor: %s" % info.filename)
-            if info.is_dir():
-                os.makedirs(target, exist_ok=True)
-                continue
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with archive.open(info) as src, open(target, "wb") as dst:
-                dst.write(src.read())
-            names.append(info.filename)
+                if info.is_dir():
+                    os.makedirs(target, exist_ok=True)
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with archive.open(info) as src, open(target, "wb") as dst:
+                    while True:
+                        chunk = src.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                names.append(info.filename)
     append_evidence(base, {
-        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
         "mode": "rollback",
         "step": 0,
         "results": [],
@@ -701,7 +944,7 @@ def restore_snapshot(base, zpath):
         "files": len(names),
         "archive": os.path.basename(zpath),
     })
-    print("GERİ YÜKLEME: %s → %s dosya proje üzerine yazıldı." % (os.path.basename(zpath), len(names)))
+    print("GERİ YÜKLEME: %s → %s dosya proje üzerine geri yüklendi." % (os.path.basename(zpath), len(names)))
 
 
 def latest_snapshot(base):
@@ -723,8 +966,7 @@ def print_table(plan, name=None):
         title = (step.get("title") or "")[:40]
         checks = step.get("verify", [])
         print("%-4s %-42s %-9s %s" % (
-            step["id"], title, step.get("status", "pending").upper(),
-            "%s kontrol" % len(checks),
+            step["id"], title, step.get("status", "pending").upper(), "%s kontrol" % len(checks),
         ))
 
 
@@ -746,11 +988,7 @@ def _run_check_list(raw_checks, base):
 
 def _run_output_contract(output, base):
     ok, results = _run_check_list(output.get("verify", []), base)
-    return {
-        "name": output.get("name"),
-        "passed": ok,
-        "results": results,
-    }
+    return {"name": output.get("name"), "passed": ok, "results": results}
 
 
 def _prerequisite_gate(base, plan, step, passed_this_run, selected, mode):
@@ -834,12 +1072,6 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
                 "reason": "prerequisite step or required output is not independently verified",
             })
             print("[BLOK] adım %s: prerequisite/output doğrulaması geçmedi" % sid)
-            for dep in dependency_results:
-                if not dep["passed"]:
-                    print("       - dependency step %s doğrulanmadı" % dep["step"])
-            for item in required_results:
-                if not item["passed"]:
-                    print("       - required output %s:%s doğrulanmadı" % (item["step"], item["name"]))
             continue
 
         attempt = 1
@@ -853,6 +1085,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
                 all_ok = False
                 continue
 
+        audit_workspace_before = workspace_fingerprint(base) if mode == "audit" else None
         ok_all, results = _run_check_list(step.get("verify", []), base)
         output_results = []
         try:
@@ -860,16 +1093,25 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
         except PlanGraphError as exc:
             declared = {}
             ok_all = False
-            results.append({
-                "check": {"type": "output_contract"},
-                "passed": False,
-                "detail": str(exc),
-                "output_tail": "",
-            })
+            results.append({"check": {"type": "output_contract"}, "passed": False, "detail": str(exc), "output_tail": ""})
         for output in declared.values():
             output_result = _run_output_contract(output, base)
             output_results.append(output_result)
             ok_all = ok_all and output_result["passed"]
+
+        if mode == "audit":
+            audit_workspace_after = workspace_fingerprint(base)
+            if audit_workspace_after != audit_workspace_before:
+                ok_all = False
+                results.append({
+                    "check": {"type": "audit_purity"},
+                    "passed": False,
+                    "detail": (
+                        "audit verification mutated workspace content/type/mode; "
+                        "verification must be observational and implementation must happen before audit"
+                    ),
+                    "output_tail": "",
+                })
 
         step["status"] = "verified" if ok_all else "failed"
         passed_this_run[sid] = ok_all
@@ -896,15 +1138,11 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
             label += " (deneme %s/%s)" % (min(attempt, MAX_ATTEMPTS), MAX_ATTEMPTS)
         print("[%s] %s" % (mark, label))
         for result in results:
-            print("       - %s | %s" % (
-                "geçti" if result["passed"] else "KALDI", result["detail"],
-            ))
+            print("       - %s | %s" % ("geçti" if result["passed"] else "KALDI", result["detail"]))
             if not result["passed"] and result["output_tail"]:
                 print("         çıktı: %s" % result["output_tail"][-400:].replace("\n", " | "))
         for output in output_results:
-            print("       - output %s | %s" % (
-                output["name"], "geçti" if output["passed"] else "KALDI",
-            ))
+            print("       - output %s | %s" % (output["name"], "geçti" if output["passed"] else "KALDI"))
 
     save_plan(base, plan, name)
     if mode == "audit":
@@ -921,6 +1159,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
             "workspace_fingerprint": workspace_fingerprint(base),
         })
     return all_ok
+
 
 # ---------------------------------------------------------------- commands
 
@@ -942,12 +1181,8 @@ def cmd_run(args):
         return 2
     plan = load_plan(args.dir, args.plan)
     ids = args.ids or None
-    target_ids = (
-        [step["id"] for step in plan["steps"] if step.get("status") != "verified"]
-        if ids is None else ids
-    )
-    all_ok = audit_steps(args.dir, plan, ids=target_ids, mode="run",
-                         name=args.plan, force=args.force)
+    target_ids = [step["id"] for step in plan["steps"] if step.get("status") != "verified"] if ids is None else ids
+    all_ok = audit_steps(args.dir, plan, ids=target_ids, mode="run", name=args.plan, force=args.force)
     return 0 if all_ok else 1
 
 
@@ -957,7 +1192,7 @@ def cmd_audit(args):
         print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
         return 2
     plan = load_plan(args.dir, args.plan)
-    print("TAM DENETİM: tüm adımlar taze kabukta yeniden test ediliyor...\n")
+    print("TAM DENETİM: tüm adımlar taze subprocess ile yeniden test ediliyor...\n")
     all_ok = audit_steps(args.dir, plan, ids=None, mode="audit", name=args.plan)
     print()
     print_table(plan, args.plan)
@@ -1006,7 +1241,7 @@ def cmd_rollback(args):
             sys.exit("HATA: anlık görüntü yok — önce 'snapshot' çalıştır.")
     try:
         restore_snapshot(args.dir, zpath)
-    except (ValueError, zipfile.BadZipFile) as exc:
+    except (ValueError, zipfile.BadZipFile, json.JSONDecodeError, OSError) as exc:
         print("HATA: güvenli rollback başarısız: %s" % exc)
         return 1
     return 0
@@ -1019,17 +1254,15 @@ def main():
         except (AttributeError, ValueError):
             pass
 
-    parser = argparse.ArgumentParser(description="PlanGuard bağımsız denetleyici v1.1+")
+    parser = argparse.ArgumentParser(description="Plan Auditor deterministic core")
     sub = parser.add_subparsers(dest="mode", required=True)
     for name in ("validate", "run", "audit", "status", "snapshot", "rollback"):
         item = sub.add_parser(name)
         item.add_argument("dir", nargs="?", default=".", help="proje dizini")
         item.add_argument("--plan", help="plan adı (.plan-auditor/plans/<ad>.json); varsayılan: plan.json")
         if name == "run":
-            item.add_argument("ids", nargs="*", type=int,
-                              help="denetlenecek adım id'leri (boş: verified olmayanlar)")
-            item.add_argument("--force", action="store_true",
-                              help="%s deneme sınırını zorla aş" % MAX_ATTEMPTS)
+            item.add_argument("ids", nargs="*", type=int, help="denetlenecek adım id'leri")
+            item.add_argument("--force", action="store_true", help="%s deneme sınırını zorla aş" % MAX_ATTEMPTS)
         if name == "rollback":
             item.add_argument("--to", help="geri yüklenecek zip; varsayılan: en yenisi")
 
@@ -1037,15 +1270,21 @@ def main():
     args.dir = os.path.abspath(args.dir)
     if not os.path.isdir(args.dir):
         sys.exit("HATA: dizin yok: %s" % args.dir)
-    sys.exit({
+    if getattr(args, "plan", None):
+        try:
+            validate_plan_name(args.plan)
+        except ValueError as exc:
+            print("HATA: %s" % exc, file=sys.stderr)
+            return 1
+    return {
         "validate": cmd_validate,
         "run": cmd_run,
         "audit": cmd_audit,
         "status": cmd_status,
         "snapshot": cmd_snapshot,
         "rollback": cmd_rollback,
-    }[args.mode](args))
+    }[args.mode](args)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

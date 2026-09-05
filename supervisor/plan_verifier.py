@@ -1,11 +1,4 @@
-"""L5 — deterministic structural plan verifier.
-
-Plans are reduced to a dependency DAG plus concrete verification/output
-contracts. This layer does not execute commands; runtime enforcement lives in
-the deterministic core. Legacy plans without ``depends_on`` retain sequential
-semantics, while explicit DAGs must bind every dependency edge to at least one
-concrete upstream output contract.
-"""
+"""L5 — deterministic structural plan verifier."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -20,6 +13,8 @@ from scripts.plan_graph import (
     topological_order,
     validate_output_links,
 )
+
+from .coverage import CoverageResult, analyze_coverage
 
 
 @dataclass
@@ -45,6 +40,7 @@ class PlanAnalysis:
     rationale: List[str] = field(default_factory=list)
     topological_order: List[int] = field(default_factory=list)
     dependencies: Dict[int, List[int]] = field(default_factory=dict)
+    coverage: Optional[CoverageResult] = None
 
     @property
     def weakest_verification(self) -> Optional[str]:
@@ -95,7 +91,6 @@ def _check_step(step: Dict, index: int, dependencies: List[int]) -> StepAnalysis
 
 
 def _unbound_explicit_edges(plan: Dict, dependencies: Dict[int, List[int]]) -> List[str]:
-    """Require every explicit dependency edge to name a concrete source output."""
     if not explicit_graph(plan):
         return []
     by_id = {
@@ -114,14 +109,13 @@ def _unbound_explicit_edges(plan: Dict, dependencies: Dict[int, List[int]]) -> L
         for parent in parents:
             if parent not in linked_sources:
                 errors.append(
-                    "dependency edge %s -> %s has no requires_outputs link; "
-                    "explicit dependencies must be backed by a concrete upstream output"
+                    "dependency edge %s -> %s has no requires_outputs link; explicit dependencies must be backed by a concrete upstream output"
                     % (parent, child)
                 )
     return errors
 
 
-def verify_plan(plan: Dict) -> PlanAnalysis:
+def verify_plan(plan: Dict, *, require_coverage: bool = False) -> PlanAnalysis:
     analysis = PlanAnalysis()
     steps = plan.get("steps", [])
     if not isinstance(steps, list) or not steps:
@@ -137,8 +131,6 @@ def verify_plan(plan: Dict) -> PlanAnalysis:
         graph_valid = False
         analysis.graph_errors.append(str(exc))
         analysis.rationale.append("dependency graph is invalid")
-        # Continue behavioral analysis with empty dependency lists so callers
-        # still receive actionable verification diagnostics.
         analysis.dependencies = {
             step.get("id"): []
             for step in steps
@@ -169,8 +161,19 @@ def verify_plan(plan: Dict) -> PlanAnalysis:
         if not step_analysis.has_behavioral_verification:
             weak_steps += 1
 
+    should_check_coverage = require_coverage or "requirements" in plan or any(
+        isinstance(step, dict) and "covers" in step for step in steps
+    )
+    if should_check_coverage:
+        analysis.coverage = analyze_coverage(plan)
+        analysis.coverage_gaps = list(analysis.coverage.errors)
+        if not analysis.coverage.valid:
+            analysis.rationale.append("explicit requirement coverage is incomplete or invalid")
+
     if not graph_valid:
         analysis.verdict = "REJECT"
+    elif analysis.coverage is not None and not analysis.coverage.valid:
+        analysis.verdict = "REJECT" if require_coverage else "REVISE"
     elif analysis.step_analyses and weak_steps == len(analysis.step_analyses):
         analysis.verdict = "REJECT"
         analysis.rationale.append("no step has behavioral verification")

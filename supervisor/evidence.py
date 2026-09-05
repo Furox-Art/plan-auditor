@@ -70,6 +70,7 @@ def verify_jsonl_chain(
     key: Optional[KeyMaterial] = None,
     require_auth: bool = False,
     ignore_auth: bool = False,
+    initial_prev: str = "GENESIS",
 ) -> Tuple[Optional[bool], int, str]:
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
@@ -91,7 +92,7 @@ def verify_jsonl_chain(
     if any("prev" not in rec for rec in records):
         return None, len(records), "legacy archive lacks prev chain"
 
-    prev = "GENESIS"
+    prev = initial_prev
     for index, rec in enumerate(records, 1):
         if rec.get("prev") != prev:
             return False, index - 1, f"line {index}: prev chain broken"
@@ -151,6 +152,17 @@ def _read_stored_link(path: str) -> Optional[str]:
     return None
 
 
+def _first_prev(path: str) -> Optional[str]:
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                value = json.loads(line)
+                return value.get("prev") if isinstance(value, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
 def _workspace_from_archive_dir(archive_dir: str | Path) -> Path:
     archive = Path(archive_dir).resolve()
     if archive.name == "archive" and archive.parent.name == ".plan-auditor":
@@ -169,24 +181,40 @@ def build_archive_manifest(archive_dir: str) -> ArchiveManifest:
         auth_problem = str(exc)
     if not os.path.isdir(archive_dir):
         return ArchiveManifest(archives=[], auth_problem=auth_problem)
+
     files = sorted(name for name in os.listdir(archive_dir) if name.endswith(".jsonl"))
-    for filename in files:
+    expected_prev = "GENESIS"
+    for index, filename in enumerate(files):
         path = os.path.join(archive_dir, filename)
+        first_prev = _first_prev(path)
+        initial_prev = expected_prev
         chain_valid, record_count, chain_problem = verify_jsonl_chain(
-            path,
-            key=key,
-            require_auth=key is not None,
+            path, key=key, require_auth=key is not None, initial_prev=initial_prev
         )
-        archives.append({
+        cross_archive_start = chain_valid is True
+        # Backward compatibility for v2.0.x rotations: each archive began at
+        # GENESIS and carried the previous archive tail in its final anchor.
+        if chain_valid is False and index > 0 and first_prev == "GENESIS":
+            legacy_valid, legacy_count, legacy_problem = verify_jsonl_chain(
+                path, key=key, require_auth=key is not None, initial_prev="GENESIS"
+            )
+            if legacy_valid is True:
+                chain_valid, record_count, chain_problem = legacy_valid, legacy_count, legacy_problem
+                cross_archive_start = False
+        item = {
             "file": filename,
             "sha256": file_hash(path),
             "tail_hash": tail_hash(path),
             "previous_archive_hash": _read_stored_link(path),
+            "first_prev": first_prev,
+            "cross_archive_start": cross_archive_start,
             "chain_valid": chain_valid,
             "record_count": record_count,
             "chain_problem": chain_problem,
             "authenticated": bool(key) and chain_valid is True,
-        })
+        }
+        archives.append(item)
+        expected_prev = item.get("tail_hash") or expected_prev
     return ArchiveManifest(archives, auth_problem=auth_problem)
 
 
@@ -219,12 +247,16 @@ def _first_break(manifest: ArchiveManifest) -> Optional[int]:
     return None
 
 
-def _sign_jsonl(path: Path, key: KeyMaterial) -> None:
+def _sign_jsonl(path: Path, key: KeyMaterial, initial_prev: str = "GENESIS") -> None:
     if not path.exists():
         return
     valid, _count, problem = verify_jsonl_chain(
-        str(path), key=key, require_auth=False, ignore_auth=True
+        str(path), key=key, require_auth=False, ignore_auth=True, initial_prev=initial_prev
     )
+    if valid is False and initial_prev != "GENESIS" and _first_prev(str(path)) == "GENESIS":
+        valid, _count, problem = verify_jsonl_chain(
+            str(path), key=key, require_auth=False, ignore_auth=True, initial_prev="GENESIS"
+        )
     if valid is False:
         raise IntegrityKeyError(f"cannot authenticate invalid evidence {path.name}: {problem}")
     if valid is None:
@@ -245,9 +277,9 @@ def _sign_jsonl(path: Path, key: KeyMaterial) -> None:
 def _evidence_head_payload(root: Path, key: KeyMaterial) -> Dict:
     active = root / ".plan-auditor" / "evidence.jsonl"
     archive_dir = root / ".plan-auditor" / "archive"
-    archives = sorted(archive_dir.glob("*.jsonl")) if archive_dir.is_dir() else []
+    archives = sorted(archive_dir.glob("evidence-*.jsonl")) if archive_dir.is_dir() else []
     return {
-        "format_version": 1,
+        "format_version": 2,
         "key_id": key.key_id,
         "active_count": _record_count(active),
         "active_tail": tail_hash(str(active)) or "GENESIS",
@@ -290,10 +322,12 @@ def initialize_evidence_auth(root: str | Path, key: KeyMaterial) -> None:
     root_path = Path(root).resolve()
     pg = root_path / ".plan-auditor"
     archive_dir = pg / "archive"
-    files = sorted(archive_dir.glob("*.jsonl")) if archive_dir.is_dir() else []
+    archives = sorted(archive_dir.glob("evidence-*.jsonl")) if archive_dir.is_dir() else []
+    expected_prev = "GENESIS"
+    for path in archives:
+        _sign_jsonl(path, key, initial_prev=expected_prev)
+        expected_prev = tail_hash(str(path)) or expected_prev
     active = pg / "evidence.jsonl"
     if active.exists():
-        files.append(active)
-    for path in files:
-        _sign_jsonl(path, key)
+        _sign_jsonl(active, key, initial_prev=expected_prev)
     write_evidence_head(root_path, key)

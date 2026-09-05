@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  preflight:
+  package-preflight:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,19 +26,38 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install . pytest build twine
-      - name: Run tests
+      - name: Run full regression suite
         run: python -m pytest tests/ -q
       - name: Build distributions
         run: python -m build
       - name: Validate distributions
         run: python -m twine check dist/*
-      - name: Smoke-test built wheel
+
+  wheel-preflight:
+    name: release-wheel-cli-smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build real wheel
         run: |
-          python -m pip install --force-reinstall dist/*.whl
-          plan-auditor --help
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build --wheel
+      - name: Install wheel in clean venv and run full CLI smoke
+        run: python tests/wheel_cli_smoke.py --wheel-dir dist
 
   publish:
-    needs: preflight
+    needs: [package-preflight, wheel-preflight]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -116,9 +135,9 @@ jobs:
           simple_url="https://pypi.org/simple/${{ steps.meta.outputs.name }}/"
           version="${{ steps.meta.outputs.version }}"
 
-          # PyPI's JSON/simple indexes can lag a successful upload. The upload
-          # action is authoritative for release failure; propagation is retried
-          # for observability and must not create a false-red CI run.
+          # A successful upload action is authoritative. Public indexes can lag,
+          # so propagation is retried for observability without creating a false
+          # red release after the artifact was accepted by PyPI.
           for attempt in $(seq 1 20); do
             if curl --retry 2 --retry-delay 2 --retry-all-errors -sfL "$json_url" > /dev/null; then
               echo "PyPI JSON endpoint sees ${version} on attempt ${attempt}."
