@@ -105,7 +105,7 @@ def test_validate_plan_checks_output_verification_contract():
 def test_run_blocks_step_when_prerequisite_is_not_verified(tmp_path):
     plan = _plan([_step(1), _step(2)])
     assert core.audit_steps(str(tmp_path), plan, ids=[2], mode="run") is False
-    assert plan[1]["status"] == "blocked"
+    assert plan["steps"][1]["status"] == "blocked"
 
 
 def test_run_rechecks_required_output_before_dependent_step(tmp_path):
@@ -121,7 +121,7 @@ def test_run_rechecks_required_output_before_dependent_step(tmp_path):
         ),
     ])
     assert core.audit_steps(str(tmp_path), plan, ids=[2], mode="run") is False
-    assert plan[1]["status"] == "blocked"
+    assert plan["steps"][1]["status"] == "blocked"
     evidence = (tmp_path / ".plan-auditor" / "evidence.jsonl").read_text(encoding="utf-8")
     assert '"status": "blocked"' in evidence or '"status":"blocked"' in evidence
 
@@ -157,7 +157,7 @@ def test_declared_output_failure_fails_producer_step(tmp_path):
         "verify": [{"type": "file_exists", "path": "missing.txt"}],
     }])])
     assert core.audit_steps(str(tmp_path), plan, ids=[1], mode="run") is False
-    assert plan[0]["status"] == "failed"
+    assert plan["steps"][0]["status"] == "failed"
 
 
 def test_plan_fingerprint_changes_when_dependency_contract_changes():
