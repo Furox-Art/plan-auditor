@@ -1,6 +1,9 @@
 # plan-auditor
 
 [![plan-audit gate](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml/badge.svg)](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml)
+[![PyPI](https://img.shields.io/pypi/v/plan-auditor)](https://pypi.org/project/plan-auditor/)
+[![Downloads](https://img.shields.io/pypi/dm/plan-auditor)](https://pypi.org/project/plan-auditor/)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 **Independent deterministic verification for AI coding-agent work.**
 
