@@ -1,10 +1,11 @@
-# plan-auditor
-
-[![plan-audit gate](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml/badge.svg)](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml)
-[![PyPI](https://img.shields.io/pypi/v/plan-auditor)](https://pypi.org/project/plan-auditor/)
-[![Downloads](https://img.shields.io/pypi/dm/plan-auditor)](https://pypi.org/project/plan-auditor/)
-![License](https://img.shields.io/badge/license-MIT-blue)
-
+# plan-auditor  
+  
+[![plan-audit gate](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml/badge.svg)](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml)  
+[![PyPI](https://img.shields.io/pypi/v/plan-auditor)](https://pypi.org/project/plan-auditor/)  
+[![npm](https://img.shields.io/npm/v/plan-auditor)](https://www.npmjs.com/package/plan-auditor)  
+[![Downloads](https://img.shields.io/pypi/dm/plan-auditor)](https://pypi.org/project/plan-auditor/)  
+![License](https://img.shields.io/badge/license-MIT-blue)  
+  
 **Independent deterministic verification for AI coding-agent work.**
 
 `plan-auditor` answers one question:
@@ -333,3 +334,4 @@ Current source version: **2.4.0**
 ## License
 
 MIT
+
