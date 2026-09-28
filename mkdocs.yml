@@ -1,0 +1,21 @@
+site_name: Plan Auditor  
+site_description: Independent multi-layer verification supervisor for AI coding agents  
+repo_url: https://github.com/Furox-Art/plan-auditor  
+  
+theme:  
+  name: material  
+  palette:  
+    - scheme: default  
+      primary: blue  
+  
+nav:  
+  - Home: index.md  
+  - Architecture: architecture.md  
+  - Formal Planning: formal-planning.md  
+  - Threat Model: threat-model.md  
+  - Integrations: integrations.md  
+  
+markdown_extensions:  
+  - pymdownx.highlight  
+  - pymdownx.superfences  
+  - admonition 
