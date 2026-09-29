@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "plan-auditor"
-version = "2.4.0"
+version = "2.4.1"
 description = "Deterministic verification and evidence auditing for AI coding agents, plans, tests, and CI"
 readme = "README.md"
 license = "MIT"

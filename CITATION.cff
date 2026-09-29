@@ -4,6 +4,6 @@ authors:
   - family-names: "Furox"  
     given-names: "Art"  
 title: "Plan Auditor: Independent multi-layer verification supervisor for AI coding agents"  
-version: 2.4.0  
-date-released: 2026-09-05  
+version: 2.4.1  
+date-released: 2026-09-29  
 url: "https://github.com/Furox-Art/plan-auditor" 

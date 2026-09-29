@@ -2,6 +2,10 @@
 
 # Changelog
 
+## v2.4.1 — 2026-09-29
+
+- Metadata-only patch release: improved PyPI discovery keywords, classifiers, description, documentation links, and synchronized package version metadata.
+
 ## v2.4.0 — 2026-09-06
 
 - **Deterministic automatic formalization:** `plan-auditor-formalize compile` converts structured Plan Auditor requirements, coverage, dependencies, named outputs, `requires_outputs`, and deterministic checks into a conservative grounded STRIPS contract without asking an LLM to invent authoritative symbolic semantics.
