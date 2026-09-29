@@ -1,5 +1,5 @@
 site_name: Plan Auditor  
-site_description: Independent multi-layer verification supervisor for AI coding agents  
+site_description: Deterministic verification and evidence auditing for AI coding agents, completion proofs, software testing, CI gates, sealed plans, STRIPS/PDDL checks, and independent quality assurance.  
 repo_url: https://github.com/Furox-Art/plan-auditor  
   
 theme:  

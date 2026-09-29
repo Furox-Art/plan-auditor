@@ -22,6 +22,14 @@ plan-auditor forces the AI to prove its work. Not with words-with actual command
   
 No more "trust me bro" from language models.  
   
+## Common verification use cases
+
+- Verify **AI coding agents** before accepting a claimed completion.
+- Require deterministic evidence for **tests, builds, lint, type checks, generated files, and CI gates**.
+- Audit multi-step implementation plans with sealed requirements and tamper-evident evidence.
+- Use **STRIPS/PDDL-style planning checks** for machine-verifiable task reachability.
+- Add an independent **software quality assurance** layer when the same agent should not grade its own work.
+
 ## Quick start  
   
 ```bash  
