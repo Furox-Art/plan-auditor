@@ -11,7 +11,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Furox-Art" }]
-keywords = ["ai-agents", "llm-agents", "coding-agents", "ai-coding", "verification", "auditing", "software-testing", "quality-assurance", "formal-verification", "evidence", "ci", "developer-tools", "cli", "supervisor"]
+keywords = ["ai-agents", "llm-agents", "coding-agents", "ai-coding", "verification", "auditing", "software-testing", "quality-assurance", "formal-verification", "evidence", "ci", "developer-tools", "cli", "supervisor", "hallucination-detection", "agent-verification", "plan-execution", "claude-skill", "trust-but-verify"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",

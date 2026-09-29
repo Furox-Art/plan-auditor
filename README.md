@@ -22,6 +22,32 @@ plan-auditor forces the AI to prove its work. Not with words-with actual command
   
 No more "trust me bro" from language models.  
   
+## Quick Start
+
+```bash
+pip install plan-auditor
+```
+
+```python
+from plan_auditor import AuditContract
+
+contract = AuditContract.from_plan("migrate auth to JWT")
+# turns the plan into machine-checkable requirements:
+#   R1: tests/auth/test_jwt.py exists and passes
+#   R2: old session code removed (grep-evidence)
+#   R3: dependency updated with lockfile proof
+
+result = contract.verify(workdir="./repo", evidence_dir="./evidence")
+print(result.status)        # PASS / FAIL / UNKNOWN
+print(result.failures)      # exactly which requirement lacked evidence
+```
+
+Also available as an [Agent Skill](SKILL.md) for Claude and MCP-compatible hosts, and on npm: `npm i plan-auditor`.
+
+## Why an independent auditor?
+
+An agent grading its own homework will eventually reward itself for cheating. plan-auditor runs the verification in a **separate process with its own check implementation** — the implementing agent's claims carry zero weight; only sealed command evidence does.
+
 ## Common verification use cases
 
 - Verify **AI coding agents** before accepting a claimed completion.
