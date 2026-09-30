@@ -887,7 +887,11 @@ def _evidence_lock(base):
             finally:
                 os.close(fd)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # O_EXCL losing a race raises EEXIST (FileExistsError) on POSIX, but
+            # Windows reports the same collision as EACCES (PermissionError) when
+            # another thread holds the freshly created lock file open. Both mean
+            # "someone else has the lock", so retry in either case.
             try:
                 if time.time() - os.stat(lock_path).st_mtime > EVIDENCE_LOCK_STALE:
                     os.unlink(lock_path)
