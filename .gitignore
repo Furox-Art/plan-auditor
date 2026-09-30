@@ -23,3 +23,10 @@ dist/
 .plan-auditor/watchdog.jsonl
 .plan-auditor/gate-warning.json
 .plan-auditor/agents/
+
+# coverage.py data file produced by the branch-coverage gate in
+# .github/workflows/plan-audit.yml
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
