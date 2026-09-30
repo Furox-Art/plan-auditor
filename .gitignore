@@ -4,6 +4,11 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+.venv/
+venv/
+.tmp-site/
+site/
+node_modules/
 .plan-auditor/evidence.jsonl
 .plan-auditor/evidence.head.json
 .plan-auditor/evidence.write.lock

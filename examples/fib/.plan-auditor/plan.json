@@ -1,20 +1,63 @@
 {
-  "task": "fib.py'de fibonacci fonksiyonu ve pytest testi",
+  "task": "examples/fib/fib.py defines a correct fib() and its pytest regression passes",
   "created": "2026-09-03T12:00:00",
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "description": "examples/fib/fib.py must define a correct fib(n) function.",
+      "priority": "must"
+    },
+    {
+      "id": "REQ-002",
+      "description": "The Fibonacci example regression tests must pass.",
+      "priority": "must"
+    }
+  ],
+  "required_tools": [
+    "python"
+  ],
   "steps": [
     {
       "id": 1,
-      "title": "fib fonksiyonu yaz",
+      "title": "fib.py defines a correct fib() function",
+      "depends_on": [],
+      "covers": [
+        "REQ-001"
+      ],
       "verify": [
         {"type": "file_exists", "path": "fib.py"},
         {"type": "regex", "path": "fib.py", "pattern": "def\\s+fib\\s*\\("},
-        {"type": "run", "cmd": "python -c \"from fib import fib; assert fib(10)==55; assert fib(1)==1\"", "expect_exit": 0}
+        {
+          "type": "run",
+          "cmd": "python -c \"from fib import fib; assert fib(0)==0; assert fib(10)==55\"",
+          "expect_exit": 0
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fib-implementation",
+          "verify": [
+            {"type": "file_exists", "path": "fib.py"}
+          ]
+        }
       ],
       "status": "pending"
     },
     {
       "id": 2,
-      "title": "pytest testi yaz ve geçir",
+      "title": "pytest regression for fib() passes",
+      "depends_on": [
+        1
+      ],
+      "requires_outputs": [
+        {
+          "step": 1,
+          "name": "fib-implementation"
+        }
+      ],
+      "covers": [
+        "REQ-002"
+      ],
       "verify": [
         {"type": "file_exists", "path": "test_fib.py"},
         {"type": "pytest", "args": "test_fib.py -q"}

@@ -1,21 +1,34 @@
-site_name: Plan Auditor  
-site_description: Deterministic verification and evidence auditing for AI coding agents, completion proofs, software testing, CI gates, sealed plans, STRIPS/PDDL checks, and independent quality assurance.  
-repo_url: https://github.com/Furox-Art/plan-auditor  
-  
-theme:  
-  name: material  
-  palette:  
-    - scheme: default  
-      primary: blue  
-  
-nav:  
-  - Home: index.md  
-  - Architecture: architecture.md  
-  - Formal Planning: formal-planning.md  
-  - Threat Model: threat-model.md  
-  - Integrations: integrations.md  
-  
-markdown_extensions:  
-  - pymdownx.highlight  
-  - pymdownx.superfences  
-  - admonition 
+site_name: Plan Auditor
+site_description: Deterministic verification and evidence auditing for AI coding agents, completion proofs, sealed plans, STRIPS/PDDL checks, and an independent quality-assurance gate.
+repo_url: https://github.com/Furox-Art/plan-auditor
+docs_dir: docs
+site_dir: .tmp-site
+copyright: MIT licensed.
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Quick start: quickstart.md
+  - CLI reference: cli.md
+  - Concepts:
+      - Architecture: architecture.md
+      - Dependency graph: dependency-graph.md
+      - Formal planning: formal-planning.md
+  - Security:
+      - Threat model: threat-model.md
+      - Deployment isolation: deployment-isolation.md
+  - Integrations: integrations.md
+  - Evidence and claims: benchmark.md
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - admonition

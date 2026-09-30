@@ -2,6 +2,20 @@
 
 # Changelog
 
+## Unreleased — documentation and packaging metadata
+
+- **README rebuilt around a verified quick start:** explicit problem/solution framing, "who it is for", `pipx` and `pip` install paths, a five-minute walkthrough, Agent Skill invocation table, a `plan-auditor doctor` troubleshooting section, accurate CI/PyPI/npm/license badges, and a stated list of honest limits.
+- **Removed an inaccurate Python API example.** The previous README showed `from plan_auditor import AuditContract`; no such module exists in the distribution, which ships `supervisor` and `scripts`. The README now documents the real CLI only.
+- **Quick start transcript is now machine-verified.** `tests/test_readme_quickstart.py` parses the documented JSON files and commands out of `README.md`, executes them through the installed CLI in a temporary workspace, and asserts every documented output line is real. The old transcript contained a `plan verify` block with fields that were never emitted.
+- **Documentation site is coherent and strict-build clean.** Added `docs/index.md` and `docs/cli.md`, rewrote `docs/quickstart.md` with a full troubleshooting guide, added a working `examples/fib/request-source.json` so the shipped example passes the supervisor gate, and repaired `mkdocs.yml` navigation, which referenced a non-existent `index.md` and omitted four existing pages. `mkdocs build --strict` now exits 0.
+- **`docs/benchmark.md` no longer contains fabricated comparative numbers.** It previously claimed results from "100 coding tasks" and detection rates for unnamed alternatives that no harness in this repository ever produced. It is replaced with a reproducible in-repo demo, the commands that back each remaining claim, and an explicit table of what is not measured.
+- **Deterministic documentation and packaging checks.** New `tests/test_docs_metadata.py` verifies mkdocs navigation targets exist and cover every page, relative links resolve, README badges reference real workflows, no unverified adoption or trust-badge claims are present, every documented `plan-auditor` invocation is in the parser surface, and `pyproject.toml`/`package.json`/`SKILL.md`/`CITATION.cff` versions, classifiers, keywords, URLs, and npm launcher wiring agree with what ships.
+- **`pyproject.toml` metadata completed:** broader keyword set, audience/topic/platform/typing classifiers, and `project.urls` entries for Security, Contributing, and Citation. `Development Status` and license metadata left unchanged because the published version is unchanged.
+- **`package.json` aligned with the real CLI.** `npm test` was `echo "Error: no test specified" && exit 1`; it now syntax-checks the launcher. Added an explicit `files` allowlist so the published tarball no longer ships the entire working tree (the previous package included local virtual environments and build output). Version bumped to `2.4.1` to match the Python distribution.
+- **`index.js` launcher repaired.** It contained a syntax error (`(code) =;`), so the published npm launcher could not run at all. It now forwards arguments to the Python CLI and propagates the child exit code. `files` ships everything the launcher needs at runtime (`supervisor`, `scripts`, `hooks`, `references`).
+- **Housekeeping:** `.gitignore` now excludes `.venv/`, `venv/`, `.tmp-site/`, `site/`, and `node_modules/`.
+- **No behavioural change to the supervisor.** All changes are documentation, packaging metadata, and the npm launcher; the Python verification layers are untouched.
+
 ## v2.4.1 — 2026-09-29
 
 - Metadata-only patch release: improved PyPI discovery keywords, classifiers, description, documentation links, and synchronized package version metadata.

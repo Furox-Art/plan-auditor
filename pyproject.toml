@@ -5,27 +5,70 @@ build-backend = "hatchling.build"
 [project]
 name = "plan-auditor"
 version = "2.4.1"
-description = "Deterministic verification and evidence auditing for AI coding agents, plans, tests, and CI"
+description = "Deterministic verification and evidence auditing for AI coding agents: sealed plans, hash-chained evidence, and an independent completion gate"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Furox-Art" }]
-keywords = ["ai-agents", "llm-agents", "coding-agents", "ai-coding", "verification", "auditing", "software-testing", "quality-assurance", "formal-verification", "evidence", "ci", "developer-tools", "cli", "supervisor", "hallucination-detection", "agent-verification", "plan-execution", "claude-skill", "trust-but-verify"]
+keywords = [
+  "ai-agents",
+  "coding-agents",
+  "llm-agents",
+  "agent-skills",
+  "ai-verification",
+  "verification",
+  "auditing",
+  "quality-assurance",
+  "software-testing",
+  "test-automation",
+  "ci",
+  "ci-cd",
+  "continuous-integration",
+  "formal-verification",
+  "formal-methods",
+  "strips",
+  "pddl",
+  "model-checking",
+  "static-analysis",
+  "evidence",
+  "provenance",
+  "audit-log",
+  "tamper-evident",
+  "supply-chain-security",
+  "plan-execution",
+  "completion-gate",
+  "hallucination-detection",
+  "trust-but-verify",
+  "developer-tools",
+  "cli",
+  "supervisor",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
+  "Environment :: Console",
   "Intended Audience :: Developers",
-  "Operating System :: OS Independent",
+  "Intended Audience :: Information Technology",
   "License :: OSI Approved :: MIT License",
+  "Natural Language :: English",
+  "Operating System :: OS Independent",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security",
   "Topic :: Software Development",
+  "Topic :: Software Development :: Build Tools",
   "Topic :: Software Development :: Quality Assurance",
   "Topic :: Software Development :: Testing",
-  "Topic :: Utilities",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Software Distribution",
+  "Topic :: System :: Systems Administration",
 ]
 dependencies = []
 
@@ -41,6 +84,9 @@ Repository = "https://github.com/Furox-Art/plan-auditor"
 Issues = "https://github.com/Furox-Art/plan-auditor/issues"
 Documentation = "https://github.com/Furox-Art/plan-auditor/tree/main/docs"
 Changelog = "https://github.com/Furox-Art/plan-auditor/blob/main/CHANGELOG.md"
+Security = "https://github.com/Furox-Art/plan-auditor/blob/main/SECURITY.md"
+Contributing = "https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md"
+Citation = "https://github.com/Furox-Art/plan-auditor/blob/main/CITATION.cff"
 
 [tool.hatch.build.targets.wheel]
 packages = ["supervisor", "scripts"]
@@ -49,14 +95,22 @@ packages = ["supervisor", "scripts"]
 include = [
   "supervisor/**",
   "scripts/**",
+  "hooks/**",
   "tests/**",
   "docs/**",
   "examples/**",
   "references/**",
+  "index.js",
+  "bin/**",
+  "package.json",
+  "mkdocs.yml",
   "README.md",
   "SKILL.md",
   "CHANGELOG.md",
+  "CITATION.cff",
+  "CODE_OF_CONDUCT.md",
   "CONTRIBUTING.md",
+  "SECURITY.md",
   "LICENSE",
   "pyproject.toml",
 ]
