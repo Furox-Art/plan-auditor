@@ -3,10 +3,13 @@
 [![plan-audit gate](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml/badge.svg)](https://github.com/Furox-Art/plan-auditor/actions/workflows/plan-audit.yml)
 [![release](https://github.com/Furox-Art/plan-auditor/actions/workflows/release.yml/badge.svg)](https://github.com/Furox-Art/plan-auditor/actions/workflows/release.yml)
 [![PyPI](https://img.shields.io/pypi/v/plan-auditor)](https://pypi.org/project/plan-auditor/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/plan-auditor)](https://pypi.org/project/plan-auditor/)
 [![Python](https://img.shields.io/pypi/pyversions/plan-auditor)](https://pypi.org/project/plan-auditor/)
 [![npm](https://img.shields.io/npm/v/plan-auditor)](https://www.npmjs.com/package/plan-auditor)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Download numbers live on the package pages themselves, where they are always current:
+[PyPI](https://pypi.org/project/plan-auditor/) |
+[npm](https://www.npmjs.com/package/plan-auditor)
 
 **An AI agent says "done." This tool makes "done" mean "here is the command output that proves it."**
 
