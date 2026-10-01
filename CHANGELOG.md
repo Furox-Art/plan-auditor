@@ -2,6 +2,57 @@
 
 # Changelog
 
+## Unreleased — documentation and packaging metadata
+
+- **README rebuilt around a verified quick start:** explicit problem/solution framing, "who it is for", `pipx` and `pip` install paths, a five-minute walkthrough, Agent Skill invocation table, a `plan-auditor doctor` troubleshooting section, accurate CI/PyPI/npm/license badges, and a stated list of honest limits.
+- **Removed an inaccurate Python API example.** The previous README showed `from plan_auditor import AuditContract`; no such module exists in the distribution, which ships `supervisor` and `scripts`. The README now documents the real CLI only.
+- **Quick start transcript is now machine-verified.** `tests/test_readme_quickstart.py` parses the documented JSON files and commands out of `README.md`, executes them through the installed CLI in a temporary workspace, and asserts every documented output line is real. The old transcript contained a `plan verify` block with fields that were never emitted.
+- **Documentation site is coherent and strict-build clean.** Added `docs/index.md` and `docs/cli.md`, rewrote `docs/quickstart.md` with a full troubleshooting guide, added a working `examples/fib/request-source.json` so the shipped example passes the supervisor gate, and repaired `mkdocs.yml` navigation, which referenced a non-existent `index.md` and omitted four existing pages. `mkdocs build --strict` now exits 0.
+- **`docs/benchmark.md` no longer contains fabricated comparative numbers.** It previously claimed results from "100 coding tasks" and detection rates for unnamed alternatives that no harness in this repository ever produced. It is replaced with a reproducible in-repo demo, the commands that back each remaining claim, and an explicit table of what is not measured.
+- **Deterministic documentation and packaging checks.** New `tests/test_docs_metadata.py` verifies mkdocs navigation targets exist and cover every page, relative links resolve, README badges reference real workflows, no unverified adoption or trust-badge claims are present, every documented `plan-auditor` invocation is in the parser surface, and `pyproject.toml`/`package.json`/`SKILL.md`/`CITATION.cff` versions, classifiers, keywords, URLs, and npm launcher wiring agree with what ships.
+- **`pyproject.toml` metadata completed:** broader keyword set, audience/topic/platform/typing classifiers, and `project.urls` entries for Security, Contributing, and Citation. `Development Status` and license metadata left unchanged because the published version is unchanged.
+- **`package.json` aligned with the real CLI.** `npm test` was `echo "Error: no test specified" && exit 1`; it now syntax-checks the launcher. Added an explicit `files` allowlist so the published tarball no longer ships the entire working tree (the previous package included local virtual environments and build output). Version bumped to `2.4.1` to match the Python distribution.
+- **`index.js` launcher repaired.** It contained a syntax error (`(code) =;`), so the published npm launcher could not run at all. It now forwards arguments to the Python CLI and propagates the child exit code. `files` ships everything the launcher needs at runtime (`supervisor`, `scripts`, `hooks`, `references`).
+- **Housekeeping:** `.gitignore` now excludes `.venv/`, `venv/`, `.tmp-site/`, `site/`, and `node_modules/`.
+
+## Unreleased — npm launcher exit codes and transcript fidelity
+
+- **Both npm entry points now propagate the verifier's exit code.** The fix was
+  initially placed only in `index.js`, but `package.json` maps the `plan-auditor`
+  bin to `bin/plan-auditor.js` — the file `npx plan-auditor` actually executes —
+  and that file discarded the child's result entirely. Verified: `node
+  bin/plan-auditor.js run <failing plan>` returned `0` while `index.js` returned
+  `1`. `index.js` now exposes `runPythonAndPropagate()`, which attaches the
+  `close` and `error` handlers and mirrors the code, and `bin/plan-auditor.js`
+  calls it. Exit codes are `1` for a failed step, `2` for a blocked audit, `0` for
+  a proven workspace, and nonzero if Python cannot be started.
+- **`tests/test_npm_launcher.py` covers every entry point and the real package.**
+  Every exit-code assertion is parameterised over `bin/plan-auditor.js` and
+  `index.js`, the launcher's code is compared against the underlying CLI's, and the
+  failing/passing/blocked checks are repeated against the packed npm tarball so a
+  fix that works only in the working tree fails the suite. All of these were
+  confirmed to fail against the pre-fix `bin` (6 failures) and pass after.
+- `test_docs_metadata.py` and `test_doc_transcripts.py` now check that the `bin`
+  field resolves to a launcher that propagates rather than a bare spawn, and that
+  documented launcher commands reference a file that exists.
+- **Verbatim transcripts.** The README and `docs/quickstart.md`/`docs/cli.md` failure transcripts previously showed a single collapsed `çıktı:` line while the tool actually prints a `|`-joined multi-line traceback. Both blocks now reproduce the real output line for line and state that nothing is elided.
+- **Removed a fabricated transcript line from `docs/benchmark.md`:** it showed
+  `çıktı: AssertionError` where the tool emits a full traceback. Replaced with
+  verbatim output, plus the equivalent launcher invocation and its exit code.
+- **Transcripts are now stable across the CI matrix.** Two platform differences
+  had made the documented failure output wrong somewhere: the core joins a
+  captured traceback into one physical line separated by `" | "` (a Windows
+  carriage return before each separator makes a text-mode reader render it as
+  several lines), and Python 3.11+ adds the offending source line and a caret to
+  tracebacks. The attempt transcripts in the README, `docs/quickstart.md` and
+  `docs/cli.md` now use a stderr-free sentinel check (`sys.exit(3)`) so the
+  rendered output is byte-identical on every Python version and platform, with a
+  note explaining what a stderr-bearing check adds.
+- `tests/test_doc_transcripts.py` reads raw bytes and normalises `\r` itself
+  instead of relying on text-mode universal newlines, and rejects any documented
+  traceback that pins a version-specific frame.
+- **`.npmignore` added and `package.json` tightened:** `__pycache__` directories were still being packed despite the `files` allowlist, because the allowlist re-includes whole directories. Added `!**/__pycache__` and `!**/*.py[cod]` negation patterns and a minimal `.npmignore`. `npm pack --dry-run` now reports 59 entries / ~134 KB with zero `__pycache__`, `.venv`, or `site-packages` paths, down from 18502 entries / 29.1 MB.
+
 ## v2.4.1 — 2026-09-29
 
 - Metadata-only patch release: improved PyPI discovery keywords, classifiers, description, documentation links, and synchronized package version metadata.

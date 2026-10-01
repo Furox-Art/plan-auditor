@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "task": "examples/fib/fib.py defines a correct fib() and its pytest regression passes",
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "description": "examples/fib/fib.py must define a correct fib(n) function.",
+      "priority": "must",
+      "acceptance_checks": [
+        {"type": "file_exists", "path": "fib.py"},
+        {"type": "regex", "path": "fib.py", "pattern": "def\\s+fib\\s*\\("},
+        {
+          "type": "run",
+          "cmd": "python -c \"from fib import fib; assert fib(0)==0; assert fib(10)==55\"",
+          "expect_exit": 0
+        }
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "description": "The Fibonacci example regression tests must pass.",
+      "priority": "must",
+      "acceptance_checks": [
+        {"type": "file_exists", "path": "test_fib.py"},
+        {"type": "pytest", "args": "test_fib.py -q"}
+      ]
+    }
+  ]
+}

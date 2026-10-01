@@ -1,1 +1,51 @@
-{"name":"plan-auditor","version":"2.4.0","description":"Independent multi-layer verification supervisor for AI coding agents","main":"index.js","bin":{"plan-auditor":"./bin/plan-auditor.js"},"scripts":{"test":"echo \"Error: no test specified\" && exit 1"},"keywords":["ai-agents","verification","auditing","cli","supervisor"],"author":"Furox-Art","license":"MIT","repository":{"type":"git","url":"git+https://github.com/Furox-Art/plan-auditor.git"},"bugs":{"url":"https://github.com/Furox-Art/plan-auditor/issues"},"homepage":"https://github.com/Furox-Art/plan-auditor#readme"} 
+{
+  "name": "plan-auditor",
+  "version": "2.4.1",
+  "description": "Thin Node launcher for the plan-auditor deterministic verification CLI for AI coding agents (requires Python 3.10+ on PATH)",
+  "main": "index.js",
+  "bin": {
+    "plan-auditor": "./bin/plan-auditor.js"
+  },
+  "files": [
+    "index.js",
+    "bin",
+    "supervisor",
+    "scripts",
+    "hooks",
+    "references",
+    "docs",
+    "mkdocs.yml",
+    "pyproject.toml",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "LICENSE",
+    "!**/__pycache__",
+    "!**/*.py[cod]"
+  ],
+  "scripts": {
+    "test": "node --check index.js && node --check bin/plan-auditor.js"
+  },
+  "keywords": [
+    "ai-agents",
+    "coding-agents",
+    "agent-skills",
+    "verification",
+    "auditing",
+    "quality-assurance",
+    "ci",
+    "formal-verification",
+    "supervisor",
+    "cli"
+  ],
+  "author": "Furox-Art",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Furox-Art/plan-auditor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Furox-Art/plan-auditor/issues"
+  },
+  "homepage": "https://github.com/Furox-Art/plan-auditor#readme"
+}
