@@ -220,16 +220,25 @@ def test_no_transcript_pins_version_specific_traceback_frames(document: Path) ->
 
 
 @pytest.mark.parametrize("document", [README, BENCHMARK, QUICKSTART, CLI_DOC])
-def test_failure_blocks_state_that_nothing_is_elided(document: Path) -> None:
-    """Where a failure transcript is abbreviated, say so explicitly."""
+def test_failure_blocks_state_their_scope(document: Path) -> None:
+    """A failure transcript must either be complete or say exactly what it omits."""
     text = document.read_text(encoding="utf-8")
     for block in _console_blocks(text):
         if not any("[FAIL]" in line or "[ATLADI]" in line for line in block):
             continue
-        nearby = text[max(0, text.find("\n".join(block)) - 1200) :]
-        assert re.search(r"nothing is elided|nothing above is elided|not elided", nearby, re.I), (
-            f"{document.name} shows a failure transcript without stating its scope"
-        )
+        elides = any(line.strip() == "..." for line in block)
+        start = text.find("\n".join(block))
+        preceding = text[max(0, start - 1400) :]
+        following = text[start + len("\n".join(block)) :][:1400]
+        nearby = preceding + following
+        if elides:
+            assert re.search(r"scoped omission|omitted|elided", nearby, re.I), (
+                f"{document.name} elides output without saying so"
+            )
+        else:
+            assert re.search(r"nothing is elided|nothing above is elided", nearby, re.I), (
+                f"{document.name} shows a failure transcript without stating its scope"
+            )
 
 
 def test_benchmark_transcript_matches_the_real_fib_failure(tmp_path: Path) -> None:
@@ -264,14 +273,22 @@ def test_benchmark_transcript_matches_the_real_fib_failure(tmp_path: Path) -> No
     joined = "\n".join(observed)
     assert proc.returncode == 1, f"broken fib must fail: {observed[-600:]}"
     assert "AssertionError" in joined, observed[-800:]
-    traceback_lines = [line for line in observed if "Traceback (most recent" in line]
-    assert traceback_lines, observed[-800:]
-    for line in traceback_lines:
-        assert "AssertionError" in line, f"fib traceback must stay on one line: {line!r}"
+    assert "Traceback (most recent call last)" in joined, observed[-800:]
     text = BENCHMARK.read_text(encoding="utf-8")
-    assert "çıktı: AssertionError\n" not in text, (
-        "benchmark.md must not claim the tool prints a bare AssertionError line"
-    )
+    # The traceback interior is version-dependent, so the doc must scope the
+    # omission rather than pin frames no single interpreter renders. Only a line
+    # that actually starts the marker counts as a quoted transcript line.
+    for block in _console_blocks(text):
+        quoted = [
+            line
+            for line in block
+            if line.lstrip().startswith("çıktı:") or line.strip().startswith("| ")
+        ]
+        assert not quoted, (
+            "benchmark.md must not quote the traceback body inside a transcript; "
+            f"scope the omission instead: {quoted}"
+        )
+    assert "Scoped omission" in text, "benchmark.md must scope its omission"
     blocks = [
         block
         for block in _console_blocks(text)

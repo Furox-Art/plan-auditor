@@ -65,21 +65,23 @@ $ plan-auditor run .
 Now break the implementation and watch the gate refuse to pass. Replace the body of
 `fib.py` with `return 0`:
 
-Complete stdout, verbatim, from that broken `fib.py`:
-
 ```console
 $ plan-auditor run .
 [FAIL] adım 1: fib.py defines a correct fib() function (deneme 1/3)
        - geçti | fib.py VAR
        - geçti | pattern eşleşti
        - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | AssertionError | 
+...
        - output fib-implementation | geçti
 [BLOK] adım 2: prerequisite/output doğrulaması geçmedi
 ```
 
-Nothing is elided. The `çıktı:` line is one physical output line: the core joins
-the captured traceback with `" | "`. The invocation exits `1`.
+**Scoped omission:** the single elided line is the tool's `çıktı:` block, which
+carries the captured Python traceback as one physical output line joined with
+`" | "`. Its interior frames depend on your Python version — 3.11 and newer add
+the offending source line and a caret — so quoting it verbatim would be correct on
+some interpreters and wrong on the rest. Every remaining line above is verbatim,
+the step fails with `exit=1`, and the invocation exits `1`.
 
 The same run through the npm launcher exits `1` too, because the launcher
 propagates the child's code rather than defaulting to success:
@@ -90,16 +92,16 @@ $ node index.js run /path/to/examples/fib
        - geçti | fib.py VAR
        - geçti | pattern eşleşti
        - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | AssertionError | 
+...
        - output fib-implementation | geçti
 [BLOK] adım 2: prerequisite/output doğrulaması geçmedi
 $ echo $?
 1
 ```
 
-`tests/test_npm_launcher.py` covers this: a failing `run` and a blocked `audit`
-must both yield a nonzero launcher exit code, a passing `run` must yield `0`, and
-an unstartable Python must fail closed.
+The same scoped omission applies to the launcher's `çıktı:` line; the launcher exit
+code of `1` is reproduced by `tests/test_npm_launcher.py`, which also asserts that
+a passing `run` yields `0` and that an unstartable Python fails closed.
 
 Step 2 is not merely "unverified" — it is **blocked**, because its prerequisite
 output contract no longer holds. Restoring `fib.py` and re-running returns both
