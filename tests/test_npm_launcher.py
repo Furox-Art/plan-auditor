@@ -16,8 +16,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "index.js"
 
+# Resolved once at import time: the module-level skip guard runs first, and every
+# helper below must use this absolute path so a test cannot depend on PATH lookup
+# (which is exactly what the fail-closed test deliberately removes).
+NODE = shutil.which("node")
+
 pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None, reason="node is required for the npm launcher"
+    NODE is None, reason="node is required for the npm launcher"
 )
 
 
@@ -76,8 +81,10 @@ def _passing_plan(workspace: Path) -> None:
 
 
 def _launch(args: list[str]) -> subprocess.CompletedProcess:
+    """Run the launcher. ``NODE`` was resolved by the skip guard at import time."""
+    assert NODE is not None
     return subprocess.run(
-        ["node", str(INDEX), *args],
+        [NODE, str(INDEX), *args],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -121,10 +128,17 @@ def test_launcher_reports_success_exit_code(tmp_path: Path) -> None:
 
 
 def test_launcher_fails_closed_when_python_is_unavailable(tmp_path: Path) -> None:
-    """An empty PATH makes the spawn fail; the launcher must not exit 0."""
-    env = {"PATH": "", "SystemRoot": str(Path.home())}
+    """Point PATH at an empty directory so the interpreter cannot be found.
+
+    The spawn must fail and the launcher must exit nonzero rather than reporting
+    success, since no verdict was ever produced.
+    """
+    assert NODE is not None
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    env = {"PATH": str(empty), "SystemRoot": str(Path.home())}
     result = subprocess.run(
-        ["node", str(INDEX), "--help"],
+        [NODE, str(INDEX), "--help"],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
