@@ -19,7 +19,9 @@
     "README.md",
     "CHANGELOG.md",
     "SECURITY.md",
-    "LICENSE"
+    "LICENSE",
+    "!**/__pycache__",
+    "!**/*.py[cod]"
   ],
   "scripts": {
     "test": "node --check index.js && node --check bin/plan-auditor.js"

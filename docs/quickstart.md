@@ -293,10 +293,17 @@ $ plan-auditor run . 1
 [FAIL] adım 1: README.md exists in the project root (deneme 3/3)
        - KALDI | README.md YOK
        - KALDI | exit=1 (beklenen 0)
-         çıktı: FileNotFoundError: [Errno 2] No such file or directory: 'README.md'
+         çıktı: Traceback (most recent call last):
+ |   File "<string>", line 1, in <module>
+ | FileNotFoundError: [Errno 2] No such file or directory: 'README.md'
+ | 
 $ plan-auditor run . 1
 [ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
+
+Nothing is elided. The `|`-joined lines are the tool's own rendering of a
+multi-line captured traceback — one physical output line each. Both invocations
+exit `1`.
 
 Fix the underlying problem. Re-arm deliberately with `plan-auditor run . 1 --force`
 only when you are certain the check is correct and the implementation is wrong.
@@ -327,6 +334,25 @@ Records in `.plan-auditor/evidence.jsonl` (or an archive) were edited or reorder
 Every record carries the SHA-256 of the previous one, so tampering is detected.
 `doctor` explains where the chain breaks; you will have to re-establish the plan
 rather than repair the log by hand.
+
+### The npm launcher always exits 0
+
+It should not. `index.js` exits with the child verifier's code, so a nonzero
+result reaches your shell:
+
+```bash
+npx plan-auditor audit .
+echo $?
+```
+
+If that prints `0` while the JSON verdict says `FAIL`, you are running the
+published `2.4.0`, which shipped a syntax error in the launcher. Upgrade to
+`2.4.1` or use the console script:
+
+```bash
+pipx install --force plan-auditor
+plan-auditor audit .
+```
 
 ### The agent keeps "fixing" the test instead of the code
 

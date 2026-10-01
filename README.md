@@ -245,6 +245,10 @@ forwards to `python -m supervisor.cli`, so it needs Python 3.10+ on `PATH`. Pref
 npx plan-auditor --help
 ```
 
+The launcher propagates the verifier's exit code rather than defaulting to
+success, so `npx plan-auditor audit .` is as CI-safe as the console script. A
+missing or unstartable Python fails closed with a nonzero code, never `0`.
+
 ## Troubleshooting
 
 `plan-auditor doctor <workspace>` prints a machine-readable capability and health
@@ -267,17 +271,25 @@ plan-auditor request init . --file request-source.json
 
 **A step fails three times and then refuses to run again**
 
-The attempt cap is deliberate — it stops an agent from brute-forcing green:
+The attempt cap is deliberate — it stops an agent from brute-forcing green. This
+is the complete stdout, verbatim, from a workspace with no `README.md`:
 
 ```console
 $ plan-auditor run . 1
 [FAIL] adım 1: README.md exists in the project root (deneme 3/3)
        - KALDI | README.md YOK
        - KALDI | exit=1 (beklenen 0)
-         çıktı: FileNotFoundError: [Errno 2] No such file or directory: 'README.md'
+         çıktı: Traceback (most recent call last):
+ |   File "<string>", line 1, in <module>
+ | FileNotFoundError: [Errno 2] No such file or directory: 'README.md'
+ | 
 $ plan-auditor run . 1
 [ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
+
+Nothing is elided above. The `|`-joined lines are how the tool itself prints a
+multi-line captured traceback; each `çıktı:` line is one physical line of output.
+Both invocations exit `1`.
 
 Fix the underlying problem, or re-arm deliberately with `plan-auditor run . 1 --force`.
 

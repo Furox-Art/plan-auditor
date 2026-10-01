@@ -339,3 +339,25 @@ def test_npm_launcher_forwards_to_the_python_cli() -> None:
     assert "supervisor.cli" in index
     assert "spawn(" in index
     assert not re.search(r"=>\s*;\s*\}", index), "index.js must not contain a broken arrow body"
+
+
+def test_npm_tarball_ships_no_interpreter_or_build_artifacts() -> None:
+    package = json.loads(_read(PACKAGE_JSON))
+    for pattern in ("!**/__pycache__", "!**/*.py[cod]"):
+        assert pattern in package["files"], f"npm files must exclude {pattern}"
+    npmignore = ROOT / ".npmignore"
+    assert npmignore.is_file(), "a .npmignore must keep local artifacts out of the tarball"
+    rules = {
+        line.strip()
+        for line in _read(npmignore).splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    assert {"__pycache__/", ".venv/", "node_modules/"} <= rules
+    assert len(rules) <= 20, f".npmignore should stay minimal, got {sorted(rules)}"
+    # The launcher cannot work without the Python package at runtime, so no
+    # ignore rule may exclude the directories it needs.
+    for required in ("supervisor", "scripts", "hooks", "references"):
+        assert required in package["files"], f"npm files must ship {required}"
+        assert not any(rule.rstrip("/") == required for rule in rules), (
+            f".npmignore must not exclude runtime directory {required!r}"
+        )

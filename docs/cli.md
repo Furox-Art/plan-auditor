@@ -122,15 +122,35 @@ python scripts/audit_check.py run . --plan migration
 
 ## The three-attempt cap
 
-A step may fail at most three times. The fourth attempt is refused:
+A step may fail at most three times. The fourth attempt is refused. Complete
+stdout, verbatim, for a workspace with no `README.md`:
 
 ```console
 $ plan-auditor run . 1
-[ATLADI] adım 1: <title> önceki gerçek başarısız deneme — 3 sınırı aşıldı.
+[FAIL] adım 1: README.md exists in the project root (deneme 3/3)
+       - KALDI | README.md YOK
+       - KALDI | exit=1 (beklenen 0)
+         çıktı: Traceback (most recent call last):
+ |   File "<string>", line 1, in <module>
+ | FileNotFoundError: [Errno 2] No such file or directory: 'README.md'
+ | 
+$ plan-auditor run . 1
+[ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
+
+Both invocations exit `1`. Nothing above is elided; the `|`-joined lines are the
+tool's own rendering of a multi-line captured traceback, one physical line each.
 
 This is deliberate. It stops an agent from brute-forcing a green result. Fix the
 underlying problem; re-arm only deliberately with `plan-auditor run . 1 --force`.
+
+## npm launcher exit codes
+
+`index.js` is the `npx plan-auditor` entry point. It exits with the verifier's
+code — `0` on a proven workspace, the child's `1`/`2` otherwise — and exits `1`
+if Python cannot be started at all. A failing gate can never look like a success
+through the launcher. `tests/test_npm_launcher.py` asserts both directions plus
+the fail-closed spawn error path.
 
 ## Hooks
 

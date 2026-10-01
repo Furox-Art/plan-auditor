@@ -14,7 +14,14 @@
 - **`package.json` aligned with the real CLI.** `npm test` was `echo "Error: no test specified" && exit 1`; it now syntax-checks the launcher. Added an explicit `files` allowlist so the published tarball no longer ships the entire working tree (the previous package included local virtual environments and build output). Version bumped to `2.4.1` to match the Python distribution.
 - **`index.js` launcher repaired.** It contained a syntax error (`(code) =;`), so the published npm launcher could not run at all. It now forwards arguments to the Python CLI and propagates the child exit code. `files` ships everything the launcher needs at runtime (`supervisor`, `scripts`, `hooks`, `references`).
 - **Housekeeping:** `.gitignore` now excludes `.venv/`, `venv/`, `.tmp-site/`, `site/`, and `node_modules/`.
-- **No behavioural change to the supervisor.** All changes are documentation, packaging metadata, and the npm launcher; the Python verification layers are untouched.
+
+## Unreleased — npm launcher exit codes and transcript fidelity
+
+- **`index.js` now propagates the child's exit code.** It previously spawned `python -m supervisor.cli` and returned without ever reading the result, so `npx plan-auditor audit .` exited `0` even when the audit printed `"outcome": "FAIL"`. A failing gate could pass through the npm entry point. The launcher now handles `close` with `process.exit(code === null ? FAILURE_EXIT_CODE : code)` and handles `error` by exiting nonzero, so an unstartable interpreter also fails closed.
+- **New `tests/test_npm_launcher.py`:** asserts a failing `run` and a blocked `audit` both yield a nonzero launcher exit code, a passing `run` yields `0`, and an empty `PATH` (spawn failure) yields nonzero. The failing and blocked cases were confirmed to fail against the previous launcher.
+- **Verbatim transcripts.** The README and `docs/quickstart.md`/`docs/cli.md` failure transcripts previously showed a single collapsed `çıktı:` line while the tool actually prints a `|`-joined multi-line traceback. Both blocks now reproduce the real output line for line and state that nothing is elided.
+- **Removed a fabricated transcript line from `docs/benchmark.md`:** it showed `çıktı: AssertionError` where the tool emits a full `Traceback` block. Replaced with verbatim output, plus the equivalent launcher invocation and its exit code.
+- **`.npmignore` added and `package.json` tightened:** `__pycache__` directories were still being packed despite the `files` allowlist, because the allowlist re-includes whole directories. Added `!**/__pycache__` and `!**/*.py[cod]` negation patterns and a minimal `.npmignore`. `npm pack --dry-run` now reports 59 entries / ~134 KB with zero `__pycache__`, `.venv`, or `site-packages` paths, down from 18502 entries / 29.1 MB.
 
 ## v2.4.1 — 2026-09-29
 

@@ -65,16 +65,48 @@ $ plan-auditor run .
 Now break the implementation and watch the gate refuse to pass. Replace the body of
 `fib.py` with `return 0`:
 
+Complete stdout, verbatim, from that broken `fib.py`:
+
 ```console
 $ plan-auditor run .
 [FAIL] adım 1: fib.py defines a correct fib() function (deneme 1/3)
        - geçti | fib.py VAR
        - geçti | pattern eşleşti
        - KALDI | exit=1 (beklenen 0)
-         çıktı: AssertionError
+         çıktı: Traceback (most recent call last):
+ |   File "<string>", line 1, in <module>
+ | AssertionError
+ | 
        - output fib-implementation | geçti
 [BLOK] adım 2: prerequisite/output doğrulaması geçmedi
 ```
+
+Nothing is elided. The `|`-joined lines are the tool's own rendering of a
+multi-line captured traceback — each `çıktı:` line is one physical output line.
+The invocation exits `1`.
+
+The same run through the npm launcher exits `1` too, because the launcher
+propagates the child's code rather than defaulting to success:
+
+```console
+$ node index.js run /path/to/examples/fib
+[FAIL] adım 1: fib.py defines a correct fib() function (deneme 1/3)
+       - geçti | fib.py VAR
+       - geçti | pattern eşleşti
+       - KALDI | exit=1 (beklenen 0)
+         çıktı: Traceback (most recent call last):
+ |   File "<string>", line 1, in <module>
+ | AssertionError
+ | 
+       - output fib-implementation | geçti
+[BLOK] adım 2: prerequisite/output doğrulaması geçmedi
+$ echo $?
+1
+```
+
+`tests/test_npm_launcher.py` covers this: a failing `run` and a blocked `audit`
+must both yield a nonzero launcher exit code, a passing `run` must yield `0`, and
+an unstartable Python must fail closed.
 
 Step 2 is not merely "unverified" — it is **blocked**, because its prerequisite
 output contract no longer holds. Restoring `fib.py` and re-running returns both
