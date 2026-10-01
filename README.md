@@ -272,24 +272,21 @@ plan-auditor request init . --file request-source.json
 **A step fails three times and then refuses to run again**
 
 The attempt cap is deliberate — it stops an agent from brute-forcing green. This
-is the complete stdout, verbatim, from a workspace with no `README.md`:
+is the complete stdout, verbatim, from a workspace with no `README.md`. The core
+prints a captured traceback as one physical line joined with `" | "`, so the third
+line below is genuinely long:
 
 ```console
 $ plan-auditor run . 1
 [FAIL] adım 1: README.md exists in the project root (deneme 3/3)
        - KALDI | README.md YOK
        - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last):
- |   File "<string>", line 1, in <module>
- | FileNotFoundError: [Errno 2] No such file or directory: 'README.md'
- | 
+         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | FileNotFoundError: [Errno 2] No such file or directory: 'README.md' | 
 $ plan-auditor run . 1
 [ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
 
-Nothing is elided above. The `|`-joined lines are how the tool itself prints a
-multi-line captured traceback; each `çıktı:` line is one physical line of output.
-Both invocations exit `1`.
+Nothing is elided. Both invocations exit `1`.
 
 Fix the underlying problem, or re-arm deliberately with `plan-auditor run . 1 --force`.
 

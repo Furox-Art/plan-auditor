@@ -73,17 +73,13 @@ $ plan-auditor run .
        - geçti | fib.py VAR
        - geçti | pattern eşleşti
        - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last):
- |   File "<string>", line 1, in <module>
- | AssertionError
- | 
+         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | AssertionError | 
        - output fib-implementation | geçti
 [BLOK] adım 2: prerequisite/output doğrulaması geçmedi
 ```
 
-Nothing is elided. The `|`-joined lines are the tool's own rendering of a
-multi-line captured traceback — each `çıktı:` line is one physical output line.
-The invocation exits `1`.
+Nothing is elided. The `çıktı:` line is one physical output line: the core joins
+the captured traceback with `" | "`. The invocation exits `1`.
 
 The same run through the npm launcher exits `1` too, because the launcher
 propagates the child's code rather than defaulting to success:
@@ -94,10 +90,7 @@ $ node index.js run /path/to/examples/fib
        - geçti | fib.py VAR
        - geçti | pattern eşleşti
        - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last):
- |   File "<string>", line 1, in <module>
- | AssertionError
- | 
+         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | AssertionError | 
        - output fib-implementation | geçti
 [BLOK] adım 2: prerequisite/output doğrulaması geçmedi
 $ echo $?

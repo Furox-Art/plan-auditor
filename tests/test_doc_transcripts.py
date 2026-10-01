@@ -53,51 +53,59 @@ def _failing_plan(workspace: Path) -> Path:
     return workspace / ".plan-auditor" / "plan.json"
 
 
-def _real_failing_run(tmp_path: Path) -> list[str]:
-    """Run the deterministic core three times, then a fourth refused attempt."""
-    workspace = tmp_path / "failing"
-    _failing_plan(workspace)
-    plan_path = workspace / ".plan-auditor" / "plan.json"
-    lines: list[str] = []
-    for _ in range(3):
-        plan = json.loads(plan_path.read_text(encoding="utf-8"))
-        plan["steps"][0]["status"] = "pending"
-        plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
-        proc = subprocess.run(
-            [sys.executable, "scripts/audit_check.py", "run", str(workspace), "1"],
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
-        )
-        lines.extend((proc.stdout + proc.stderr).replace("\r\n", "\n").splitlines())
+def _tail(proc: subprocess.CompletedProcess, limit: int = 600) -> str:
+    """Decoded tail of a raw-bytes result, for assertion messages only."""
+    raw = (proc.stdout or b"") + (proc.stderr or b"")
+    return raw.decode("utf-8", errors="replace")[-limit:]
+
+
+def _lines(raw: bytes | str) -> list[str]:
+    """Split raw tool output the way a POSIX reader sees it.
+
+    The core joins a captured traceback into a single physical line separated by
+    ``" | "``. On Windows the captured child output uses ``\\r\\n``, so the join
+    leaves a bare ``\\r`` before each separator. Any text-mode reader applies
+    universal-newline translation and turns that into a line break, making the
+    same output look like one line per traceback frame. We always read bytes and
+    normalise ``\\r`` ourselves, so the comparison is platform-independent and
+    matches what the tool prints on POSIX.
+    """
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", errors="replace")
+    else:
+        text = raw
+    return text.replace("\r\n", "\n").replace("\r", "").split("\n")
+
+
+def _reset_step_one(plan_path: Path) -> None:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["steps"][0]["status"] = "pending"
     plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
-    # Consume the attempt budget with real runs rather than rewriting evidence.
-    for _ in range(3):
-        subprocess.run(
-            [sys.executable, "scripts/audit_check.py", "run", str(workspace), "1"],
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
-        )
-    proc = subprocess.run(
+
+
+def _core_run(workspace: Path) -> subprocess.CompletedProcess:
+    """Run the core and return raw bytes so no newline translation is applied."""
+    return subprocess.run(
         [sys.executable, "scripts/audit_check.py", "run", str(workspace), "1"],
         cwd=str(ROOT),
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=300,
     )
-    lines.extend((proc.stdout + proc.stderr).replace("\r\n", "\n").splitlines())
-    return [line for line in lines if line.strip()]
+
+
+def _real_failing_run(tmp_path: Path) -> list[str]:
+    """Run the deterministic core through the attempt cap and the refusal."""
+    workspace = tmp_path / "failing"
+    plan_path = _failing_plan(workspace)
+    lines: list[str] = []
+    for _ in range(3):
+        _reset_step_one(plan_path)
+        lines.extend(_lines(_core_run(workspace).stdout))
+    # Consume the attempt budget for real rather than editing evidence.
+    for _ in range(3):
+        _core_run(workspace)
+    lines.extend(_lines(_core_run(workspace).stdout))
+    return [line.rstrip() for line in lines if line.strip()]
 
 
 def _console_blocks(text: str) -> list[list[str]]:
@@ -119,7 +127,7 @@ def _console_blocks(text: str) -> list[list[str]]:
 def _output_lines(block: list[str]) -> list[str]:
     """Strip ``$ command`` prompt lines and lone elision markers."""
     return [
-        line
+        line.rstrip()
         for line in block
         if line.strip() and not line.startswith("$ ") and line.strip() != "..."
     ]
@@ -133,6 +141,15 @@ def test_failing_transcript_check_fixtures_are_real(tmp_path: Path) -> None:
     assert "FileNotFoundError: [Errno 2] No such file or directory" in joined, observed[-800:]
     assert any("deneme 3/3" in line for line in observed), observed[-800:]
     assert any("[ATLADI]" in line for line in observed), observed[-800:]
+    # The traceback is one physical output line joined with " | ", not a stack of
+    # separate lines. A transcript that invents extra lines is not verbatim.
+    traceback_lines = [line for line in observed if "Traceback (most recent" in line]
+    assert traceback_lines, observed[-800:]
+    for line in traceback_lines:
+        assert "FileNotFoundError" in line, f"traceback must stay on one line: {line!r}"
+        assert not line.lstrip().startswith("|"), (
+            f"the core never prints a bare continuation line: {line!r}"
+        )
 
 
 def _assert_verbatim(document: Path, tmp_path: Path) -> None:
@@ -201,44 +218,35 @@ def test_benchmark_transcript_matches_the_real_fib_failure(tmp_path: Path) -> No
     workspace = tmp_path / "fib"
     shutil.copytree(ROOT / "examples" / "fib", workspace)
     (workspace / "fib.py").write_text("def fib(n):\n    return 0\n", encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, "-m", "supervisor.cli", "request", "init", str(workspace),
-         "--file", str(workspace / "request-source.json")],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=300,
-    )
-    assert proc.returncode == 0, proc.stdout[-600:] + proc.stderr[-600:]
-    proc = subprocess.run(
-        [sys.executable, "-m", "supervisor.cli", "plan", "verify", str(workspace)],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=300,
-    )
-    assert proc.returncode == 0, proc.stdout[-600:] + proc.stderr[-600:]
+    for argv in (
+        ["request", "init", str(workspace), "--file", str(workspace / "request-source.json")],
+        ["plan", "verify", str(workspace)],
+    ):
+        proc = subprocess.run(
+            [sys.executable, "-m", "supervisor.cli", *argv],
+            cwd=str(ROOT),
+            capture_output=True,
+            timeout=300,
+        )
+        assert proc.returncode == 0, _tail(proc)
     proc = subprocess.run(
         [sys.executable, "-m", "supervisor.cli", "run", str(workspace)],
         cwd=str(ROOT),
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=300,
     )
     observed = [
-        line
-        for line in (proc.stdout + proc.stderr).replace("\r\n", "\n").splitlines()
+        line.rstrip()
+        for line in _lines((proc.stdout or b"") + (proc.stderr or b""))
         if line.strip() and "RuntimeWarning" not in line
     ]
     joined = "\n".join(observed)
     assert proc.returncode == 1, f"broken fib must fail: {observed[-600:]}"
     assert "AssertionError" in joined, observed[-800:]
+    traceback_lines = [line for line in observed if "Traceback (most recent" in line]
+    assert traceback_lines, observed[-800:]
+    for line in traceback_lines:
+        assert "AssertionError" in line, f"fib traceback must stay on one line: {line!r}"
     text = BENCHMARK.read_text(encoding="utf-8")
     assert "çıktı: AssertionError\n" not in text, (
         "benchmark.md must not claim the tool prints a bare AssertionError line"
@@ -280,28 +288,21 @@ def test_benchmark_launcher_block_matches_a_real_launcher_run(tmp_path: Path) ->
             [sys.executable, "-m", "supervisor.cli", *argv],
             cwd=str(ROOT),
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=300,
         )
-        assert proc.returncode == 0, proc.stdout[-600:] + proc.stderr[-600:]
+        assert proc.returncode == 0, _tail(proc)
 
-    observed: list[str] = []
     proc = subprocess.run(
         ["node", str(ROOT / "index.js"), "run", str(workspace)],
         cwd=str(ROOT),
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=300,
     )
-    observed.extend(
-        line
-        for line in (proc.stdout + proc.stderr).replace("\r\n", "\n").splitlines()
+    observed = [
+        line.rstrip()
+        for line in _lines((proc.stdout or b"") + (proc.stderr or b""))
         if line.strip() and "RuntimeWarning" not in line
-    )
+    ]
     assert proc.returncode == 1, f"launcher must exit nonzero, got {proc.returncode}"
 
     block = launcher_blocks[0]

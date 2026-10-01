@@ -130,16 +130,13 @@ $ plan-auditor run . 1
 [FAIL] adım 1: README.md exists in the project root (deneme 3/3)
        - KALDI | README.md YOK
        - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last):
- |   File "<string>", line 1, in <module>
- | FileNotFoundError: [Errno 2] No such file or directory: 'README.md'
- | 
+         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | FileNotFoundError: [Errno 2] No such file or directory: 'README.md' | 
 $ plan-auditor run . 1
 [ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
 
-Both invocations exit `1`. Nothing above is elided; the `|`-joined lines are the
-tool's own rendering of a multi-line captured traceback, one physical line each.
+Both invocations exit `1`. Nothing above is elided. The `çıktı:` line is one
+physical output line: the core joins the captured traceback with `" | "`.
 
 This is deliberate. It stops an agent from brute-forcing a green result. Fix the
 underlying problem; re-arm only deliberately with `plan-auditor run . 1 --force`.
