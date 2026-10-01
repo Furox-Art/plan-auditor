@@ -23,13 +23,18 @@
 - **Removed a fabricated transcript line from `docs/benchmark.md`:** it showed
   `çıktı: AssertionError` where the tool emits a full traceback. Replaced with
   verbatim output, plus the equivalent launcher invocation and its exit code.
-- **Transcript fidelity is now platform-stable.** The core joins a captured
-  traceback into one physical line separated by `" | "`. On Windows the captured
-  child output keeps a carriage return before each separator, so a text-mode
-  reader renders the same output across several lines. The README,
-  `docs/quickstart.md` and `docs/cli.md` blocks now show the canonical single-line
-  form, and `tests/test_doc_transcripts.py` reads raw bytes and normalises `\r`
-  itself so the comparison is identical on Windows and POSIX.
+- **Transcripts are now stable across the CI matrix.** Two platform differences
+  had made the documented failure output wrong somewhere: the core joins a
+  captured traceback into one physical line separated by `" | "` (a Windows
+  carriage return before each separator makes a text-mode reader render it as
+  several lines), and Python 3.11+ adds the offending source line and a caret to
+  tracebacks. The attempt transcripts in the README, `docs/quickstart.md` and
+  `docs/cli.md` now use a stderr-free sentinel check (`sys.exit(3)`) so the
+  rendered output is byte-identical on every Python version and platform, with a
+  note explaining what a stderr-bearing check adds.
+- `tests/test_doc_transcripts.py` reads raw bytes and normalises `\r` itself
+  instead of relying on text-mode universal newlines, and rejects any documented
+  traceback that pins a version-specific frame.
 - **`.npmignore` added and `package.json` tightened:** `__pycache__` directories were still being packed despite the `files` allowlist, because the allowlist re-includes whole directories. Added `!**/__pycache__` and `!**/*.py[cod]` negation patterns and a minimal `.npmignore`. `npm pack --dry-run` now reports 59 entries / ~134 KB with zero `__pycache__`, `.venv`, or `site-packages` paths, down from 18502 entries / 29.1 MB.
 
 ## v2.4.1 — 2026-09-29

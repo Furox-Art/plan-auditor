@@ -271,22 +271,28 @@ plan-auditor request init . --file request-source.json
 
 **A step fails three times and then refuses to run again**
 
-The attempt cap is deliberate — it stops an agent from brute-forcing green. This
-is the complete stdout, verbatim, from a workspace with no `README.md`. The core
-prints a captured traceback as one physical line joined with `" | "`, so the third
-line below is genuinely long:
+The attempt cap is deliberate — it stops an agent from brute-forcing green. Here
+is the complete stdout from a plan whose only check is
+`python -c "import sys; sys.exit(3)"` with `expect_exit: 0`:
 
 ```console
 $ plan-auditor run . 1
-[FAIL] adım 1: README.md exists in the project root (deneme 3/3)
-       - KALDI | README.md YOK
-       - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | FileNotFoundError: [Errno 2] No such file or directory: 'README.md' | 
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 1/3)
+       - KALDI | exit=3 (beklenen 0)
 $ plan-auditor run . 1
-[ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 2/3)
+       - KALDI | exit=3 (beklenen 0)
+$ plan-auditor run . 1
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 3/3)
+       - KALDI | exit=3 (beklenen 0)
+$ plan-auditor run . 1
+[ATLADI] adım 1: the sentinel script exits nonzero önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
 
-Nothing is elided. Both invocations exit `1`.
+Nothing is elided and every invocation exits `1`. When a failing check prints to
+stderr, the core joins the captured text onto one `çıktı:` line separated by
+`" | "`; the exact frames depend on your Python version, so this example uses a
+check that produces no stderr and stays byte-identical everywhere.
 
 Fix the underlying problem, or re-arm deliberately with `plan-auditor run . 1 --force`.
 

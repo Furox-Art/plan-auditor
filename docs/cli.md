@@ -127,16 +127,21 @@ stdout, verbatim, for a workspace with no `README.md`:
 
 ```console
 $ plan-auditor run . 1
-[FAIL] adım 1: README.md exists in the project root (deneme 3/3)
-       - KALDI | README.md YOK
-       - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | FileNotFoundError: [Errno 2] No such file or directory: 'README.md' | 
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 1/3)
+       - KALDI | exit=3 (beklenen 0)
 $ plan-auditor run . 1
-[ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 2/3)
+       - KALDI | exit=3 (beklenen 0)
+$ plan-auditor run . 1
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 3/3)
+       - KALDI | exit=3 (beklenen 0)
+$ plan-auditor run . 1
+[ATLADI] adım 1: the sentinel script exits nonzero önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
 
-Both invocations exit `1`. Nothing above is elided. The `çıktı:` line is one
-physical output line: the core joins the captured traceback with `" | "`.
+Every invocation exits `1`. Nothing above is elided. The check is
+`python -c "import sys; sys.exit(3)"` against `expect_exit: 0`, chosen because it
+writes no stderr and so renders identically on every Python version and platform.
 
 This is deliberate. It stops an agent from brute-forcing a green result. Fix the
 underlying problem; re-arm only deliberately with `plan-auditor run . 1 --force`.

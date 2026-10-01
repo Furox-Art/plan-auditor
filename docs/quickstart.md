@@ -290,16 +290,21 @@ the representation-only migration path.
 
 ```console
 $ plan-auditor run . 1
-[FAIL] adım 1: README.md exists in the project root (deneme 3/3)
-       - KALDI | README.md YOK
-       - KALDI | exit=1 (beklenen 0)
-         çıktı: Traceback (most recent call last): |   File "<string>", line 1, in <module> | FileNotFoundError: [Errno 2] No such file or directory: 'README.md' | 
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 1/3)
+       - KALDI | exit=3 (beklenen 0)
 $ plan-auditor run . 1
-[ATLADI] adım 1: README.md exists in the project root önceki gerçek başarısız deneme — 3 sınırı aşıldı.
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 2/3)
+       - KALDI | exit=3 (beklenen 0)
+$ plan-auditor run . 1
+[FAIL] adım 1: the sentinel script exits nonzero (deneme 3/3)
+       - KALDI | exit=3 (beklenen 0)
+$ plan-auditor run . 1
+[ATLADI] adım 1: the sentinel script exits nonzero önceki gerçek başarısız deneme — 3 sınırı aşıldı.
 ```
 
-Nothing is elided. The `çıktı:` line is one physical output line: the core joins
-the captured traceback with `" | "`. Both invocations exit `1`.
+Nothing is elided and every invocation exits `1`. The check here is
+`python -c "import sys; sys.exit(3)"` against `expect_exit: 0`; a failing command
+that writes to stderr additionally gets a `çıktı:` line, joined with `" | "`.
 
 Fix the underlying problem. Re-arm deliberately with `plan-auditor run . 1 --force`
 only when you are certain the check is correct and the implementation is wrong.

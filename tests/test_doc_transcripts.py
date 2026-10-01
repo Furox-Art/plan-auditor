@@ -22,26 +22,24 @@ BENCHMARK = ROOT / "docs" / "benchmark.md"
 QUICKSTART = ROOT / "docs" / "quickstart.md"
 CLI_DOC = ROOT / "docs" / "cli.md"
 
-FALLING_TITLE = "README.md exists in the project root"
-FAILING_CMD = (
-    "python -c \"import sys; sys.exit(1 if 'EXPECTED' not in "
-    "open('README.md', encoding='utf-8').read() else 0)\""
-)
+# A check that fails by exit code alone. Deliberately stderr-free so the rendered
+# transcript is byte-identical across Python versions and platforms: a real
+# traceback gains frames (e.g. 3.11+ adds the source line and caret), which would
+# make a documented transcript correct on one CI matrix leg and wrong on another.
+SENTINEL_TITLE = "the sentinel script exits nonzero"
+SENTINEL_CMD = 'python -c "import sys; sys.exit(3)"'
 
 
 def _failing_plan(workspace: Path) -> Path:
-    """A one-step plan whose check always fails because the file is missing."""
+    """A one-step plan whose check always fails, with no version-specific output."""
     plan = {
         "task": "Show what a failing check looks like",
         "created": "2026-10-01T00:00:00",
         "steps": [
             {
                 "id": 1,
-                "title": FALLING_TITLE,
-                "verify": [
-                    {"type": "file_exists", "path": "README.md"},
-                    {"type": "run", "cmd": FAILING_CMD, "expect_exit": 0},
-                ],
+                "title": SENTINEL_TITLE,
+                "verify": [{"type": "run", "cmd": SENTINEL_CMD, "expect_exit": 0}],
                 "status": "pending",
             }
         ],
@@ -108,6 +106,16 @@ def _real_failing_run(tmp_path: Path) -> list[str]:
     return [line.rstrip() for line in lines if line.strip()]
 
 
+def _assert_attempt_transcript(observed: list[str]) -> None:
+    """Every attempt and the refusal must be present, in order."""
+    for attempt in (1, 2, 3):
+        assert any(
+            f"{SENTINEL_TITLE} (deneme {attempt}/3)" in line for line in observed
+        ), f"attempt {attempt} missing from {observed[-800:]}"
+    assert "       - KALDI | exit=3 (beklenen 0)" in observed, observed[-800:]
+    assert any("[ATLADI]" in line for line in observed), observed[-800:]
+
+
 def _console_blocks(text: str) -> list[list[str]]:
     blocks: list[list[str]] = []
     inside = False
@@ -136,20 +144,11 @@ def _output_lines(block: list[str]) -> list[str]:
 def test_failing_transcript_check_fixtures_are_real(tmp_path: Path) -> None:
     """Guard the fixture itself: the transcript we compare against must be real."""
     observed = _real_failing_run(tmp_path)
+    _assert_attempt_transcript(observed)
+    # The sentinel check writes no stderr, so nothing version-specific may leak in.
     joined = "\n".join(observed)
-    assert "Traceback (most recent call last):" in joined, observed[-800:]
-    assert "FileNotFoundError: [Errno 2] No such file or directory" in joined, observed[-800:]
-    assert any("deneme 3/3" in line for line in observed), observed[-800:]
-    assert any("[ATLADI]" in line for line in observed), observed[-800:]
-    # The traceback is one physical output line joined with " | ", not a stack of
-    # separate lines. A transcript that invents extra lines is not verbatim.
-    traceback_lines = [line for line in observed if "Traceback (most recent" in line]
-    assert traceback_lines, observed[-800:]
-    for line in traceback_lines:
-        assert "FileNotFoundError" in line, f"traceback must stay on one line: {line!r}"
-        assert not line.lstrip().startswith("|"), (
-            f"the core never prints a bare continuation line: {line!r}"
-        )
+    assert "Traceback" not in joined, observed[-800:]
+    assert "çıktı:" not in joined, observed[-800:]
 
 
 def _assert_verbatim(document: Path, tmp_path: Path) -> None:
@@ -196,6 +195,28 @@ def test_no_collapsed_output_lines(document: Path) -> None:
         and not re.search(r"Error: \[Errno \d+\]", line)
     ]
     assert not offenders, f"{document.name} collapses tool output: {offenders}"
+
+
+@pytest.mark.parametrize("document", [README, BENCHMARK, QUICKSTART, CLI_DOC])
+def test_no_transcript_pins_version_specific_traceback_frames(document: Path) -> None:
+    """Documented tracebacks must not name frames that vary by Python version.
+
+    Python 3.11+ adds the offending source line and a caret to tracebacks, so a
+    transcript that quotes frames verbatim is correct on some CI legs and wrong
+    on others. The documented attempt transcripts use a stderr-free check
+    precisely to avoid this; any traceback shown elsewhere must therefore be
+    scoped rather than pinned.
+    """
+    text = document.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if "Traceback (most recent call last)" not in line:
+            continue
+        assert not re.search(r"\|\s*\^+", line), (
+            f"{document.name} pins a caret frame that Python 3.11+ adds: {line!r}"
+        )
+        assert SENTINEL_TITLE not in line, (
+            f"{document.name} mixes the sentinel transcript with a traceback"
+        )
 
 
 @pytest.mark.parametrize("document", [README, BENCHMARK, QUICKSTART, CLI_DOC])
