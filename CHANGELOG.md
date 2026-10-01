@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Removed the broken PyPI downloads badge.** `img.shields.io/pypi/dm/plan-auditor`
+  answers HTTP 200 while rendering `downloads: inaccessible`, because shields.io
+  scrapes a third-party download API that is rate-limited or down. The README now
+  links the PyPI and npm project pages instead, which always answer 200 and always
+  carry the real numbers. No count is hardcoded. `tests/test_docs_metadata.py` now
+  fails if a `img.shields.io/pypi/d...` badge or a hand-copied download count
+  reappears anywhere in the docs.
+
 # Changelog
 
 ## Unreleased — documentation and packaging metadata

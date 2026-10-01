@@ -160,6 +160,37 @@ def test_readme_badges_reference_real_workflows() -> None:
         assert (WORKFLOWS / workflow).is_file(), f"README badge references missing workflow {workflow}"
 
 
+def test_no_dynamic_pypi_download_badges() -> None:
+    """shields.io's pypi download endpoints answer 200 while rendering "downloads:
+    inaccessible" or a rate-limit notice, so the badge looks broken in the README.
+    A download claim must be a link to the package page, never a rendered image or
+    a number copied by hand.
+    """
+    offenders: list[str] = []
+    for source in _markdown_files():
+        text = _read(source)
+        for line_no, line in enumerate(text.splitlines(), 1):
+            if re.search(r"img\.shields\.io/pypi/d", line):
+                offenders.append(f"{source.relative_to(ROOT)}:{line_no}: {line.strip()}")
+            for pattern in UNVERIFIED_ADOPTION:
+                match = pattern.search(line)
+                if match:
+                    offenders.append(
+                        f"{source.relative_to(ROOT)}:{line_no}: hand-copied count {match.group(0)!r}"
+                    )
+    assert not offenders, "dynamic or hand-copied download claims:\n  " + "\n  ".join(offenders)
+
+
+def test_readme_points_at_the_pypi_project_page_for_downloads() -> None:
+    readme = _read(README)
+    assert "https://pypi.org/project/plan-auditor/" in readme, (
+        "README must link the PyPI project page, which is where download numbers live"
+    )
+    assert "download numbers live on the package pages" in readme.lower(), (
+        "README must say where download numbers come from instead of showing a badge"
+    )
+
+
 def test_readme_has_no_unverifiable_trust_badges() -> None:
     readme = _read(README).lower()
     for marker in CLAIMED_MARKETING:
