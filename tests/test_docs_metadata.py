@@ -324,7 +324,17 @@ def test_package_json_describes_a_working_npm_launcher() -> None:
     assert (ROOT / package["main"]).is_file()
     for name, target in package["bin"].items():
         assert name.startswith("plan-auditor")
-        assert (ROOT / target.lstrip("./")).is_file(), f"npm bin {target} is missing"
+        resolved = target.lstrip("./")
+        path = ROOT / resolved
+        assert path.is_file(), f"npm bin {target} is missing"
+        # npx executes this file, so it must mirror the verifier's exit code.
+        body = path.read_text(encoding="utf-8")
+        assert "runPythonAndPropagate" in body, (
+            f"{resolved} is what npx executes; it must propagate the child's exit code"
+        )
+        assert "runPython(process.argv" not in body, (
+            f"{resolved} calls bare runPython, which discards the child's exit code"
+        )
     scripts = package.get("scripts", {})
     assert scripts.get("test") == "node --check index.js && node --check bin/plan-auditor.js"
     assert "files" in package

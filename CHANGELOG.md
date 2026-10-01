@@ -17,8 +17,24 @@
 
 ## Unreleased — npm launcher exit codes and transcript fidelity
 
-- **`index.js` now propagates the child's exit code.** It previously spawned `python -m supervisor.cli` and returned without ever reading the result, so `npx plan-auditor audit .` exited `0` even when the audit printed `"outcome": "FAIL"`. A failing gate could pass through the npm entry point. The launcher now handles `close` with `process.exit(code === null ? FAILURE_EXIT_CODE : code)` and handles `error` by exiting nonzero, so an unstartable interpreter also fails closed.
-- **New `tests/test_npm_launcher.py`:** asserts a failing `run` and a blocked `audit` both yield a nonzero launcher exit code, a passing `run` yields `0`, and an empty `PATH` (spawn failure) yields nonzero. The failing and blocked cases were confirmed to fail against the previous launcher.
+- **Both npm entry points now propagate the verifier's exit code.** The fix was
+  initially placed only in `index.js`, but `package.json` maps the `plan-auditor`
+  bin to `bin/plan-auditor.js` — the file `npx plan-auditor` actually executes —
+  and that file discarded the child's result entirely. Verified: `node
+  bin/plan-auditor.js run <failing plan>` returned `0` while `index.js` returned
+  `1`. `index.js` now exposes `runPythonAndPropagate()`, which attaches the
+  `close` and `error` handlers and mirrors the code, and `bin/plan-auditor.js`
+  calls it. Exit codes are `1` for a failed step, `2` for a blocked audit, `0` for
+  a proven workspace, and nonzero if Python cannot be started.
+- **`tests/test_npm_launcher.py` covers every entry point and the real package.**
+  Every exit-code assertion is parameterised over `bin/plan-auditor.js` and
+  `index.js`, the launcher's code is compared against the underlying CLI's, and the
+  failing/passing/blocked checks are repeated against the packed npm tarball so a
+  fix that works only in the working tree fails the suite. All of these were
+  confirmed to fail against the pre-fix `bin` (6 failures) and pass after.
+- `test_docs_metadata.py` and `test_doc_transcripts.py` now check that the `bin`
+  field resolves to a launcher that propagates rather than a bare spawn, and that
+  documented launcher commands reference a file that exists.
 - **Verbatim transcripts.** The README and `docs/quickstart.md`/`docs/cli.md` failure transcripts previously showed a single collapsed `çıktı:` line while the tool actually prints a `|`-joined multi-line traceback. Both blocks now reproduce the real output line for line and state that nothing is elided.
 - **Removed a fabricated transcript line from `docs/benchmark.md`:** it showed
   `çıktı: AssertionError` where the tool emits a full traceback. Replaced with

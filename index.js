@@ -10,12 +10,15 @@ function runPython(args) {
   });
 }
 
-module.exports = { runPython };
-
-if (require.main === module) {
-  const child = runPython(process.argv.slice(2));
-  // The verifier's exit code is the only trustworthy verdict it produces, so the
-  // launcher must not turn a FAIL into a success.
+/**
+ * Run the CLI and mirror its exit code onto this process.
+ *
+ * The verifier's exit code is the only trustworthy verdict it produces, so no
+ * entry point may turn a FAIL into a success. Returns the child so callers can
+ * observe it; the handlers are attached here so every caller gets them.
+ */
+function runPythonAndPropagate(args) {
+  const child = runPython(args);
   child.on('error', (err) => {
     console.error(`plan-auditor: failed to start Python: ${err.message}`);
     process.exit(FAILURE_EXIT_CODE);
@@ -23,4 +26,11 @@ if (require.main === module) {
   child.on('close', (code) => {
     process.exit(code === null ? FAILURE_EXIT_CODE : code);
   });
+  return child;
+}
+
+module.exports = { runPython, runPythonAndPropagate };
+
+if (require.main === module) {
+  runPythonAndPropagate(process.argv.slice(2));
 }

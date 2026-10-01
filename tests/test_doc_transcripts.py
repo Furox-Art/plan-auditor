@@ -116,6 +116,11 @@ def _assert_attempt_transcript(observed: list[str]) -> None:
     assert any("[ATLADI]" in line for line in observed), observed[-800:]
 
 
+# The published npm bin is `bin/plan-auditor.js`; `index.js` is `main`. Either may
+# be documented, so match whichever a transcript actually shows.
+_LAUNCHER_CMD = re.compile(r"^\$ node (bin/plan-auditor\.js|index\.js) ")
+
+
 def _console_blocks(text: str) -> list[list[str]]:
     blocks: list[list[str]] = []
     inside = False
@@ -296,7 +301,7 @@ def test_benchmark_transcript_matches_the_real_fib_failure(tmp_path: Path) -> No
     ]
     assert blocks, "benchmark.md must show the broken-fib failure"
     for block in blocks:
-        if any(line.startswith("$ node index.js") for line in block):
+        if any(_LAUNCHER_CMD.match(line) for line in block):
             continue  # launcher blocks carry an `echo $?` line; covered below
         for line in _output_lines(block):
             assert line in observed, (
@@ -306,13 +311,18 @@ def test_benchmark_transcript_matches_the_real_fib_failure(tmp_path: Path) -> No
 
 
 def test_benchmark_launcher_block_matches_a_real_launcher_run(tmp_path: Path) -> None:
-    """The `node index.js` block in benchmark.md must be reproducible too."""
-    if shutil.which("node") is None:
+    """The npm-launcher block in benchmark.md must be reproducible.
+
+    Runs the exact entry point the block documents (the published bin or
+    ``index.js``) rather than assuming one of them.
+    """
+    node = shutil.which("node")
+    if node is None:
         pytest.skip("node is required for the npm launcher")
     launcher_blocks = [
         block
         for block in _console_blocks(BENCHMARK.read_text(encoding="utf-8"))
-        if any(line.startswith("$ node index.js") for line in block)
+        if any(_LAUNCHER_CMD.match(line) for line in block)
     ]
     assert launcher_blocks, "benchmark.md must show the launcher exit code"
     workspace = tmp_path / "fib-launcher"
@@ -330,8 +340,13 @@ def test_benchmark_launcher_block_matches_a_real_launcher_run(tmp_path: Path) ->
         )
         assert proc.returncode == 0, _tail(proc)
 
+    documented = _LAUNCHER_CMD.search(launcher_blocks[0][0])
+    assert documented is not None
+    entry = ROOT / documented.group(1)
+    assert entry.is_file(), f"benchmark.md documents a missing entry point: {entry}"
+
     proc = subprocess.run(
-        ["node", str(ROOT / "index.js"), "run", str(workspace)],
+        [node, str(entry), "run", str(workspace)],
         cwd=str(ROOT),
         capture_output=True,
         timeout=300,

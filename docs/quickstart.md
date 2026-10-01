@@ -338,8 +338,9 @@ rather than repair the log by hand.
 
 ### The npm launcher always exits 0
 
-It should not. `index.js` exits with the child verifier's code, so a nonzero
-result reaches your shell:
+It should not. The published bin (`bin/plan-auditor.js`, which `npx` and the
+package's `bin` field resolve to) exits with the child verifier's code, so a
+nonzero result reaches your shell:
 
 ```bash
 npx plan-auditor audit .

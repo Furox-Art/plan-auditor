@@ -245,9 +245,12 @@ forwards to `python -m supervisor.cli`, so it needs Python 3.10+ on `PATH`. Pref
 npx plan-auditor --help
 ```
 
-The launcher propagates the verifier's exit code rather than defaulting to
-success, so `npx plan-auditor audit .` is as CI-safe as the console script. A
-missing or unstartable Python fails closed with a nonzero code, never `0`.
+`npx plan-auditor` is what the package's `bin` field points at
+(`bin/plan-auditor.js`), and it mirrors the verifier's exit code rather than
+defaulting to success — so `npx plan-auditor audit .` is as CI-safe as the console
+script. Verified exit codes: a failing `run` returns `1`, a blocked `audit` returns
+`2`, a proven workspace returns `0`, and an unstartable Python fails closed with a
+nonzero code.
 
 ## Troubleshooting
 

@@ -83,11 +83,12 @@ the offending source line and a caret — so quoting it verbatim would be correc
 some interpreters and wrong on the rest. Every remaining line above is verbatim,
 the step fails with `exit=1`, and the invocation exits `1`.
 
-The same run through the npm launcher exits `1` too, because the launcher
-propagates the child's code rather than defaulting to success:
+The same run through the published npm bin exits `1` too, because the launcher
+propagates the child's code rather than defaulting to success. `bin/plan-auditor.js`
+is what `npx plan-auditor` resolves to:
 
 ```console
-$ node index.js run /path/to/examples/fib
+$ node bin/plan-auditor.js run /path/to/examples/fib
 [FAIL] adım 1: fib.py defines a correct fib() function (deneme 1/3)
        - geçti | fib.py VAR
        - geçti | pattern eşleşti

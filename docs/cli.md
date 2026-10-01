@@ -148,11 +148,29 @@ underlying problem; re-arm only deliberately with `plan-auditor run . 1 --force`
 
 ## npm launcher exit codes
 
-`index.js` is the `npx plan-auditor` entry point. It exits with the verifier's
-code — `0` on a proven workspace, the child's `1`/`2` otherwise — and exits `1`
-if Python cannot be started at all. A failing gate can never look like a success
-through the launcher. `tests/test_npm_launcher.py` asserts both directions plus
-the fail-closed spawn error path.
+There are two Node entry points and both mirror the verifier's code:
+
+| Entry point | Reached by |
+|---|---|
+| `bin/plan-auditor.js` | `npx plan-auditor`, `npm install -g`, the `bin` field in `package.json` |
+| `index.js` | `require('plan-auditor')`, the `main` field, or running it directly |
+
+Both exit `0` on a proven workspace, the child's `1` for a failed step and `2` for
+a blocked audit, and `1` if Python cannot be started at all. A failing gate can
+never look like a success through either launcher.
+
+```bash
+node bin/plan-auditor.js audit .
+echo $?
+
+npx plan-auditor audit .
+echo $?
+```
+
+`tests/test_npm_launcher.py` runs every exit-code assertion against both
+entry points, asserts the launcher's code equals the underlying CLI's, and repeats
+the failing/passing checks against the packed npm tarball so a fix that only works
+in the working tree fails the suite.
 
 ## Hooks
 
