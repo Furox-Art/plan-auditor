@@ -7,6 +7,10 @@ on:
     paths:
       - ".github/pypi-release-trigger"
 
+# One trigger, two registries. npm-publish.yml watches the same
+# .github/pypi-release-trigger path, so a single version bump publishes to PyPI
+# and npm together. The groups are deliberately separate so a slow PyPI upload
+# cannot cancel an npm publish or the other way round.
 concurrency:
   group: pypi-release
   cancel-in-progress: false
@@ -112,17 +116,27 @@ jobs:
           fi
       # Previously both upload attempts set continue-on-error and the outcome
       # was judged afterwards, so a genuine upload failure could be swallowed
-      # and the job could report success with nothing published. There is now
-      # exactly one upload path, it uses OIDC trusted publishing only (no
-      # API-token fallback), and any failure fails the job outright.
+      # and the job could report success with nothing published. Any failure now
+      # fails the job outright.
       - name: Build distributions
         if: steps.gate.outputs.skip != 'true'
         run: |
           python -m pip install "build==1.6.1"
           python -m build
       - name: Publish to PyPI with trusted publishing
+        id: trusted_publish
         if: steps.gate.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      # Documented fallback, not the default path. It runs only when the step
+      # above fails, which should mean the trusted publisher has been removed
+      # from PyPI and the maintainer has provisioned PYPI_API_TOKEN instead. PyPI
+      # has no equivalent of npm's --provenance, so the attestation is weaker on
+      # this path. Delete this step once trusted publishing is confirmed working.
+      - name: Publish to PyPI with the token fallback
+        if: steps.gate.outputs.skip != 'true' && steps.trusted_publish.outcome != 'success'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
       - name: Wait for PyPI propagation
         if: steps.gate.outputs.skip != 'true'
         shell: bash

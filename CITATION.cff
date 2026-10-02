@@ -21,8 +21,8 @@ authors:
 repository-code: "https://github.com/Furox-Art/plan-auditor"
 url: "https://github.com/Furox-Art/plan-auditor"
 license: MIT
-version: 2.4.1
-date-released: "2026-09-29"
+version: 2.4.2
+date-released: "2026-10-03"
 keywords:
   - AI coding agents
   - deterministic verification

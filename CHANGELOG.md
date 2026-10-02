@@ -2,6 +2,36 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## v2.4.2 - 2026-10-03
+
+- **npm publishing is restored, and `2.4.2` exists because the published `2.4.1`
+  npm build is broken.** Verified against the registry tarball, not against the
+  repository: `plan-auditor@2.4.1` ships an `index.js` that passes
+  `cwd: __dirname` to `spawn`, so `npx plan-auditor validate .` from a
+  workspace directory resolves `.` against the *installed package directory* and
+  reports `plan yok: .../node_modules/plan-auditor/.plan-auditor/plan.json`. The
+  launcher starts and an absolute workspace path works, so the failure is silent
+  and looks authoritative — it audits the wrong tree. `2.4.1` cannot be
+  republished because npm versions are immutable, hence the patch bump.
+- **The launcher now runs the CLI in the caller's working directory.** `index.js`
+  keeps `process.cwd()` and prepends the package directory to `PYTHONPATH`
+  instead, so the bundled `supervisor` package stays importable without changing
+  what a relative workspace path means.
+- **`npm publish` runs again.** The previous commit replaced the publish step
+  with `echo "npm publishing is disabled" && exit 0`, so the workflow reported
+  success while publishing nothing. Publishing is back, gated on the version not
+  already existing on the registry, using OIDC trusted publishing with
+  `npm publish --provenance`. `NPM_TOKEN` remains available as an explicitly
+  documented fallback only.
+- **The publish path proves the artifact works before uploading it.** The gate
+  packs the tarball, installs it into a throwaway directory, and runs the
+  *installed* `bin/plan-auditor.js` from an unrelated working directory against a
+  throwaway workspace. The `2.4.0` syntax error and the `2.4.1` wrong-directory
+  bug both fail that check.
+- **npm and PyPI now share one release trigger.** Touching
+  `.github/pypi-release-trigger` on `main` publishes the same version to both
+  registries, so the two cannot drift apart.
+
 ## Unreleased — OSS visibility and onboarding
 
 Documentation and project-metadata work only. No behaviour in the supervisor, the
