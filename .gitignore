@@ -35,3 +35,12 @@ node_modules/
 .coverage.*
 coverage.xml
 htmlcov/
+
+# npm pack output written by the tarball-content gate in build.yml and
+# npm-publish.yml, plus the tarball itself.
+pack.json
+*.tgz
+
+# mypy cache from the type ratchet job
+.mypy_cache/
+.ruff_cache/

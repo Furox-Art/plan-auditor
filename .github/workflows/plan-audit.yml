@@ -5,17 +5,28 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Default to read-only; jobs that need more opt in explicitly.
 permissions:
   contents: read
 
+concurrency:
+  group: plan-audit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   audit:
+    name: audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
+      # The package is installed from the checkout (not editable) and
+      # rootdir conftest.py pins the suite to that installed copy, so the tests
+      # exercise what would actually ship.
       - name: Install package and test dependency
         run: |
           python -m pip install --upgrade pip
@@ -26,22 +37,57 @@ jobs:
         run: python scripts/audit_check.py validate .
       - name: Unit test gate (explicit diagnostic)
         run: python -m pytest tests/ -q
-      # Measured 68% on this commit. The floor sits just below that so it blocks
-      # regressions without making the existing backlog permanently red; raise it
-      # as tests land. scripts/stop_gate.py (0%) and supervisor/seal_migration.py
-      # (36%) are the obvious next targets.
+      # The source set, branch mode and the 65% floor all live in
+      # [tool.coverage.run]/[tool.coverage.report] in pyproject.toml, so the
+      # workflow cannot drift away from what a local run enforces. Measured at
+      # 68% on this commit; scripts/stop_gate.py (0%) and
+      # supervisor/seal_migration.py (36%) are the obvious next targets.
       - name: Branch coverage gate (no-regression floor)
-        run: >-
-          python -m pytest tests/ -q
-          --cov=supervisor --cov=scripts --cov-branch
-          --cov-report=term-missing
-          --cov-fail-under=65
+        run: python -m pytest tests/ -q --cov --cov-report=term-missing
+      # Generate the machine-readable report the upload and the artifact use.
+      - name: Generate the Codecov report
+        run: python -m pytest tests/ -q --cov --cov-report=xml:coverage.xml
+      # This step previously pointed at ./coverage.xml, which no coverage run
+      # produced, and set fail_ci_if_error: false, so every upload failed
+      # silently while the badge stayed "unknown".
+      #
+      # The repository has no CODECOV_TOKEN secret (`gh secret list` shows only
+      # NPM_TOKEN) and tokenless upload is rejected for pushes to a protected
+      # branch. Rather than fail every run on a missing third-party credential
+      # or silently swallow the failure, the upload is skipped with an explicit
+      # warning when the secret is absent, and strictly enforced when present.
+      # The report is always uploaded as an artifact either way, so the
+      # measurement is never lost. Add the secret to enable the upload.
+      #
+      # The secret is resolved in a step and passed through `env`: the `secrets`
+      # context is not available in a step-level `if`, and referencing it there
+      # invalidates the whole workflow file rather than failing one step.
+      - name: Detect whether Codecov upload is configured
+        id: codecov
+        shell: bash
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CODECOV_TOKEN is not configured, so coverage was measured but not published."
+            echo "::warning::coverage.xml is still available as the coverage-report job artifact."
+          fi
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        if: steps.codecov.outputs.configured == 'true'
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           files: ./coverage.xml
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload the coverage report as an artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: error
       - name: Fib example gate (explicit diagnostic)
         run: python -m pytest examples/fib/test_fib.py -q
       - name: Verify and seal plan
@@ -69,10 +115,13 @@ jobs:
           plan-auditor evidence verify .
 
   supervisor-runtime:
+    name: supervisor-runtime
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install package and audit dependency
@@ -153,10 +202,19 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
+    # ubuntu only, deliberately. Windows/macOS are covered by wheel-cli-smoke,
+    # which builds and installs a real wheel on all three. Running the *unit*
+    # suite on Windows additionally exposes a pre-existing race in the agent
+    # registry write lock (test_runtime_root_hardening.py::
+    # test_concurrent_heartbeat_and_ownership_preserve_each_other, which fails
+    # roughly 1 run in 12 on Windows at 0dabcae). Widening this matrix is worth
+    # doing once that race is fixed.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package and test dependency
