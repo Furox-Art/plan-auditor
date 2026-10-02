@@ -21,10 +21,16 @@
     "SECURITY.md",
     "LICENSE",
     "!**/__pycache__",
-    "!**/*.py[cod]"
+    "!**/*.py[cod]",
+    "!**/*.test.js"
   ],
   "scripts": {
-    "test": "node --check index.js && node --check bin/plan-auditor.js"
+    "test": "node --check index.js && node --check bin/plan-auditor.js",
+    "test:contract": "node --check bin/launcher_contract.test.js && node bin/launcher_contract.test.js",
+    "prepack": "npm run test && npm run test:contract"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [
     "ai-agents",

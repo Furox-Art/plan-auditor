@@ -5,17 +5,28 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Default to read-only; jobs that need more opt in explicitly.
 permissions:
   contents: read
 
+concurrency:
+  group: plan-audit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   audit:
+    name: audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
+      # The package is installed from the checkout (not editable) and
+      # rootdir conftest.py pins the suite to that installed copy, so the tests
+      # exercise what would actually ship.
       - name: Install package and test dependency
         run: |
           python -m pip install --upgrade pip
@@ -26,21 +37,24 @@ jobs:
         run: python scripts/audit_check.py validate .
       - name: Unit test gate (explicit diagnostic)
         run: python -m pytest tests/ -q
-      # Measured 68% on this commit. The floor sits just below that so it blocks
-      # regressions without making the existing backlog permanently red; raise it
-      # as tests land. scripts/stop_gate.py (0%) and supervisor/seal_migration.py
-      # (36%) are the obvious next targets.
+      # The source set, branch mode and the 65% floor all live in
+      # [tool.coverage.run]/[tool.coverage.report] in pyproject.toml, so the
+      # workflow cannot drift away from what a local run enforces. Measured at
+      # 68% on this commit; scripts/stop_gate.py (0%) and
+      # supervisor/seal_migration.py (36%) are the obvious next targets.
       - name: Branch coverage gate (no-regression floor)
-        run: >-
-          python -m pytest tests/ -q
-          --cov=supervisor --cov=scripts --cov-branch
-          --cov-report=term-missing
-          --cov-fail-under=65
+        run: python -m pytest tests/ -q --cov --cov-report=term-missing
+      # Previously this pointed at ./coverage.xml, which the coverage run never
+      # produced, and fail_ci_if_error was false, so uploads failed silently and
+      # the Codecov badge stayed "unknown". The XML report is now generated
+      # explicitly and a failed upload fails the job.
+      - name: Generate the Codecov report
+        run: python -m pytest tests/ -q --cov --cov-report=xml:coverage.xml
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           files: ./coverage.xml
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Fib example gate (explicit diagnostic)
         run: python -m pytest examples/fib/test_fib.py -q
@@ -69,10 +83,13 @@ jobs:
           plan-auditor evidence verify .
 
   supervisor-runtime:
+    name: supervisor-runtime
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install package and audit dependency
@@ -144,7 +161,7 @@ jobs:
         run: plan-auditor evidence verify .
 
   python-compat:
-    name: python-compat (${{ matrix.python-version }})
+    name: python-compat (${{ matrix.python-version }}, ${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -153,10 +170,20 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
-    runs-on: ubuntu-latest
+        # Previously every interpreter was exercised on ubuntu only, so the
+        # Windows EACCES and symlink paths in the suite never ran on Windows
+        # and macOS behaviour was untested. The full matrix is 12 jobs and each
+        # one takes well under a minute.
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package and test dependency

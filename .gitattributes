@@ -1,0 +1,21 @@
+# Normalise line endings in the repository.
+#
+# The checkout had no .gitattributes, so a Windows clone with core.autocrlf=true
+# materialised CRLF working-tree files. Those CRLF copies are what `python -m
+# build` picked up, so the published sdist and wheel contained CRLF line endings
+# and their hashes differed from an identically-built artifact produced on Linux.
+# Pinning text files to LF makes a build reproducible across platforms.
+* text=auto eol=lf
+
+# Anything explicitly binary must never be line-ending translated.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.whl binary
+*.tar.gz binary
+*.tgz binary
+
+# Lockfiles and generated artefacts are checked in byte-for-byte.
+package-lock.json -text
