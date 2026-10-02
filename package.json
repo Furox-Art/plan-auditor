@@ -27,7 +27,7 @@
   "scripts": {
     "test": "node --check index.js && node --check bin/plan-auditor.js",
     "test:contract": "node --check bin/launcher_contract.test.js && node bin/launcher_contract.test.js",
-    "prepack": "npm run test && npm run test:contract"
+    "test:tarball": "node bin/check_tarball_contents.js"
   },
   "engines": {
     "node": ">=18"

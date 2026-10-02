@@ -4,51 +4,94 @@
 /**
  * Assert the packed npm tarball contains only allowlisted files.
  *
- * `npm pack --dry-run --json` writes npm's log lines before the JSON payload,
- * so the output is not parseable as-is. This reads the file, locates the JSON
- * array, and only then validates it. Being a real file (rather than an inline
- * `node -e` blob) also means it is exercised by `npm test` locally.
+ * This runs `npm pack --dry-run --json` itself, so the check cannot be skipped
+ * by forgetting a shell redirect, and it parses the output rather than assuming
+ * bare JSON: npm writes a progress bar whose "[====]" prefix looks like the
+ * start of an array, plus its own npm notice lines, to the same stream.
+ *
+ * Keeping this in a file rather than an inline `node -e` also means
+ * `npm run test:tarball` behaves identically on a developer machine and in CI,
+ * which is what caught the inline version failing only in CI.
  */
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
-const packPath = process.argv[2] || 'pack.json';
-if (!fs.existsSync(packPath)) {
-  console.error(`missing ${packPath}; run "npm pack --dry-run --json > ${packPath}" first`);
-  process.exit(1);
-}
+const PACK_ARGS = ['pack', '--dry-run', '--json'];
 
-// Decode encoding-agnostically: a shell redirect can capture the stream as
-// UTF-16LE (PowerShell) while bash produces UTF-8, and a BOM would otherwise
-// make the payload unparseable.
-function readCaptured(file) {
-  const buf = fs.readFileSync(file);
-  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
-    return buf.toString('utf16le').replace(/^﻿/, '');
+const packed =
+  process.platform === 'win32'
+    ? // npm is a .cmd shim on Windows, which spawnSync cannot execute
+      // directly. Passing the arguments through cmd.exe would need quoting, so
+      // locate the real npm-cli.js and run it with the current interpreter
+      // instead: no shell, no quoting, no deprecation warning.
+      spawnSync(process.execPath, [npmCliEntry(), ...PACK_ARGS], {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      })
+    : spawnSync('npm', PACK_ARGS, {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      });
+
+/** Resolve npm's JavaScript entry point on Windows. */
+function npmCliEntry() {
+  const roots = (process.env.APPDATA || '').split(';').filter(Boolean);
+  const candidates = [];
+  for (const root of roots) {
+    candidates.push(`${root}\\npm\\node_modules\\npm\\bin\\npm-cli.js`);
   }
-  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-    return buf.toString('utf8').replace(/^﻿/, '');
+  // A Node installed system-wide or via a version manager.
+  candidates.push(
+    `${path.dirname(process.execPath)}\\node_modules\\npm\\bin\\npm-cli.js`
+  );
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
   }
-  return buf.toString('utf8').replace(/^﻿/, '');
+  throw new Error(
+    `could not locate npm-cli.js; looked in:\n  ${candidates.join('\n  ')}`
+  );
 }
 
-const raw = readCaptured(packPath);
-const start = raw.indexOf('[');
-if (start === -1) {
-  console.error('npm pack produced no JSON payload:\n' + raw.slice(0, 400));
+if (packed.error) {
+  console.error(`could not run npm pack: ${packed.error.message}`);
   process.exit(1);
 }
 
-let parsed;
-try {
-  parsed = JSON.parse(raw.slice(start));
-} catch (err) {
-  console.error(`could not parse the npm pack payload: ${err.message}`);
+const raw = `${packed.stdout || ''}${packed.stderr || ''}`;
+
+/**
+ * Find the JSON array in the captured stream.
+ *
+ * Trying each "[" and keeping the first candidate that parses as the array we
+ * expect is deliberate: the progress bar and notice lines contain bracket
+ * characters, so anchoring on the first one picks up garbage.
+ */
+function parsePayload(text) {
+  for (let i = text.indexOf('['); i !== -1; i = text.indexOf('[', i + 1)) {
+    // The payload is emitted early; do not scan an unbounded log.
+    if (text.slice(0, i).split('\n').length > 400) break;
+    let candidate;
+    try {
+      candidate = JSON.parse(text.slice(i));
+    } catch {
+      continue;
+    }
+    if (Array.isArray(candidate) && candidate.length && typeof candidate[0] === 'object') {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+const parsed = parsePayload(raw);
+if (parsed === null) {
+  console.error('could not find the npm pack JSON payload in:\n' + raw.slice(0, 400));
   process.exit(1);
 }
 
-const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+const entry = parsed[0];
 const paths = (entry.files || []).map((f) => f.path);
 
 const FORBIDDEN_PATTERNS = [
@@ -65,7 +108,12 @@ if (forbidden.length) {
   process.exit(1);
 }
 
-const REQUIRED = ['index.js', 'bin/plan-auditor.js', 'supervisor/cli.py', 'scripts/audit_check.py'];
+const REQUIRED = [
+  'index.js',
+  'bin/plan-auditor.js',
+  'supervisor/cli.py',
+  'scripts/audit_check.py',
+];
 const missing = REQUIRED.filter((r) => !paths.includes(r));
 if (missing.length) {
   console.error('tarball is missing required files:');

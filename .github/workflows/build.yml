@@ -79,6 +79,4 @@ jobs:
       - name: Launcher syntax and contract tests
         run: npm test && npm run test:contract
       - name: Confirm the packed tarball ships only allowlisted files
-        run: |
-          npm pack --dry-run --json > pack.json
-          node bin/check_tarball_contents.js pack.json
+        run: npm run test:tarball
