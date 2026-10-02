@@ -1,12 +1,37 @@
 const { spawn } = require('child_process');
+const path = require('path');
 
 const FAILURE_EXIT_CODE = 1;
 
+function pythonExecutable() {
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+/**
+ * Build the child environment.
+ *
+ * The installed npm package carries its own copy of `supervisor/` next to this
+ * file, so that directory has to be importable. Prepending it to PYTHONPATH
+ * does that without changing the working directory, which matters because the
+ * workspace path the user passed (often a bare ".") must resolve against the
+ * directory they invoked the command from, not against the package location.
+ *
+ * An existing PYTHONPATH is preserved rather than replaced.
+ */
+function childEnv() {
+  const existing = process.env.PYTHONPATH;
+  const packageRoot = __dirname;
+  return {
+    ...process.env,
+    PYTHONPATH: existing ? `${packageRoot}${path.delimiter}${existing}` : packageRoot,
+  };
+}
+
 function runPython(args) {
-  const python = process.platform === 'win32' ? 'python' : 'python3';
-  return spawn(python, ['-m', 'supervisor.cli', ...args], {
+  return spawn(pythonExecutable(), ['-m', 'supervisor.cli', ...args], {
     stdio: 'inherit',
-    cwd: __dirname,
+    cwd: process.cwd(),
+    env: childEnv(),
   });
 }
 

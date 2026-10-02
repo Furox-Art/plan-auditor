@@ -90,6 +90,20 @@ Citation = "https://github.com/Furox-Art/plan-auditor/blob/main/CITATION.cff"
 
 [tool.hatch.build.targets.wheel]
 packages = ["supervisor", "scripts"]
+# The README tells users to copy SKILL.md, hooks/, references/ and the npm
+# launcher into their host's skills directory, and docs/cli.md documents running
+# hooks/gate_hook.py directly. A wheel that omitted them would install a CLI
+# whose documented integration path is broken, so they ship under a single
+# namespace directory rather than loose at the site-packages root.
+[tool.hatch.build.targets.wheel.force-include]
+"SKILL.md" = "plan_auditor_skill/SKILL.md"
+"index.js" = "plan_auditor_skill/index.js"
+"package.json" = "plan_auditor_skill/package.json"
+"bin/plan-auditor.js" = "plan_auditor_skill/bin/plan-auditor.js"
+"hooks/gate_hook.py" = "plan_auditor_skill/hooks/gate_hook.py"
+"hooks/README.md" = "plan_auditor_skill/hooks/README.md"
+"references/plan-format.md" = "plan_auditor_skill/references/plan-format.md"
+"mkdocs.yml" = "plan_auditor_skill/mkdocs.yml"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -118,6 +132,21 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+
+[tool.coverage.run]
+branch = true
+# Coverage must measure the installed distribution, not the checkout. rootdir
+# conftest.py imports and pins `supervisor`/`scripts` from site-packages before
+# any test module loads, so resolving these as *packages* (rather than as
+# directories under the working tree) makes coverage report the modules that
+# were actually executed. Naming the source directories instead would report
+# the checkout's copies as 0% covered and silently void the coverage gate.
+source_pkgs = ["supervisor", "scripts"]
+
+[tool.coverage.report]
+show_missing = true
+# Keep the floor in one place so the workflow and local runs cannot disagree.
+fail_under = 65
 
 [tool.ruff]
 line-length = 100
