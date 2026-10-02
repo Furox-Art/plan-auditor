@@ -11,27 +11,37 @@ concurrency:
   group: pypi-release
   cancel-in-progress: false
 
+# Read-only by default. The publish job is the only place that needs more, and
+# it asks for exactly what it uses.
 permissions:
   contents: read
 
 jobs:
   package-preflight:
+    name: release-preflight
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install package, tests, and build tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install . pytest build twine
+          python -m pip install "build==1.6.1" "twine==7.0.0"
+          python -m pip install . pytest
+      - name: Require one version across every source
+        run: python .github/scripts/check_version_lockstep.py
       - name: Run full regression suite
         run: python -m pytest tests/ -q
       - name: Build distributions
         run: python -m build
       - name: Validate distributions
-        run: python -m twine check dist/*
+        run: python -m twine check --strict dist/*
+      - name: Assert wheel and sdist ship the documented assets
+        run: python .github/scripts/check_dist_assets.py
 
   wheel-preflight:
     name: release-wheel-cli-smoke (${{ matrix.os }})
@@ -43,31 +53,43 @@ jobs:
           - windows-latest
           - macos-latest
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Build real wheel
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build
+          python -m pip install "build==1.6.1"
           python -m build --wheel
       - name: Install wheel in clean venv and run full CLI smoke
         run: python tests/wheel_cli_smoke.py --wheel-dir dist
 
   publish:
+    name: publish to PyPI
     needs: [package-preflight, wheel-preflight]
     runs-on: ubuntu-latest
+    # Protects the `pypi` environment. Required reviewers are deliberately not
+    # enabled: this is a single-maintainer repository, so a required reviewer
+    # would block every release until a second person approves, which trades a
+    # real safety property (human sign-off on a supply-chain artefact) for a
+    # permanently stuck release train. The compensating controls are the `pypi`
+    # deployment branch policy (main only), the version-existence gate below,
+    # and OIDC trusted publishing, which means no long-lived API token exists
+    # in repository secrets to leak.
     environment: pypi
     permissions:
-      contents: write
+      # id-token is what mints the OIDC attestation PyPI trusts.
       id-token: write
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Resolve package metadata
         id: meta
         shell: bash
@@ -88,44 +110,19 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Detect API token fallback
-        id: auth
-        if: steps.gate.outputs.skip != 'true'
-        env:
-          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          if [ -n "$PYPI_TOKEN" ]; then echo "has_token=true" >> "$GITHUB_OUTPUT"; else echo "has_token=false" >> "$GITHUB_OUTPUT"; fi
+      # Previously both upload attempts set continue-on-error and the outcome
+      # was judged afterwards, so a genuine upload failure could be swallowed
+      # and the job could report success with nothing published. There is now
+      # exactly one upload path, it uses OIDC trusted publishing only (no
+      # API-token fallback), and any failure fails the job outright.
       - name: Build distributions
         if: steps.gate.outputs.skip != 'true'
         run: |
-          python -m pip install build
+          python -m pip install "build==1.6.1"
           python -m build
       - name: Publish to PyPI with trusted publishing
-        id: trusted_publish
         if: steps.gate.outputs.skip != 'true'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
-        continue-on-error: true
-      - name: Publish to PyPI with API token fallback
-        id: token_publish
-        if: steps.gate.outputs.skip != 'true' && steps.trusted_publish.outcome != 'success' && steps.auth.outputs.has_token == 'true'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-        continue-on-error: true
-      - name: Require successful PyPI upload
-        if: steps.gate.outputs.skip != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          trusted="${{ steps.trusted_publish.outcome }}"
-          token="${{ steps.token_publish.outcome }}"
-          if [ "$trusted" = "success" ] || [ "$token" = "success" ]; then
-            echo "PyPI upload action succeeded."
-            exit 0
-          fi
-          echo "PyPI upload failed. Trusted publishing outcome: $trusted"
-          echo "PyPI upload failed. Token fallback outcome: $token"
-          exit 1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
       - name: Wait for PyPI propagation
         if: steps.gate.outputs.skip != 'true'
         shell: bash
@@ -152,8 +149,13 @@ jobs:
 
           echo "::warning::PyPI upload succeeded, but public indexes have not propagated yet."
           exit 0
+      # The GitHub release was previously created unconditionally, so re-running
+      # this workflow for an already-published version rewrote the release body
+      # a second time. v2.4.1 carries a duplicated notes block for exactly that
+      # reason. The step is now gated on the same skip flag as the upload.
       - name: Create GitHub release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
+        if: steps.gate.outputs.skip != 'true'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ steps.meta.outputs.version }}
           target_commitish: ${{ github.sha }}

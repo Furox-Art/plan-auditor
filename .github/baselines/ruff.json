@@ -1,0 +1,18 @@
+{
+  "counts": {
+    "E741": 1,
+    "F401": 18,
+    "F841": 1,
+    "I001": 31,
+    "UP006": 493,
+    "UP031": 186,
+    "UP035": 73,
+    "UP037": 1,
+    "UP045": 80
+  },
+  "note": "Ratchet baseline. Findings are never suppressed; this file only records the current per-rule ceiling so regressions fail CI. Regenerate with scripts/quality_ratchet.py --write-baseline; it may only decrease.",
+  "recorded_at": "0dabcae",
+  "tool": "ruff",
+  "tool_version": "ruff 0.16.10",
+  "total": 884
+}
