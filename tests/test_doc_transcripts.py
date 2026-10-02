@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.trusted_workspace import establish_trust
+
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 BENCHMARK = ROOT / "docs" / "benchmark.md"
@@ -95,6 +97,9 @@ def _real_failing_run(tmp_path: Path) -> list[str]:
     """Run the deterministic core through the attempt cap and the refusal."""
     workspace = tmp_path / "failing"
     plan_path = _failing_plan(workspace)
+    # The documented sequence seals the plan before `run`; the CLI refuses to
+    # execute an unsealed plan's checks, so the fixture must do the same.
+    establish_trust(workspace)
     lines: list[str] = []
     for _ in range(3):
         _reset_step_one(plan_path)

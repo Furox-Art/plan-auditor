@@ -29,6 +29,18 @@ import zipfile
 from contextlib import contextmanager
 
 try:
+    from scripts.contract import PlanTrustError
+    from scripts.contract import canonical_json as canonical
+except ImportError:
+    from contract import PlanTrustError
+    from contract import canonical_json as canonical
+
+try:
+    from scripts.exec_trust import require_plan_trust
+except ImportError:
+    from exec_trust import require_plan_trust
+
+try:
     from scripts.integrity import (
         EVIDENCE_HEAD_DOMAIN,
         EVIDENCE_RECORD_DOMAIN,
@@ -363,10 +375,10 @@ def validate_plan(data):
                 add("%s: %s cmd boş olmayan string olmalı" % (label, kind))
             if has_argv_key and not has_argv:
                 add("%s: %s argv boş olmayan string listesi olmalı" % (label, kind))
-            if "shell" in check and not isinstance(check.get("shell"), bool):
-                add("%s: %s shell boolean olmalı" % (label, kind))
-            if check.get("shell") is True and has_argv_key:
-                add("%s: %s shell=true ile argv birlikte kullanılamaz" % (label, kind))
+            if "shell" in check:
+                add("%s: %s shell kaldırıldı; 'shell' anahtarı artık kabul edilmez, "
+                    "argv listesi ya da kabuksuz ayrıştırılan 'cmd' kullanın"
+                    % (label, kind))
             validate_runtime_fields(check, label)
         elif kind == "pytest":
             if any(key in check for key in ("cmd", "argv", "shell")):
@@ -504,13 +516,12 @@ def norm_check(check):
                 normalized[key] = check[key]
         return normalized
     if check["type"] == "exec":
+        _reject_shell(check)
         normalized = {"type": "run", "expect_exit": check.get("expect_exit", 0)}
         if "argv" in check:
             normalized["argv"] = list(check["argv"])
         else:
             normalized["cmd"] = check["cmd"]
-        if check.get("shell") is True:
-            normalized["shell"] = True
         for key in ("timeout", "output_regex", "max_output_bytes"):
             if key in check:
                 normalized[key] = check[key]
@@ -532,33 +543,105 @@ def _safe_path(base, relative):
     return target
 
 
+def _windows_argv(command):
+    """Split a Windows command line into argv the way ``CommandLineToArgvW`` does.
+
+    No shell is involved, so ``;``, ``|``, ``&``, ``&&`` and redirections are
+    ordinary argument characters and can never become control flow. Double quotes
+    group, and a backslash is literal except immediately before a closing quote.
+    """
+    argv = []
+    current = []
+    quoted = False
+    # A quoted empty string is a real argument (""), so token existence is tracked
+    # separately from token content; otherwise argv length would silently shrink.
+    started = False
+    index = 0
+    length = len(command)
+    while index < length:
+        char = command[index]
+        if char == "\\":
+            backslashes = 0
+            while index < length and command[index] == "\\":
+                backslashes += 1
+                index += 1
+            started = True
+            if index < length and command[index] == '"':
+                # CommandLineToArgvW rule: 2n backslashes before a quote emit n
+                # backslashes and a literal quote, 2n+1 emit n backslashes and an
+                # escaped quote. Either way the quote is never a delimiter.
+                current.append("\\" * (backslashes // 2))
+                current.append('"')
+                index += 1
+            else:
+                current.append("\\" * backslashes)
+            continue
+        if char == '"':
+            quoted = not quoted
+            started = True
+            index += 1
+            continue
+        if char in " \t" and not quoted:
+            if started:
+                argv.append("".join(current))
+                current = []
+                started = False
+            index += 1
+            continue
+        current.append(char)
+        started = True
+        index += 1
+    if quoted:
+        raise ValueError("cmd ayrıştırılamadı: kapanmamış tırnak")
+    if started:
+        argv.append("".join(current))
+    return argv
+
+
 def _legacy_split(cmd):
-    try:
-        argv = shlex.split(cmd, posix=(os.name != "nt"))
-    except ValueError as exc:
-        raise ValueError("cmd ayrıştırılamadı: %s" % exc) from exc
+    """Split a plan ``cmd`` string into argv without invoking a shell."""
     if os.name == "nt":
-        argv = [arg[1:-1] if len(arg) >= 2 and arg[0] == arg[-1] == '"' else arg for arg in argv]
+        argv = _windows_argv(cmd)
+    else:
+        try:
+            argv = shlex.split(cmd, posix=True)
+        except ValueError as exc:
+            raise ValueError("cmd ayrıştırılamadı: %s" % exc) from exc
     if not argv:
         raise ValueError("cmd boş komuta dönüştü")
     return argv
 
 
+#: Reported whenever a plan still asks for shell execution. Shell mode handed the
+#: entire command line to an interpreter, so ``;``, ``&&``, pipes and redirection
+#: became control flow instead of literal arguments.
+_SHELL_UNSUPPORTED = (
+    "shell yürütme kaldırıldı: 'shell': true artık kullanılamaz, çünkü komut "
+    "satırının tamamını bir kabuk yorumlayıcısına veriyordu. 'argv' kullanın "
+    "(argüman listesi; hiçbir karakter yorumlanmaz) veya 'cmd'yi koruyun — "
+    "'cmd' kabuk olmadan argv'ye ayrıştırılır."
+)
+
+
+def _reject_shell(check):
+    """Refuse any residual request for shell execution."""
+    if check.get("shell") is True:
+        raise ValueError(_SHELL_UNSUPPORTED)
+    return check
+
+
 def _command_spec(check):
-    """Return ``(command, use_shell)`` with shell disabled by default."""
+    """Return the argv list to execute. A shell is never involved."""
+    _reject_shell(check)
     if "argv" in check:
         argv = check.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and bool(arg) for arg in argv):
             raise ValueError("argv boş olmayan string listesi olmalı")
-        if check.get("shell") is True:
-            raise ValueError("shell=true ile argv birlikte kullanılamaz")
-        return list(argv), False
+        return list(argv)
     cmd = check.get("cmd")
     if not isinstance(cmd, str) or not cmd.strip():
         raise ValueError("cmd boş olmayan string olmalı")
-    if check.get("shell") is True:
-        return cmd, True
-    return _legacy_split(cmd), False
+    return _legacy_split(cmd)
 
 
 
@@ -588,12 +671,13 @@ def _kill_process_tree(proc):
             pass
 
 
-def _bounded_command(command, use_shell, base, timeout, max_output):
+def _bounded_command(command, base, timeout, max_output):
+    """Execute ``command`` (an argv list) with no shell and bounded resources."""
     kwargs = {
-        "shell": use_shell,
         "cwd": base,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.STDOUT,
+        "shell": False,
     }
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -674,7 +758,7 @@ def run_check(check, base, timeout=300):
     kind = check["type"]
     if kind == "run":
         try:
-            command, use_shell = _command_spec(check)
+            command = _command_spec(check)
             max_output = check.get("max_output_bytes", MAX_OUTPUT_BYTES)
             timeout_value = check.get("timeout", timeout)
             expected = check.get("expect_exit", 0)
@@ -687,7 +771,7 @@ def run_check(check, base, timeout=300):
         except (TypeError, ValueError) as exc:
             return False, "komut başlatılamadı: %s" % exc, ""
         rc, state, output, overflow = _bounded_command(
-            command, use_shell, base, timeout_value, max_output
+            command, base, timeout_value, max_output
         )
         if state == "timeout":
             return False, "komut zaman aşımına uğradı; process tree sonlandırıldı", output[-1500:]
@@ -1665,6 +1749,13 @@ def cmd_run(args):
         return 1
     ids = args.ids or None
     target_ids = [step["id"] for step in plan["steps"] if step.get("status") != "verified"] if ids is None else ids
+    # Unconditional and fail-closed: `run` is the command-execution surface, so it
+    # must require trust on every invocation, not only when steps are pending.
+    try:
+        require_plan_trust(args.dir, plan, args.plan)
+    except PlanTrustError as exc:
+        print("GÜVENLİK: %s" % exc)
+        return 2
     all_ok = audit_steps(args.dir, plan, ids=target_ids, mode="run", name=args.plan, force=args.force)
     return 0 if all_ok else 1
 
@@ -1686,6 +1777,11 @@ def cmd_audit(args):
         for err in errs:
             print("ŞEMA HATASI: %s" % err)
         return 1
+    try:
+        require_plan_trust(args.dir, plan, args.plan)
+    except PlanTrustError as exc:
+        print("GÜVENLİK: %s" % exc)
+        return 2
     print("TAM DENETİM: tüm adımlar taze subprocess ile yeniden test ediliyor...\n")
     all_ok = audit_steps(args.dir, plan, ids=None, mode="audit", name=args.plan)
     print()

@@ -6,7 +6,6 @@ against the union of all active plans and their deterministic checks.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,6 +13,12 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from scripts import audit_check as core
+from scripts.contract import (
+    canonical_digest,
+    canonical_json,
+    payload_without_auth,
+    plan_hash,
+)
 from scripts.integrity import (
     ACTIVATION_DOMAIN,
     REQUEST_CONTRACT_DOMAIN,
@@ -31,17 +36,23 @@ ACTIVATION_FORMAT_VERSION = 1
 REQUEST_NAME = "request.json"
 ACTIVATION_NAME = "activation.json"
 
+#: Cryptographic binding between the host request and the plan it approves.
+#: Stamped once at activation; the execution gate re-checks it against the
+#: sealed plan so a request derived from a different plan cannot be reused, and
+#: the seal binds the request digest so it cannot be swapped after sealing.
+REQUEST_PLAN_BINDING_FIELD = "plan_contract_sha256"
+
 
 def _canonical(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return canonical_json(value)
 
 
 def _payload(value: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in value.items() if k != "auth"}
+    return payload_without_auth(value)
 
 
 def _sha256(value: Dict[str, Any]) -> str:
-    return hashlib.sha256(_canonical(_payload(value)).encode("utf-8")).hexdigest()
+    return canonical_digest(payload_without_auth(value))
 
 
 def _request_control_path(root: str | Path, name: str) -> Path:
@@ -163,6 +174,17 @@ def _auth_value(root: Path, key: KeyMaterial | None, domain: str, payload: Dict[
     return value
 
 
+def _stamp_plan_binding(workspace: Path, payload: Dict[str, Any]) -> None:
+    """Record which plan contract this request approves, when one exists."""
+    try:
+        current_plan = core.load_plan(str(workspace))
+    except (OSError, ValueError, SystemExit):
+        # No default plan to bind yet. The request is still authoritative and the
+        # seal will bind it; only the reverse binding is deferred.
+        return
+    payload[REQUEST_PLAN_BINDING_FIELD] = plan_hash(current_plan)
+
+
 def initialize_request(root: str | Path, source: Dict[str, Any]) -> RequestStatus:
     workspace = Path(root).resolve()
     rpath = request_path(workspace)
@@ -175,6 +197,12 @@ def initialize_request(root: str | Path, source: Dict[str, Any]) -> RequestStatu
     errors = validate_request(payload)
     if errors:
         raise ValueError("invalid request contract: " + "; ".join(errors))
+    # Bind the request to the exact plan content it approves. The seal binds the
+    # request digest, and this field binds the request back to the plan, so the
+    # two objects cannot be independently substituted after approval. A workspace
+    # with no default plan yet (named-plan-only, or a host activating the request
+    # before the plan exists) simply carries no binding until it is re-approved.
+    _stamp_plan_binding(workspace, payload)
     try:
         key = load_key(workspace, required=False)
     except IntegrityKeyError as exc:

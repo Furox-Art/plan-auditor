@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.trusted_workspace import establish_trust
+
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "index.js"
 BIN = ROOT / "bin" / "plan-auditor.js"
@@ -73,10 +75,12 @@ def _write_plan(workspace: Path, *, command: str, title: str) -> Path:
 
 def _failing_plan(workspace: Path) -> None:
     _write_plan(workspace, command=FAILING_CMD, title="the sentinel script exits nonzero")
+    establish_trust(workspace)
 
 
 def _passing_plan(workspace: Path) -> None:
     _write_plan(workspace, command=PASSING_CMD, title="the check really passes")
+    establish_trust(workspace)
 
 
 def _launcher(name: str) -> Path:
