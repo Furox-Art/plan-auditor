@@ -40,6 +40,7 @@ All checks must pass on the exact commit SHA being merged:
 | `ruff` | `lint.yml` |
 | `mypy` | `lint.yml` |
 | `version-lockstep` | `lint.yml` |
+| `workflow-syntax` | `lint.yml` |
 | `build (wheel + sdist)` | `build.yml` |
 | `docs (mkdocs --strict)` | `build.yml` |
 | `npm-launcher` | `build.yml` |
