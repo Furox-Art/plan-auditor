@@ -12,6 +12,7 @@ Keeping this in one place means the fixtures cannot drift back into the
 unsealed-execution path the security gate exists to close.
 """
 from __future__ import annotations
+
 import json
 from pathlib import Path
 

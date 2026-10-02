@@ -180,7 +180,7 @@ def _stamp_plan_binding(workspace: Path, payload: Dict[str, Any]) -> None:
     """
     from .plans import all_plan_refs, load_plan_ref
 
-    bindings: Dict[str, str] = {}
+    bindings: dict[str, str] = {}
     try:
         refs = all_plan_refs(workspace)
     except (OSError, ValueError):

@@ -19,12 +19,19 @@ import hashlib
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
-try:
+if TYPE_CHECKING:  # pragma: no cover - type checkers see the single package import
     from scripts.plan_graph import effective_dependencies
-except ImportError:  # pragma: no cover - direct-script execution fallback
-    from plan_graph import effective_dependencies
+else:
+    try:
+        from scripts.plan_graph import effective_dependencies
+    except ImportError:
+        # Direct-script execution puts ``scripts/`` itself on sys.path, so the
+        # module is importable unprefixed. Keeping the runtime fallback preserves
+        # ``python scripts/audit_check.py``; binding it in one branch keeps
+        # static analysis from seeing the name twice.
+        from plan_graph import effective_dependencies
 
 PG_DIR = ".plan-auditor"
 
@@ -62,12 +69,12 @@ def canonical_digest(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def payload_without_auth(value: Dict[str, Any]) -> Dict[str, Any]:
+def payload_without_auth(value: dict[str, Any]) -> dict[str, Any]:
     """Strip the ``auth`` envelope so a MAC never covers itself."""
     return {k: v for k, v in value.items() if k != "auth"}
 
 
-def validate_plan_name(name: Optional[str]) -> Optional[str]:
+def validate_plan_name(name: str | None) -> str | None:
     """Return a safe named-plan basename, or ``None`` for the default plan."""
     if name in (None, "", "default"):
         return None
@@ -81,7 +88,7 @@ def validate_plan_name(name: Optional[str]) -> Optional[str]:
     return value
 
 
-def contract_step(step: Dict[str, Any]) -> Dict[str, Any]:
+def contract_step(step: dict[str, Any]) -> dict[str, Any]:
     """Project the sealed portion of a step, excluding mutable runtime status."""
     return {
         "id": step.get("id"),
@@ -94,7 +101,7 @@ def contract_step(step: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def legacy_v3_contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+def legacy_v3_contract_plan(plan: dict[str, Any]) -> dict[str, Any]:
     """Reproduce the exact v2.1.0/v3 seal hashing contract.
 
     v3 stored raw ``depends_on`` values. v4 canonicalizes the effective graph,
@@ -113,11 +120,11 @@ def legacy_v3_contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def legacy_v3_plan_hash(plan: Dict[str, Any]) -> str:
+def legacy_v3_plan_hash(plan: dict[str, Any]) -> str:
     return canonical_digest(legacy_v3_contract_plan(plan))
 
 
-def contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+def contract_plan(plan: dict[str, Any]) -> dict[str, Any]:
     """Return the v4 sealed contract: task, requirements, tools and the DAG."""
     try:
         dependencies = effective_dependencies(plan)
@@ -126,7 +133,7 @@ def contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
         # graph separately, and a plan that reaches here fails closed on the
         # resulting hash mismatch rather than being silently sealed.
         dependencies = {}
-    steps: List[Dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
     for step in plan.get("steps", []):
         if not isinstance(step, dict):
             continue
@@ -143,16 +150,16 @@ def contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def canonical_plan(plan: Dict[str, Any]) -> str:
+def canonical_plan(plan: dict[str, Any]) -> str:
     return canonical_json(contract_plan(plan))
 
 
-def plan_hash(plan: Dict[str, Any]) -> str:
+def plan_hash(plan: dict[str, Any]) -> str:
     """SHA-256 of the canonical v4 contract — the value a seal must carry."""
     return hashlib.sha256(canonical_plan(plan).encode("utf-8")).hexdigest()
 
 
-def seal_path(base: str | os.PathLike, name: Optional[str] = None) -> str:
+def seal_path(base: str | os.PathLike[str], name: str | None = None) -> str:
     """Resolve the seal that authorises ``name`` under ``base``."""
     safe = validate_plan_name(name)
     root = os.path.realpath(os.fspath(base))

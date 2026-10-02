@@ -27,18 +27,21 @@ import threading
 import time
 import zipfile
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
-try:
+if TYPE_CHECKING:  # pragma: no cover - type checkers see the single package import
     from scripts.contract import PlanTrustError
-    from scripts.contract import canonical_json as canonical
-except ImportError:
-    from contract import PlanTrustError
-    from contract import canonical_json as canonical
-
-try:
     from scripts.exec_trust import require_plan_trust
-except ImportError:
-    from exec_trust import require_plan_trust
+else:
+    # Direct-script execution puts ``scripts/`` itself on sys.path, so these are
+    # importable unprefixed. The runtime fallback is required; the TYPE_CHECKING
+    # branch keeps static analysis from seeing the names bound twice.
+    try:
+        from scripts.contract import PlanTrustError
+        from scripts.exec_trust import require_plan_trust
+    except ImportError:
+        from contract import PlanTrustError
+        from exec_trust import require_plan_trust
 
 try:
     from scripts.integrity import (
@@ -376,9 +379,9 @@ def validate_plan(data):
             if has_argv_key and not has_argv:
                 add("%s: %s argv boş olmayan string listesi olmalı" % (label, kind))
             if "shell" in check:
-                add("%s: %s shell kaldırıldı; 'shell' anahtarı artık kabul edilmez, "
-                    "argv listesi ya da kabuksuz ayrıştırılan 'cmd' kullanın"
-                    % (label, kind))
+                add(f"{label}: {kind} shell kaldırıldı; 'shell' anahtarı artık "
+                    "kabul edilmez, argv listesi ya da kabuksuz ayrıştırılan "
+                    "'cmd' kullanın")
             validate_runtime_fields(check, label)
         elif kind == "pytest":
             if any(key in check for key in ("cmd", "argv", "shell")):
@@ -543,7 +546,7 @@ def _safe_path(base, relative):
     return target
 
 
-def _windows_argv(command):
+def _windows_argv(command: str) -> list[str]:
     """Split a Windows command line into argv the way ``CommandLineToArgvW`` does.
 
     No shell is involved, so ``;``, ``|``, ``&``, ``&&`` and redirections are
@@ -598,7 +601,7 @@ def _windows_argv(command):
     return argv
 
 
-def _legacy_split(cmd):
+def _legacy_split(cmd: str) -> list[str]:
     """Split a plan ``cmd`` string into argv without invoking a shell."""
     if os.name == "nt":
         argv = _windows_argv(cmd)
@@ -623,21 +626,23 @@ _SHELL_UNSUPPORTED = (
 )
 
 
-def _reject_shell(check):
+def _reject_shell(check: dict) -> dict:
     """Refuse any residual request for shell execution."""
     if check.get("shell") is True:
         raise ValueError(_SHELL_UNSUPPORTED)
     return check
 
 
-def _command_spec(check):
+def _command_spec(check: dict) -> list[str]:
     """Return the argv list to execute. A shell is never involved."""
     _reject_shell(check)
     if "argv" in check:
-        argv = check.get("argv")
-        if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and bool(arg) for arg in argv):
+        raw = check.get("argv")
+        if not isinstance(raw, list) or not raw or not all(isinstance(arg, str) and bool(arg) for arg in raw):
             raise ValueError("argv boş olmayan string listesi olmalı")
-        return list(argv)
+        # Every element was just validated as a non-empty str, so this preserves
+        # the argv exactly while giving the caller a concretely typed list.
+        return [arg for arg in raw if isinstance(arg, str)]
     cmd = check.get("cmd")
     if not isinstance(cmd, str) or not cmd.strip():
         raise ValueError("cmd boş olmayan string olmalı")

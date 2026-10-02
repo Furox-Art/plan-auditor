@@ -36,9 +36,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 #: Writes a file only if the plan's command is actually executed.
 MARKER = "PWNED.txt"
-MARKER_CMD = (
-    "python -c \"import pathlib;pathlib.Path('%s').write_text('executed')\"" % MARKER
+_MARKER_WRITE = (
+    "import pathlib;pathlib.Path('PWNED.txt').write_text('executed')"
 )
+MARKER_CMD = f"python -c \"{_MARKER_WRITE}\""
 
 
 def _plan(command: str = MARKER_CMD, *, status: str = "pending") -> dict:
@@ -238,7 +239,10 @@ def test_command_injection_through_argv_does_not_execute(tmp_path: Path):
     """A hostile ``cmd`` string cannot smuggle a second command through."""
     root = _workspace(tmp_path)
     establish_trust(root)
-    payload = "python -c \"import sys; sys.exit(0)\" ; python -c \"import pathlib;pathlib.Path('%s').write_text('x')\"" % MARKER
+    payload = (
+        "python -c \"import sys; sys.exit(0)\" ; python -c "
+        f"\"import pathlib;pathlib.Path('{MARKER}').write_text('x')\""
+    )
     plan = _plan(payload)
     (root / ".plan-auditor" / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
 

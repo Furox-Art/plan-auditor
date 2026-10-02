@@ -178,7 +178,49 @@ if (!launcherAvailable()) {
   function makeWorkspace(command, title) {
     const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'pa-contract-'));
     writePlan(dir, command, title);
+    sealWorkspace(dir);
     return dir;
+  }
+
+  /**
+   * Establish the trust a real workspace must have before its checks may run.
+   *
+   * A plan JSON is untrusted input: the CLI refuses to execute its checks until a
+   * full-contract seal authorises it and a host request contract is bound to that
+   * seal. These fixtures exist to prove the launcher mirrors the verifier's exit
+   * code, so they have to drive the same documented sequence a user follows --
+   * `request init`, then `plan verify` -- rather than reaching for an unsealed
+   * plan. The assertion under test (launcher exit code == verifier exit code) is
+   * unchanged.
+   */
+  function sealWorkspace(dir) {
+    const planDir = path.join(dir, '.plan-auditor');
+    const plan = JSON.parse(fs.readFileSync(path.join(planDir, 'plan.json'), 'utf8'));
+    const stepsByRequirement = (requirementId) =>
+      (plan.steps || [])
+        .filter((step) => (step.covers || []).includes(requirementId))
+        .flatMap((step) => step.verify || []);
+    const requestSource = {
+      format_version: 1,
+      task: plan.task,
+      requirements: (plan.requirements || []).map((req) => ({
+        ...req,
+        acceptance_checks: stepsByRequirement(req.id),
+      })),
+    };
+    const requestPath = path.join(planDir, 'request-source.json');
+    fs.writeFileSync(requestPath, JSON.stringify(requestSource, null, 2), 'utf8');
+    for (const args of [
+      ['request', 'init', dir, '--file', requestPath],
+      ['plan', 'verify', dir],
+    ]) {
+      const result = runLauncher(args, dir);
+      assert.strictEqual(
+        result.status,
+        0,
+        `could not establish trust: ${args.join(' ')}\n${result.stdout}${result.stderr}`
+      );
+    }
   }
 
   function runLauncher(args, cwd) {
