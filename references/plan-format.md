@@ -107,17 +107,17 @@ Structured `argv` is preferred and is the most portable form:
 }
 ```
 
-Shell interpretation is **disabled by default**. Legacy `cmd` strings are parsed
-into an argument vector and executed directly. Operators such as `>`, `&&`,
-pipes, glob expansion, and environment-variable expansion are inert unless the
-check explicitly opts into the shell:
+Shell interpretation is **not available**. Legacy `cmd` strings are tokenised into
+an argument vector and executed directly, so operators such as `>`, `&&`, pipes,
+`$(...)`, backticks and glob characters are inert: they are literal argument text
+handed to the program. A `"shell": true` key is rejected by plan validation and by
+the executor, so a plan can never hand its command line to an interpreter.
 
 ```json
-{"type": "run", "cmd": "tool-a | tool-b", "shell": true}
+{"type": "run", "cmd": "tool-a | tool-b"}   // runs tool-a with "| tool-b" as arguments
 ```
 
-`"shell": true` is an explicit trust-boundary opt-in and cannot be combined with
-`argv`. Generated plans should use `argv` whenever possible.
+Use `argv` whenever possible: nothing is split, escaped or interpreted at all.
 
 Command output is bounded by default so a verifier cannot exhaust memory merely
 by printing unbounded output. `max_output_bytes` can be set within the supported

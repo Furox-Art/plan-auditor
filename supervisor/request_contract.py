@@ -6,7 +6,6 @@ against the union of all active plans and their deterministic checks.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,6 +13,13 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from scripts import audit_check as core
+from scripts.contract import (
+    REQUEST_PLAN_BINDING_FIELD,
+    canonical_digest,
+    canonical_json,
+    payload_without_auth,
+    plan_hash,
+)
 from scripts.integrity import (
     ACTIVATION_DOMAIN,
     REQUEST_CONTRACT_DOMAIN,
@@ -33,15 +39,15 @@ ACTIVATION_NAME = "activation.json"
 
 
 def _canonical(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return canonical_json(value)
 
 
 def _payload(value: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in value.items() if k != "auth"}
+    return payload_without_auth(value)
 
 
 def _sha256(value: Dict[str, Any]) -> str:
-    return hashlib.sha256(_canonical(_payload(value)).encode("utf-8")).hexdigest()
+    return canonical_digest(payload_without_auth(value))
 
 
 def _request_control_path(root: str | Path, name: str) -> Path:
@@ -163,6 +169,31 @@ def _auth_value(root: Path, key: KeyMaterial | None, domain: str, payload: Dict[
     return value
 
 
+def _stamp_plan_binding(workspace: Path, payload: Dict[str, Any]) -> None:
+    """Record which plan contracts this request approves, keyed by plan name.
+
+    Every active plan gets an entry (the default plan plus each
+    ``.plan-auditor/plans/<name>.json``), because a workspace may seal and audit
+    several plans under one request. Plans that cannot be read are skipped: the
+    request stays authoritative and the seal still binds it, so only the reverse
+    binding is deferred.
+    """
+    from .plans import all_plan_refs, load_plan_ref
+
+    bindings: dict[str, str] = {}
+    try:
+        refs = all_plan_refs(workspace)
+    except (OSError, ValueError):
+        refs = []
+    for ref in refs:
+        try:
+            bindings[ref.key] = plan_hash(load_plan_ref(ref))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    if bindings:
+        payload[REQUEST_PLAN_BINDING_FIELD] = bindings
+
+
 def initialize_request(root: str | Path, source: Dict[str, Any]) -> RequestStatus:
     workspace = Path(root).resolve()
     rpath = request_path(workspace)
@@ -175,6 +206,12 @@ def initialize_request(root: str | Path, source: Dict[str, Any]) -> RequestStatu
     errors = validate_request(payload)
     if errors:
         raise ValueError("invalid request contract: " + "; ".join(errors))
+    # Bind the request to the exact plan content it approves. The seal binds the
+    # request digest, and this field binds the request back to the plan, so the
+    # two objects cannot be independently substituted after approval. A workspace
+    # with no default plan yet (named-plan-only, or a host activating the request
+    # before the plan exists) simply carries no binding until it is re-approved.
+    _stamp_plan_binding(workspace, payload)
     try:
         key = load_key(workspace, required=False)
     except IntegrityKeyError as exc:

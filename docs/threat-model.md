@@ -58,7 +58,8 @@ key inaccessible to the untrusted account when that adversary is in scope.
 | Legacy seal migration | `plan-auditor-migrate-seal` migrates only an exact v3 contract after authoritative-request alignment; migration cannot reseal changed scope |
 | Config/policy downgrade | Seal binds profile/mode/tier/runtime limits/policy/request fingerprints; malformed config/policy files are blocking errors |
 | Control-plane symlink escape | Existing `.plan-auditor`, plan, seal, request and policy path components are checked with `lstat`; symlinked control-plane roots/leaves are rejected before read/write |
-| Command injection | Structured `argv` preferred; shell disabled by default; `shell:true` is explicit opt-in and cannot combine with `argv` |
+| Command injection | No shell exists: checks execute an argument vector with `shell=False`. `shell: true` is rejected outright, and legacy `cmd` strings are tokenised so `>`, `&&`, pipes, `$()` and backticks stay literal argument text |
+| Untrusted plan execution | `run`/`audit` refuse to execute any check until a format-v4+ full-contract seal binds the plan's canonical contract hash, and until the active request contract matches the request committed in that seal. An unsealed plan is untrusted input |
 | Path traversal | Workspace paths are physically confined; named plan IDs and agent IDs are safe basenames |
 | Agent path aliases | Ownership paths are canonical workspace-relative paths before conflict comparison |
 | Registry lock theft | Registry write locks carry PID + random token; live writers are never evicted by age alone and stale removal requires a provably dead PID plus unchanged lock identity |

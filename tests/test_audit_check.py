@@ -153,14 +153,27 @@ def test_run_check_legacy_cmd_does_not_interpret_shell_metacharacters(tmp_path):
     assert not marker.exists()
 
 
-def test_run_check_shell_requires_explicit_opt_in(tmp_path):
+def test_run_check_refuses_shell_execution(tmp_path):
+    """Shell execution was removed: `>` redirection must not reach a shell."""
     marker = tmp_path / "marker.txt"
-    ok, _, _ = ac.run_check(
+    ok, detail, _ = ac.run_check(
         {"type": "run", "cmd": f"echo shell-ok > {marker.name}", "shell": True},
         str(tmp_path),
     )
-    assert ok
-    assert marker.read_text(encoding="utf-8").strip() == "shell-ok"
+    assert ok is False
+    assert "kaldırıldı" in detail
+    assert not marker.exists(), "redirection must never be interpreted"
+
+
+def test_run_check_without_shell_treats_metacharacters_as_arguments(tmp_path):
+    """The same command is safe without shell: `>` is just an argument."""
+    marker = tmp_path / "marker.txt"
+    ok, detail, _ = ac.run_check(
+        {"type": "run", "argv": [sys.executable, "-c", "print('x')"]},
+        str(tmp_path),
+    )
+    assert ok is True, detail
+    assert not marker.exists()
 
 
 def test_validate_accepts_structured_argv_and_rejects_shell_argv_mix():
@@ -170,7 +183,7 @@ def test_validate_accepts_structured_argv_and_rejects_shell_argv_mix():
     assert ac.validate_plan(plan) == []
     plan["steps"][0]["verify"][0]["shell"] = True
     errs = ac.validate_plan(plan)
-    assert any("shell=true" in err for err in errs)
+    assert any("shell" in err and "kaldırıldı" in err for err in errs), errs
 
 
 # ----------------------------------------------------------- evidence chain

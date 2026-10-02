@@ -9,8 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from scripts.plan_graph import PlanGraphError, effective_dependencies
-
+from scripts.contract import (
+    SEAL_FORMAT_VERSION,
+    canonical_json,
+    canonical_plan,
+    contract_plan,
+    legacy_v3_plan_hash,
+    plan_hash,
+)
 from scripts.integrity import (
     IntegrityKeyError,
     KeyMaterial,
@@ -22,82 +28,29 @@ from scripts.integrity import (
 
 from .control_plane import ControlPlanePathError, confined_workspace_path
 
-SEAL_FORMAT_VERSION = 4
+__all__ = [
+    "SEAL_FORMAT_VERSION",
+    "Seal",
+    "SealIntegrityError",
+    "canonical_plan",
+    "check_environment",
+    "check_monotonic",
+    "contract_plan",
+    "initialize_seal_auth",
+    "legacy_v3_plan_hash",
+    "load_seal",
+    "plan_hash",
+    "save_seal",
+    "seal_plan",
+]
+
+#: Canonical JSON is defined once, in :mod:`scripts.contract`, so a seal written
+#: here verifies byte-for-byte in the deterministic core and vice versa.
+_canonical = canonical_json
 
 
 class SealIntegrityError(RuntimeError):
     pass
-
-
-def _canonical(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-
-
-def _contract_step(step: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": step.get("id"),
-        "title": copy.deepcopy(step.get("title")),
-        "depends_on": copy.deepcopy(step.get("depends_on")),
-        "requires_outputs": copy.deepcopy(step.get("requires_outputs", [])),
-        "outputs": copy.deepcopy(step.get("outputs", [])),
-        "covers": copy.deepcopy(step.get("covers", [])),
-        "verify": copy.deepcopy([c for c in step.get("verify", []) if isinstance(c, dict)]),
-    }
-
-
-def _legacy_v3_contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
-    """Reproduce the exact v2.1.0/v3 seal hashing contract.
-
-    v3 stored raw ``depends_on`` values. v4 canonicalizes the effective graph, so
-    genuine legacy seals must be self-checked with the historical encoding before
-    they can be migrated.
-    """
-    return {
-        "task": copy.deepcopy(plan.get("task")),
-        "requirements": copy.deepcopy(plan.get("requirements")),
-        "required_tools": copy.deepcopy(plan.get("required_tools", [])),
-        "steps": [
-            _contract_step(step)
-            for step in plan.get("steps", [])
-            if isinstance(step, dict)
-        ],
-    }
-
-
-def legacy_v3_plan_hash(plan: Dict[str, Any]) -> str:
-    return hashlib.sha256(
-        _canonical(_legacy_v3_contract_plan(plan)).encode("utf-8")
-    ).hexdigest()
-
-
-def contract_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        dependencies = effective_dependencies(plan)
-    except PlanGraphError:
-        dependencies = {}
-    steps: List[Dict[str, Any]] = []
-    for step in plan.get("steps", []):
-        if not isinstance(step, dict):
-            continue
-        contracted = _contract_step(step)
-        sid = step.get("id")
-        if isinstance(sid, int) and sid in dependencies:
-            contracted["depends_on"] = copy.deepcopy(dependencies[sid])
-        steps.append(contracted)
-    return {
-        "task": copy.deepcopy(plan.get("task")),
-        "requirements": copy.deepcopy(plan.get("requirements")),
-        "required_tools": copy.deepcopy(plan.get("required_tools", [])),
-        "steps": steps,
-    }
-
-
-def canonical_plan(plan: Dict) -> str:
-    return _canonical(contract_plan(plan))
-
-
-def plan_hash(plan: Dict) -> str:
-    return hashlib.sha256(canonical_plan(plan).encode("utf-8")).hexdigest()
 
 
 @dataclass
