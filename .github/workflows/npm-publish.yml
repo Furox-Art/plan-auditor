@@ -2,14 +2,6 @@ name: npm Publish
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "package.json"
-      - "index.js"
-      - "bin/plan-auditor.js"
-      - "bin/launcher_contract.test.js"
-      - "pyproject.toml"
 
 concurrency:
   group: npm-publish
@@ -79,7 +71,7 @@ jobs:
       # reported as a successful release.
       - name: Publish to npm
         if: steps.gate.outputs.skip != 'true'
-        run: npm publish --access public --provenance
+        run: echo "npm publishing is disabled; PyPI is the install path" && exit 0
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Confirm the published version

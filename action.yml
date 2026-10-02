@@ -1,0 +1,22 @@
+name: Plan Auditor
+description: Fail closed unless the plan audit passes in a fresh process.
+inputs:
+  path:
+    description: Directory passed to plan-auditor audit
+    required: false
+    default: "."
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install this action's checkout
+      shell: bash
+      run: python -m pip install --disable-pip-version-check "${GITHUB_ACTION_PATH}"
+    - name: Audit
+      shell: bash
+      env:
+        AUDIT_PATH: ${{ inputs.path }}
+      run: plan-auditor audit "${AUDIT_PATH}"

@@ -45,6 +45,19 @@ with no model and no network.
 - Teams adding a required CI step for "the agent must prove it".
 - Researchers who want LLM-free STRIPS/PDDL-style reachability checks over a plan.
 
+
+## GitHub Action
+
+Use the action from this repository when the check should run in CI. It installs this checkout and runs the fail-closed audit:
+
+```yaml
+- uses: Furox-Art/plan-auditor@main
+  with:
+    path: .
+```
+
+`SKILL.md` is the agent-skill install. Copy it into the host skill directory. npm is no longer published.
+
 ## Install
 
 ```bash
