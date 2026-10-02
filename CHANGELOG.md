@@ -73,6 +73,46 @@ deterministic core or the npm launcher changed, and the version numbers in
   GitHub" link, and social links for the repository, PyPI, npm and the citation
   file. Navigation is unchanged and still covers every page.
 
+### Re-verified against `main` after #24
+
+- **The README's release-status text was corrected against the merged code rather
+  than the previous `main`.** The wheel now force-includes the Agent Skill assets
+  under `plan_auditor_skill/`, so the earlier claim that a `pip` install cannot
+  supply `SKILL.md`, `references/` or `hooks/` was true of the published `2.4.1`
+  wheel and false of anything built from `main`. The README and
+  `docs/integrations.md` now document both routes — a checkout, or the installed
+  `plan_auditor_skill/` directory — with a command that prints its location, and
+  the claim is scoped to the already-published build. `docs/` and `examples/` are
+  still not in the wheel, which is stated as such.
+- **The npm surface was re-checked against the merged launcher, not the old one.**
+  `index.js` now spawns the CLI with the caller's working directory and puts the
+  package directory on `PYTHONPATH`. The published npm `2.4.1` still resolves a
+  bare `.` against the installed package and can audit the wrong tree while
+  looking authoritative, so the README and `docs/quickstart.md` say so, give the
+  absolute-path workaround, and stop implying `npx` is unconditionally CI-safe.
+  Exit-code propagation, the `bin` field and the `python`/`python3` selection are
+  unchanged.
+- **The coverage command in the provenance table was stale and is fixed.** It named
+  `--cov=supervisor --cov=scripts --cov-branch`, which measured the checkout. The
+  merged `pyproject.toml` reads `branch`, `source_pkgs` and `fail_under` from
+  `[tool.coverage.*]`, and `conftest.py` pins the suite to the installed
+  distribution, so the documented command is now
+  `python -m pytest tests/ -q --cov --cov-report=term-missing`.
+- **"The mkdocs step is not part of CI" is no longer true** and was removed.
+  `docs (mkdocs --strict)` is a required check, pinned to `mkdocs==1.6.1` and
+  `mkdocs-material==9.6.14`; the page now names those pins and adds
+  `.github/scripts/check_dist_assets.py` to the reproduce list.
+- **`CONTRIBUTING.md` documents the gates that now exist**: `ruff` and `mypy`
+  against ratchet baselines that refuse to record a higher count,
+  `version-lockstep`, `workflow-syntax`, `build (wheel + sdist)` with a
+  `twine check --strict`, `npm-launcher`, and `wheel-cli-smoke` on three
+  platforms. The release section was rewritten: OIDC trusted publishing only, the
+  GitHub release gated on the version-existence check, an npm `verify` job and an
+  already-published gate, and `main` protected by a ruleset with no bypass actors.
+  The local setup changed from `pip install -e .` to a non-editable install,
+  because `conftest.py` resolves the runtime packages from site-packages and fails
+  loudly if they are absent.
+
 ## The two published `2.4.1` builds are not the same artifact
 
 Recorded here so nobody has to rediscover it: the same version number was
@@ -83,13 +123,19 @@ published to two registries from two different commits.
 | PyPI `2.4.1` | 2026-09-29 | Built before the documentation and packaging rewrite. 14 keywords; its sdist omits `index.js`, `bin/`, `mkdocs.yml`, `SECURITY.md`, `CITATION.cff`, `CODE_OF_CONDUCT.md` and `package.json`; its project page serves the previous README. |
 | npm `2.4.1` | 2026-10-01 | Built from the documentation rewrite; carries the `files` allowlist, the repaired launcher and the current README. |
 
-`pyproject.toml` was left at `2.4.1` and `release.yml` skips a version that
-already exists on PyPI, so the metadata on `main` cannot be published without a
-version bump. The npm workflow triggers on any change to `package.json`,
-`index.js` or `bin/**` and publishes without running `npm test` or a
-`npm pack` check, which is how a different artifact was produced under the same
-number. Both are release-process items, not documentation items, and are not
-changed by this entry.
+`pyproject.toml` was left at `2.4.1` and the release workflow skips a version
+that already exists on PyPI, so the metadata on `main` cannot be published without
+a version bump. That part is unchanged by this entry.
+
+The other half has been fixed since, by #24: the npm workflow now runs a `verify`
+job — the launcher tests and the packed-tarball check — before publishing, and
+refuses a version already on the registry, so the absence of any gate that let
+`2.4.0` ship a syntax error is no longer the state of the tree. `main` is also
+now protected by a ruleset with no bypass actors, so none of the required checks
+can be skipped by pushing to `main`.
+
+**Still outstanding:** the version bump itself. Until `2.4.2` is published to both
+registries, a `pip` user keeps seeing the pre-rewrite README on the project page.
 
 ## v2.4.1 — PyPI 2026-09-29, npm 2026-10-01
 

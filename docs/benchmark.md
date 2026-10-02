@@ -23,34 +23,46 @@ number ever changes, the command changes too — that is the point.
 
 | Claim | Command that produces it | Tool | Commit this text describes | Where the live value lives |
 |---|---|---|---|---|
-| Regression suite result | `python -m pytest tests/ -q` | the version of `pytest` in your environment | `main` at the time of reading | the `plan-audit gate` CI run for that commit |
+| Regression suite result | `python -m pytest tests/ -q` | the version of `pytest` in your environment | `main` at the time of reading | the `audit` CI job for that commit |
 | Example regression | `python -m pytest examples/fib/test_fib.py -q` | same | same | the same CI run |
-| Branch-coverage floor | `python -m pytest tests/ -q --cov=supervisor --cov=scripts --cov-branch --cov-report=term-missing` | `pytest-cov` | same | the `TOTAL` row the command prints, and the comment above the `--cov-fail-under` step in `.github/workflows/plan-audit.yml` |
+| Branch coverage | `python -m pytest tests/ -q --cov --cov-report=term-missing` | `pytest-cov` | same | the `TOTAL` row the command prints, and the `fail_under` value in `[tool.coverage.report]` in `pyproject.toml` |
+| Docs build cleanly | `python -m mkdocs build --strict` | `mkdocs-material` | same | the `docs (mkdocs --strict)` required CI check |
 | Docs and package metadata are consistent | `python -m pytest tests/test_docs_metadata.py tests/test_readme_quickstart.py tests/test_doc_transcripts.py -q` | `pytest` | same | the same CI run |
-| npm launcher wiring | `npm test` | the version of Node you run it with | same | the same CI run, and the `npm Publish` run |
-| Published package contents | `python -m build` then `python -m twine check dist/*`; `npm pack --dry-run` | `build`, `twine`, `npm` | the tag you check out | the release job in `.github/workflows/release.yml` |
+| Wheel and sdist carry the skill assets | `python .github/scripts/check_dist_assets.py` | none (standard library) | same | the `build (wheel + sdist)` required CI check |
+| npm launcher behaviour and tarball | `npm test`, `npm run test:contract`, `npm run test:tarball` | the version of Node you run them with | same | the `npm-launcher` required CI check |
+| Published package contents | `python -m build`, `twine check --strict dist/*`, `npm pack --dry-run` | `build`, `twine`, `npm` | the tag you check out | the `build` and `publish` jobs |
+
+Note that the coverage command no longer names the source directories. `pytest-cov`
+reads `branch`, `source_pkgs` and `fail_under` from `[tool.coverage.*]` in
+`pyproject.toml`, and `conftest.py` pins the suite to the *installed* distribution,
+so `--cov=supervisor --cov=scripts` against the checkout is no longer the command
+that measures the shipped code.
 
 Two things are deliberately **not** in that table:
 
-- The coverage figure for any given commit. The command prints it; the floor is
-  enforced in CI; a number typed into this file would silently go stale, so the
-  workflow comment and the command output are the only places it appears.
+- The coverage figure for any given commit. The command prints it, the floor is
+  enforced from `pyproject.toml`, and a number typed into this file would
+  silently go stale, so the floor and the run output are the only places it
+  appears.
 - Any number describing how many people use this. No telemetry is collected, so
   such a figure could not be substantiated. The package pages carry whatever the
   registries report.
 
-Platform note: the coverage and suite commands above were last exercised by this
-project's maintainer on Windows 11 with CPython 3.12. CI runs the same commands
-on `ubuntu-latest`, and the wheel smoke job runs the installed CLI on Linux,
-Windows and macOS. Numbers can differ slightly by platform because a handful of
-tests are skipped when an optional interpreter or helper is absent; the pass and
-skip counts the command prints tell you which run you are looking at.
+Platform note: these commands were last exercised by this project's maintainer on
+Windows 11 with CPython 3.12. CI runs the suite on `ubuntu-latest` across the
+supported Python versions, `wheel-cli-smoke` exercises the installed CLI on Linux,
+Windows and macOS, and the branch coverage is measured against the installed
+distribution. Numbers can differ slightly by platform because a handful of tests
+are skipped when an optional interpreter or helper is absent; the pass and skip
+counts the command prints tell you which run you are looking at.
 
 ## What is reproducible: the in-repo example
 
 `examples/fib/` is a complete, runnable plan. It is in the repository and in the
-**sdist**, but not in the PyPI **wheel**, so a `pip`-only install will not have
-it — use a checkout if you want to run this.
+**sdist**, but not in the wheel, so a `pip`-only install will not have it — use a
+checkout if you want to run this. (The wheel does ship the Agent Skill assets,
+namespaced under `plan_auditor_skill/`; `examples/` is deliberately not among
+them.)
 
 ```bash
 cd examples/fib
@@ -154,12 +166,15 @@ by the same command CI runs:
 ```bash
 python -m pytest tests/ -q
 python -m pytest examples/fib/test_fib.py -q
-python -m pytest tests/ -q --cov=supervisor --cov=scripts --cov-branch --cov-report=term-missing
+python -m pytest tests/ -q --cov --cov-report=term-missing
 ```
 
-The branch-coverage gate in `.github/workflows/plan-audit.yml` enforces a floor
-and the file states the measured value and the reasoning for the floor, so a
-regression in coverage fails CI instead of quietly lowering a claim.
+The coverage floor lives in `[tool.coverage.report]` as `fail_under` in
+`pyproject.toml`, so the workflow and a local run cannot disagree about it, and
+the workflow records the measured value and the reasoning for where the floor
+sits. `conftest.py` pins the suite to the installed distribution, so the number
+measures the code that would ship rather than the working tree. A regression in
+coverage fails CI instead of quietly lowering a claim.
 
 ## What is not claimed
 
@@ -194,25 +209,28 @@ toolchain is present in your environment before you commit to a plan that needs 
 python -m pytest tests/ -q
 python -m pytest examples/fib/test_fib.py -q
 python -m build
-python -m twine check dist/*
-python -m mkdocs build --strict --site-dir .tmp-site
-node --check index.js && node --check bin/plan-auditor.js
+twine check --strict dist/*
+python .github/scripts/check_dist_assets.py
+python -m mkdocs build --strict
+npm test
+npm run test:contract
+npm run test:tarball
 plan-auditor request init . --file .plan-auditor/request-source.json
 plan-auditor plan verify .
 plan-auditor audit .
 ```
 
-`python -m build`, `twine` and `mkdocs` are contributor-only tools and are not
-declared as dependencies anywhere, so install them first:
+`build`, `twine`, `mkdocs-material` and Node are contributor-only tools and are
+not declared as runtime dependencies, so install them first:
 
 ```bash
 python -m pip install build twine mkdocs-material
 ```
 
-The `mkdocs` step is not currently part of CI, so `docs/` changes are checked by
-`tests/test_docs_metadata.py` (navigation targets and relative links) rather than
-by a strict build. Treat a clean `mkdocs build --strict` as your own
-pre-submission check.
+CI pins `mkdocs==1.6.1` and `mkdocs-material==9.6.14` for its strict build, so
+pin the same pair locally if you want the check to match exactly. Note that
+`python -m mkdocs build --strict` needs the dependency installed for the *same*
+interpreter you build with; it is not a runtime dependency of the package.
 
 The documentation and package-metadata checks that keep the README and this site
 truthful live in `tests/test_docs_metadata.py` and

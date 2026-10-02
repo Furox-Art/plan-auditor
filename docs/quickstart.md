@@ -376,6 +376,22 @@ pipx install --force plan-auditor
 plan-auditor audit .
 ```
 
+### The npm launcher audits the wrong directory
+
+A published `2.4.1` npm build runs the CLI with the *installed package directory*
+as its working directory, so a relative workspace path such as `.` resolves
+against the package instead of the directory you ran the command from. The output
+looks authoritative and refers to a tree you did not ask about. It is fixed on
+`main` and covered by a launcher contract test, and it ships with the next
+release. Until then, pass an absolute path or use the console script:
+
+```bash
+npx plan-auditor audit "$(pwd)"
+```
+
+For comparison, `plan-auditor audit .` from the same shell reports the workspace
+you are standing in, because the console script does not change directory.
+
 ### The agent keeps "fixing" the test instead of the code
 
 That is a policy problem, not a bug. Add a check that asserts the *product*

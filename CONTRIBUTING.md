@@ -27,11 +27,19 @@ rather than by review.
 ```bash
 git clone https://github.com/Furox-Art/plan-auditor.git
 cd plan-auditor
-python -m pip install -e . pytest pytest-cov
+python -m pip install . pytest pytest-cov
 ```
 
-Python 3.10 or newer. Contributor-only tools, none of which are runtime
-dependencies, are installed on demand and named in the section that needs them.
+Python 3.10 or newer. Install the distribution **non-editable and re-run that
+command after you change source**, because `conftest.py` resolves `supervisor`
+and `scripts` from site-packages before any test module loads. That is
+deliberate: several test modules used to put the repository root on `sys.path`,
+which silently shadowed an installed wheel and let the suite pass against files
+that never ship. If the distribution is missing, collection fails loudly rather
+than falling back to the checkout.
+
+Contributor-only tools, none of which are runtime dependencies, are named in the
+section that needs them.
 
 ## Run the test suite
 
@@ -49,19 +57,51 @@ Other suites worth running before you open a pull request:
 |---|---|
 | `python -m pytest tests/ -q` | The whole unit and hardening suite. |
 | `python -m pytest examples/fib/test_fib.py -q` | The shipped example still passes. |
-| `python -m pytest tests/ -q --cov=supervisor --cov=scripts --cov-branch --cov-report=term-missing` | The same coverage command CI runs, with the per-module table. |
-| `npm test` | The Node launcher and `bin` entry point parse, and the bin propagates the child's exit code. Needs Node on `PATH`. |
+| `python -m pytest tests/ -q --cov --cov-report=term-missing` | The same coverage command CI runs, with the per-module table. |
+| `npm test` | The Node launcher and `bin` entry point parse. |
+| `npm run test:contract` | The launcher keeps the caller's working directory, propagates exit codes and fails closed. |
+| `npm run test:tarball` | The packed tarball has no `__pycache__`, venv, build output or `*.test.js`, and does carry what the launcher needs. |
+| `python -m mkdocs build --strict` | The documentation site still builds with no warnings. |
+
+Do not pass `--cov=supervisor --cov=scripts`. `pytest-cov` reads `branch`,
+`source_pkgs` and `fail_under` from `[tool.coverage.*]` in `pyproject.toml`, and
+naming the source directories measures the checkout rather than the installed
+distribution.
 
 `node bin/plan-auditor.js run <failing-plan>` must exit non-zero. A launcher that
 turns a `FAIL` into `0` is the exact bug class this project exists to prevent, so
-`tests/test_npm_launcher.py` checks both entry points and repeats the check
-against the packed npm tarball.
+`tests/test_npm_launcher.py` and `bin/launcher_contract.test.js` check both entry
+points and the packed tarball. The launcher must also keep *your* working
+directory: it previously spawned the CLI with the package directory as its cwd, so
+a bare `.` resolved against the installed package and the tool audited the wrong
+tree while looking authoritative.
+
+### What CI enforces on every pull request
+
+`main` is protected by a ruleset with no bypass actors, including for admins, so
+none of these gates can be skipped by pushing to `main`. The required checks are
+listed in
+[`.github/branch-protection-required.md`](https://github.com/Furox-Art/plan-auditor/blob/main/.github/branch-protection-required.md).
+
+| Gate | Fails when |
+|---|---|
+| `audit` | The suite, the schema check, the coverage floor, the real CLI smoke or the self-audit gate regresses. |
+| `supervisor-runtime` | The background supervisor does not reach `running` with a `PASS` assessment, or does not stop cleanly. |
+| `python-compat` | Any supported Python version breaks the suite or the example. |
+| `ruff`, `mypy` | A lint or strict type error count rises above the recorded baseline in `.github/baselines/`. Nothing is suppressed: no rule disabled, no `ignore_errors`, no file excluded, and the baseline writer refuses to record a higher count, so new debt cannot be laundered in. |
+| `version-lockstep` | `pyproject.toml`, `package.json`, `SKILL.md` and `CITATION.cff` disagree on the version. |
+| `build (wheel + sdist)` | The distributions fail to build, fail `twine check --strict`, or do not contain the assets the README and docs promise. `.github/scripts/check_dist_assets.py` asserts the wheel carries the Agent Skill assets under `plan_auditor_skill/`. |
+| `docs (mkdocs --strict)` | The documentation site stops building cleanly. |
+| `npm-launcher` | A launcher contract or tarball check fails. |
+| `workflow-syntax` | A workflow file is not valid: a job without `runs-on` or `permissions`, a step that is not a mapping, a `steps` that is not a list, a step-level `if` referencing the unavailable `secrets` context, or an action not pinned to a full 40-character SHA. |
+| `wheel-cli-smoke` | The wheel, installed into a clean venv on Linux, Windows or macOS, does not drive the real CLI. |
 
 ### The coverage floor
 
-CI enforces a branch-coverage floor on `supervisor` and `scripts`. The floor, the
-measured value at the time it was set, and the reasoning are recorded in a comment
-on that step in
+`fail_under` lives in `[tool.coverage.report]` in `pyproject.toml`, so the
+workflow and a local run cannot disagree about it. The measured value at the time
+the floor was set, and the reasoning for where it sits, are recorded in a comment
+on the coverage step in
 [`.github/workflows/plan-audit.yml`](https://github.com/Furox-Art/plan-auditor/blob/main/.github/workflows/plan-audit.yml).
 Raise the floor as tests land; never lower it to make a run green. A number typed
 into a document instead of the workflow goes stale silently, which is why the
@@ -192,50 +232,57 @@ with a non-zero code if Python cannot be started at all.
 
 ### Building the site locally
 
-There is no published documentation site; `mkdocs.yml` is configured but no GitHub
-Pages workflow exists yet. Read the Markdown on GitHub, or build it:
+There is no published documentation site; `mkdocs.yml` is configured and CI runs
+`mkdocs build --strict` as a required check, but publishing needs a GitHub Pages
+workflow that does not exist yet. Read the Markdown on GitHub, or build it:
 
 ```bash
 python -m pip install mkdocs-material
 mkdocs serve
 ```
 
-A strict build is a good pre-submission check even though CI does not run one:
-
-```bash
-python -m mkdocs build --strict --site-dir .tmp-site
-```
+CI pins `mkdocs==1.6.1` and `mkdocs-material==9.6.14`; pin the same pair if you
+want your local strict build to match the required check exactly.
 
 ## Releasing
 
-The two registries are triggered differently, and that difference has already
-produced two different artifacts under one version number. Read the "The two
-published `2.4.1` builds" section of
-[CHANGELOG.md](https://github.com/Furox-Art/plan-auditor/blob/main/CHANGELOG.md)
-before you publish anything.
+`main` is protected with no bypass actors, so a release cannot be pushed straight
+to `main` without the gates. The published `2.4.1` artifacts were built from
+different commits, which is the mistake this section exists to prevent; the
+record is in the "The two published `2.4.1` builds" section of
+[CHANGELOG.md](https://github.com/Furox-Art/plan-auditor/blob/main/CHANGELOG.md).
 
 1. Bump the version in **all four** places: `pyproject.toml`, `package.json`,
-   the `metadata.version` in `SKILL.md`, and `version` in `CITATION.cff`. A test
-   fails if they disagree.
+   the `metadata.version` in `SKILL.md`, and `version` in `CITATION.cff`. The
+   `version-lockstep` check fails if they disagree.
 2. Build and verify both distributions locally:
 
    ```bash
    python -m pip install build twine
    python -m build
-   python -m twine check dist/*
+   twine check --strict dist/*
+   python .github/scripts/check_dist_assets.py
    npm pack --dry-run
+   npm run test:tarball
    ```
 
 3. Move the `Unreleased` section of the changelog under the new version heading.
-4. PyPI: push a change to `.github/pypi-release-trigger`. The release workflow
-   builds, runs the suite, smoke-tests the wheel on Linux, Windows and macOS,
-   checks the distributions, and skips publishing if the version already exists —
-   so an unchanged version number will silently not publish.
+4. PyPI: push a change to `.github/pypi-release-trigger`. The workflow builds,
+   runs the suite, smoke-tests the wheel on Linux, Windows and macOS, checks the
+   distributions, and **skips publishing if the version already exists on PyPI** —
+   so an unchanged version number will silently not publish. Publishing uses OIDC
+   trusted publishing only; there is no long-lived token in repository secrets.
+   Creating the GitHub release is gated on the same version-existence check, so a
+   re-run cannot append a second copy of the notes.
 5. npm: the publish workflow triggers on any change to `package.json`,
-   `index.js` or `bin/**`. As written it runs no test and no `npm pack` check, so
-   confirm `npm test` yourself before pushing such a change.
-6. Open the GitHub release for the tag and confirm the tag, the PyPI artifact and
-   the npm artifact are the same commit.
+   `index.js`, `bin/**` or the skill assets. It runs a `verify` job first — the
+   launcher tests and the packed-tarball check — and refuses to publish a version
+   already on the registry, so a no-op push is not a red or duplicate build.
+6. Confirm the tag, the PyPI artifact and the npm artifact are the same commit,
+   and that the wheel you published actually contains `plan_auditor_skill/`.
+
+Anyone can reproduce every one of those checks from a clean checkout, which is
+the point: nothing in the release path depends on a maintainer remembering a step.
 
 ## Where things live
 

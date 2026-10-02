@@ -9,16 +9,26 @@ The gate evaluates every active default/named plan and does not trust persisted
 
 ## Skill install paths
 
-The skill is four directories of files: `SKILL.md`, `scripts/`, `references/` and
-`hooks/`. None of them are in the PyPI **wheel**, so `pipx install plan-auditor`
-does not give you a skill — take them from a checkout, or from the PyPI
-**sdist**:
+The skill is four things: `SKILL.md`, `scripts/`, `references/` and `hooks/`.
+
+**From a checkout** — always works:
 
 ```bash
 git clone https://github.com/Furox-Art/plan-auditor.git
 cp -r plan-auditor/SKILL.md plan-auditor/scripts plan-auditor/references plan-auditor/hooks \
       <your host's user-level path below>/
 ```
+
+**From a `pip` install** — works from a build of `main` or later. The wheel
+namespaces those assets under `plan_auditor_skill/` so they cannot collide with
+anything else at the site-packages root. Print the directory and copy them out:
+
+```bash
+python -c "import supervisor,pathlib;print(pathlib.Path(supervisor.__file__).resolve().parent.parent/'plan_auditor_skill')"
+```
+
+The already-published PyPI `2.4.1` wheel does not contain them; CI asserts that
+every wheel it builds does, via `.github/scripts/check_dist_assets.py`.
 
 | Tool | User-level path | Project-level path | Typical invocation |
 |---|---|---|---|

@@ -68,32 +68,35 @@ plan-auditor-formalize --help
 The commands and transcripts below are written for a checkout of `main`. Read the
 next section before you assume the published packages match them.
 
-## Release status: the two registries are not in sync
+## Release status: the published builds are behind `main`
 
-Checked against the live PyPI and npm registries on 2026-10-01. The two `2.4.1`
-artifacts are **different builds**, and neither is byte-identical to `main`:
+Checked against the live PyPI and npm registries and against a wheel built from
+`main`. The published `2.4.1` artifacts are **different builds**, and neither is
+byte-identical to `main`:
 
 | Surface | What that build actually contains |
 |---|---|
-| PyPI `2.4.1` | Uploaded 2026-09-29, *before* the documentation and packaging rewrite. Its project page still serves the older README, and its wheel ships only the `supervisor` and `scripts` Python packages. |
-| npm `2.4.1` | Published 2026-10-01 from the current `main`. The repaired launcher, the `files` allowlist and this documentation are in it. |
-| `main` | The only surface where the quick start below is true exactly as written. |
+| PyPI `2.4.1` (uploaded 2026-09-29) | Pre-rewrite. Its project page still serves the older README. Its wheel ships only the `supervisor` and `scripts` packages — **no** `SKILL.md`, `references/`, `hooks/` or launcher. |
+| npm `2.4.1` (published 2026-10-01) | The documentation rewrite and the `files` allowlist. Its launcher resolves a relative workspace path against the *package directory* instead of your working directory, so `npx plan-auditor audit .` can audit the wrong tree while looking authoritative. |
+| `main` | The only surface where the quick start below is true exactly as written, and where the wheel carries the skill assets. |
 
 What that means in practice:
 
-- **To try the verified quick start below as written:** use a checkout of `main`
-  (see [Use it as an Agent Skill](#use-it-as-an-agent-skill) for the clone command).
+- **To try the verified quick start below as written:** use a checkout of `main`.
 - **To install the CLI from PyPI:** `pipx install plan-auditor` works and the CLI
-  behaves as documented, but you are installing the pre-rewrite build. Nothing in
-  the CLI depends on this documentation being new.
-- **To install the repaired npm launcher:** `npm i plan-auditor@2.4.1` is enough.
-  The launcher is an npm-only surface; PyPI does not ship `index.js`.
-- **Skill files:** the PyPI **wheel does not contain `SKILL.md`, `references/` or
-  `hooks/`**, so a `pip`-only install cannot use the Agent Skill path. The PyPI
-  **sdist** does contain them.
+  behaves as documented. You get the pre-rewrite build.
+- **To use the Agent Skill from a `pip` install:** only possible from a build of
+  `main` or later. The wheel now ships the skill assets under
+  `plan_auditor_skill/` — see
+  [Use it as an Agent Skill](#use-it-as-an-agent-skill) for the exact path and a
+  command that prints it. The already-published `2.4.1` wheel does not.
+- **To install the npm launcher:** prefer a `pip`/`pipx` install. The npm
+  `2.4.1` launcher has the working-directory defect described above; it is fixed
+  on `main` and will ship with the next release.
 
-A single `2.4.2` is what makes both registries match `main`. Until then this
-section is the honest description of what you get; the release owner should
+`docs/` and `examples/` are in the repository and the sdist, but still not in the
+wheel. A single `2.4.2` is what makes both registries match `main`. Until then
+this section is the honest description of what you get; the release owner should
 delete it in the commit that bumps the version.
 
 ## Quick start (verified, 5 minutes)
@@ -258,10 +261,10 @@ the JSON verdict is the stable machine interface.
 ## Use it as an Agent Skill
 
 plan-auditor ships a skill definition ([SKILL.md](https://github.com/Furox-Art/plan-auditor/blob/main/SKILL.md))
-for hosts that load skills by directory.
+for hosts that load skills by directory. It is four things: `SKILL.md`, `scripts/`,
+`references/` and `hooks/`.
 
-**You need a checkout.** The skill files are not in the PyPI wheel, so
-`pipx install plan-auditor` alone is not enough for this path:
+**From a checkout** — always works:
 
 ```bash
 git clone https://github.com/Furox-Art/plan-auditor.git
@@ -269,8 +272,18 @@ cp -r plan-auditor/SKILL.md plan-auditor/scripts plan-auditor/references plan-au
       ~/.config/opencode/skills/plan-auditor/   # or your host's path, from the table below
 ```
 
-Copy `SKILL.md`, `scripts/`, `references/` and `hooks/` into your host's skills
-directory:
+**From a `pip` install** — works from a build of `main` or later, because the
+wheel now ships those assets under `plan_auditor_skill/`. Print the directory:
+
+```bash
+python -c "import supervisor,pathlib;print(pathlib.Path(supervisor.__file__).resolve().parent.parent/'plan_auditor_skill')"
+```
+
+then copy `SKILL.md`, `scripts/`, `references/` and `hooks/` out of it. The
+already-published PyPI `2.4.1` wheel does **not** contain them; see
+[Release status](#release-status-the-published-builds-are-behind-main).
+
+Copy them into your host's skills directory:
 
 | Host | User-level path | Project-level path | Invoke |
 |---|---|---|---|
@@ -302,6 +315,12 @@ defaulting to success — so `npx plan-auditor audit .` is as CI-safe as the con
 script. Verified exit codes: a failing `run` returns `1`, a blocked `audit` returns
 `2`, a proven workspace returns `0`, and an unstartable Python fails closed with a
 nonzero code.
+
+One caveat about the *published* `2.4.1` npm build specifically: it ran the CLI
+with the package directory as the working directory, so a relative workspace path
+such as `.` resolved against the installed package instead of your project. It is
+fixed on `main` and covered by a launcher contract test, but until a release ships
+that fix, prefer `pipx` or `pip`.
 
 ## Troubleshooting
 
@@ -376,10 +395,10 @@ Runnable example: [`examples/fib/`](https://github.com/Furox-Art/plan-auditor/tr
 is a complete two-step plan you can audit end to end, including a deliberately
 broken variant.
 
-**No rendered documentation site is published yet.** `mkdocs.yml` is set up and
-its navigation covers every page, but publishing needs a GitHub Pages workflow
-that does not exist in this repository yet. Until then, read the Markdown on
-GitHub or build it yourself:
+**No rendered documentation site is published yet.** `mkdocs.yml` is set up, CI
+enforces `mkdocs build --strict` as a required check, and the navigation covers
+every page — but publishing needs a GitHub Pages workflow that does not exist in
+this repository yet. Until then, read the Markdown on GitHub or build it yourself:
 
 ```bash
 python -m pip install mkdocs-material
@@ -387,7 +406,8 @@ mkdocs serve
 ```
 
 `mkdocs-material` is a documentation-only dependency and is deliberately not part
-of the installable package, so `pip install plan-auditor` does not need it. See
+of the installable package, so `pip install plan-auditor` does not need it. CI
+pins its own versions for the strict build. See
 [CONTRIBUTING.md](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md)
 for the full contributor workflow.
 
@@ -430,11 +450,12 @@ Read these before you rely on it:
   cannot be expressed as a deterministic check is reviewed by a human, not guessed.
 - The npm package is a launcher: it needs Python 3.10 or newer already on `PATH`.
 - Progress output is Turkish-only for now; the JSON verdict is the stable interface.
-- The published PyPI and npm builds are currently out of sync. See
-  [Release status](#release-status-the-two-registries-are-not-in-sync).
-- There is no rendered documentation site yet, and the branch-coverage floor is
-  enforced in CI but the current measured value is not copied into this file, so
-  read the CI run rather than a number here.
+- The published PyPI and npm builds are behind `main`. See
+  [Release status](#release-status-the-published-builds-are-behind-main).
+- There is no rendered documentation site yet. The strict docs build *is* a
+  required CI check, so the Markdown is known to build, but nothing serves it.
+- The branch-coverage floor is enforced in CI and the measured value lives in the
+  run, not in this file. Read the run rather than a number here.
 - Releases are published on PyPI and npm; there are no third-party mirrors, forks,
   or packaged distributions listed here.
 
