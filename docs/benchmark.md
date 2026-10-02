@@ -15,9 +15,42 @@ checks we *can* run and let you run them too.
 
 If you want to build that harness, [open an issue](https://github.com/Furox-Art/plan-auditor/issues).
 
+## Provenance for every number on this page
+
+Nothing on this page is a hand-copied figure. Each quality claim below is tied to
+the exact command that produces it, so you can regenerate it and compare. If a
+number ever changes, the command changes too — that is the point.
+
+| Claim | Command that produces it | Tool | Commit this text describes | Where the live value lives |
+|---|---|---|---|---|
+| Regression suite result | `python -m pytest tests/ -q` | the version of `pytest` in your environment | `main` at the time of reading | the `plan-audit gate` CI run for that commit |
+| Example regression | `python -m pytest examples/fib/test_fib.py -q` | same | same | the same CI run |
+| Branch-coverage floor | `python -m pytest tests/ -q --cov=supervisor --cov=scripts --cov-branch --cov-report=term-missing` | `pytest-cov` | same | the `TOTAL` row the command prints, and the comment above the `--cov-fail-under` step in `.github/workflows/plan-audit.yml` |
+| Docs and package metadata are consistent | `python -m pytest tests/test_docs_metadata.py tests/test_readme_quickstart.py tests/test_doc_transcripts.py -q` | `pytest` | same | the same CI run |
+| npm launcher wiring | `npm test` | the version of Node you run it with | same | the same CI run, and the `npm Publish` run |
+| Published package contents | `python -m build` then `python -m twine check dist/*`; `npm pack --dry-run` | `build`, `twine`, `npm` | the tag you check out | the release job in `.github/workflows/release.yml` |
+
+Two things are deliberately **not** in that table:
+
+- The coverage figure for any given commit. The command prints it; the floor is
+  enforced in CI; a number typed into this file would silently go stale, so the
+  workflow comment and the command output are the only places it appears.
+- Any number describing how many people use this. No telemetry is collected, so
+  such a figure could not be substantiated. The package pages carry whatever the
+  registries report.
+
+Platform note: the coverage and suite commands above were last exercised by this
+project's maintainer on Windows 11 with CPython 3.12. CI runs the same commands
+on `ubuntu-latest`, and the wheel smoke job runs the installed CLI on Linux,
+Windows and macOS. Numbers can differ slightly by platform because a handful of
+tests are skipped when an optional interpreter or helper is absent; the pass and
+skip counts the command prints tell you which run you are looking at.
+
 ## What is reproducible: the in-repo example
 
-`examples/fib/` is a complete, runnable plan that ships with the package.
+`examples/fib/` is a complete, runnable plan. It is in the repository and in the
+**sdist**, but not in the PyPI **wheel**, so a `pip`-only install will not have
+it — use a checkout if you want to run this.
 
 ```bash
 cd examples/fib
@@ -149,6 +182,9 @@ time plan-auditor run . 1
 time plan-auditor audit .
 ```
 
+`time` is a POSIX shell builtin, so those two lines apply to a POSIX shell. In
+PowerShell use `Measure-Command`, and in `cmd.exe` measure with `%TIME%`.
+
 For a cheap sanity check, `plan-auditor doctor .` reports whether the required
 toolchain is present in your environment before you commit to a plan that needs it.
 
@@ -165,6 +201,18 @@ plan-auditor request init . --file .plan-auditor/request-source.json
 plan-auditor plan verify .
 plan-auditor audit .
 ```
+
+`python -m build`, `twine` and `mkdocs` are contributor-only tools and are not
+declared as dependencies anywhere, so install them first:
+
+```bash
+python -m pip install build twine mkdocs-material
+```
+
+The `mkdocs` step is not currently part of CI, so `docs/` changes are checked by
+`tests/test_docs_metadata.py` (navigation targets and relative links) rather than
+by a strict build. Treat a clean `mkdocs build --strict` as your own
+pre-submission check.
 
 The documentation and package-metadata checks that keep the README and this site
 truthful live in `tests/test_docs_metadata.py` and

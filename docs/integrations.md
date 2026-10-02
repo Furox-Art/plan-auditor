@@ -9,6 +9,17 @@ The gate evaluates every active default/named plan and does not trust persisted
 
 ## Skill install paths
 
+The skill is four directories of files: `SKILL.md`, `scripts/`, `references/` and
+`hooks/`. None of them are in the PyPI **wheel**, so `pipx install plan-auditor`
+does not give you a skill — take them from a checkout, or from the PyPI
+**sdist**:
+
+```bash
+git clone https://github.com/Furox-Art/plan-auditor.git
+cp -r plan-auditor/SKILL.md plan-auditor/scripts plan-auditor/references plan-auditor/hooks \
+      <your host's user-level path below>/
+```
+
 | Tool | User-level path | Project-level path | Typical invocation |
 |---|---|---|---|
 | Command Code | `~/.commandcode/skills/plan-auditor/` | `.commandcode/skills/plan-auditor/` | `/plan-auditor` |
@@ -18,6 +29,9 @@ The gate evaluates every active default/named plan and does not trust persisted
 
 Start a new host-tool session after installing/changing skills if that host only
 discovers skills at startup.
+
+The npm package is a separate surface: `npx plan-auditor` runs the same CLI
+through a Node launcher, but it is not a skill and does not need one.
 
 ## Authoritative generic gate
 

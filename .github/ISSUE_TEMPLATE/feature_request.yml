@@ -1,0 +1,74 @@
+name: Feature request
+description: Propose a check type, CLI command, check type, doc improvement or integration
+title: "[feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read the five rules in CONTRIBUTING.md before proposing. The hardest
+        constraint is that a language-model judgement may only ever *tighten* the
+        verdict, never loosen it, and that every step needs at least one
+        behavioural check. Proposals that cannot survive those rules will be
+        declined, so it is worth saying which rule your idea respects.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What cannot be done today
+      description: Describe the situation, not the solution. What verification decision can you not currently make?
+      placeholder: |
+        I cannot require that a plan produces a file with a specific hash,
+        because only `file_exists` and `regex` exist and neither pins content.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: The interface you have in mind — a new check type, a CLI flag, a plan field.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Area
+      options:
+        - New check type or plan field
+        - CLI or console script
+        - Skill host or hook integration
+        - CI / enforcement
+        - Documentation accuracy
+        - Packaging or release process
+        - Performance
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: How this keeps the trust properties
+      description: Tick what your change preserves. If none apply, say why the property still holds.
+      options:
+        - label: The change cannot turn a missing or failed check into a pass.
+        - label: The change does not let a model judgement weaken a deterministic verdict.
+        - label: The change does not allow editing or reordering past evidence records.
+        - label: The change keeps `scripts/audit_check.py` standard library only.
+        - label: The change fails closed when the new evidence is unavailable.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false
+
+  - type: textarea
+    id: contribution
+    attributes:
+      label: Willing to implement it
+      description: This is maintained by one person with no external contributors yet, so a PR is worth a great deal here.
+    validations:
+      required: false

@@ -1,16 +1,105 @@
-## Unreleased
-
-- **Removed the broken PyPI downloads badge.** `img.shields.io/pypi/dm/plan-auditor`
-  answers HTTP 200 while rendering `downloads: inaccessible`, because shields.io
-  scrapes a third-party download API that is rate-limited or down. The README now
-  links the PyPI and npm project pages instead, which always answer 200 and always
-  carry the real numbers. No count is hardcoded. `tests/test_docs_metadata.py` now
-  fails if a `img.shields.io/pypi/d...` badge or a hand-copied download count
-  reappears anywhere in the docs.
-
 # Changelog
 
-## Unreleased — documentation and packaging metadata
+All notable changes to plan-auditor. Versions are published to PyPI and npm.
+
+## Unreleased — OSS visibility and onboarding
+
+Documentation and project-metadata work only. No behaviour in the supervisor, the
+deterministic core or the npm launcher changed, and the version numbers in
+`pyproject.toml`, `package.json`, `SKILL.md` and `CITATION.cff` are untouched at
+`2.4.1` — a release owner must bump them for any of this to reach a registry.
+
+- **The README now states the real release status instead of implying parity.** The
+  published PyPI `2.4.1` was built 2026-09-29 and npm `2.4.1` 2026-10-01, from
+  different commits, and neither is byte-identical to `main`. The README carries a
+  table of what each published build actually contains, and says plainly which
+  surface to use for the verified quick start. A maintainer note marks the section
+  for deletion in the commit that bumps the version.
+- **The "ships with the package" claim in `docs/benchmark.md` was false and is now
+  scoped.** The PyPI *wheel* contains only the `supervisor` and `scripts` packages;
+  `examples/fib` ships in the repository and in the *sdist*. Verified against the
+  published `plan_auditor-2.4.1-py3-none-any.whl`.
+- **`docs/benchmark.md` gained a provenance table.** Every remaining quality claim
+  is tied to the exact command that produces it, plus the tool, the commit the text
+  describes and where the live value lives. The coverage figure for any commit is
+  deliberately not copied into the page, because a transcribed number goes stale;
+  the command and the workflow comment are the only places it appears. No
+  adoption, download or usage figure is printed anywhere, and telemetry is not
+  collected.
+- **The skill path now says where the files come from.** The PyPI wheel ships no
+  `SKILL.md`, `references/` or `hooks/`, so `pipx install plan-auditor` alone
+  cannot use the Agent Skill path. The README and `docs/integrations.md` now give a
+  concrete `git clone` plus copy command instead of saying "copy the repository".
+- **`docs/quickstart.md` no longer overstates its own verification.** It claimed
+  "everything on this page is executed by `tests/test_readme_quickstart.py`"; that
+  test parses the README's quick-start section only. The page now names the three
+  tests that actually check it and their separate responsibilities.
+- **The `2.4.0` launcher troubleshooting entry was split by surface.** It conflated
+  the npm launcher bug with the pip console script; npm `2.4.0` is named as the
+  broken build and the fix is given per surface.
+- **Interpreter requirement is documented where it bites.** The examples invoke
+  `python`; the note explains what to do on a system that only ships `python3`,
+  and that the npm launcher already picks `python3` off Windows.
+- **README links are absolute and correct on every surface.** Repository-relative
+  links are dead on the PyPI project page, which renders this same file as the
+  package description. Every `docs/`, `SKILL.md`, `CHANGELOG.md`, `SECURITY.md`,
+  `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CITATION.cff` and `LICENSE` link is now
+  absolute, and each target was checked over HTTP.
+- **A documentation URL is stated, and so is the reason there is no site yet.**
+  `docs/index.md` is the canonical entry point. `mkdocs.yml` is configured but no
+  GitHub Pages workflow exists, so the README no longer promises a rendered site
+  and instead gives the two-command local build with the `mkdocs-material`
+  dependency named. The old pointer to `CONTRIBUTING.md` for `mkdocs serve` was
+  false, since that file did not mention mkdocs at all.
+- **"15 supervision layers" is now sourced.** The README attributes the count to
+  the L0-L14 table in `docs/architecture.md` instead of stating it bare.
+- **A project-status section was added** without any download, star or user
+  figure: pre-1.0, single maintainer, no external contributors yet, no measured
+  comparison against other tools, and the note that human-readable output is
+  Turkish with no locale switch yet.
+- **Governance files rewritten.** `SECURITY.md` gained a supported-versions table,
+  the private advisory route, a response target and an explicit statement that
+  there is no PGP key. `CODE_OF_CONDUCT.md` moved enforcement off the public
+  issue tracker, which would have exposed reporters, onto a private address, and
+  its Contact section now matches what Contributor Covenant 2.1 requires.
+- **`CONTRIBUTING.md` documents the workflow the code actually implements** — the
+  real test and coverage commands, the seal and trust chain, exit codes, the
+  `CHECK_TYPES` extension path, and the release procedure including the reason the
+  two registries diverged.
+- **Issue and pull-request templates added**, plus a documentation URL in
+  `CITATION.cff` and repository `topics`/`description` corrected to match what the
+  project is.
+- **`mkdocs.yml`** gained `repo_name`, `edit_uri` so every page has an "edit on
+  GitHub" link, and social links for the repository, PyPI, npm and the citation
+  file. Navigation is unchanged and still covers every page.
+
+## The two published `2.4.1` builds are not the same artifact
+
+Recorded here so nobody has to rediscover it: the same version number was
+published to two registries from two different commits.
+
+| Build | Published | Notes |
+|---|---|---|
+| PyPI `2.4.1` | 2026-09-29 | Built before the documentation and packaging rewrite. 14 keywords; its sdist omits `index.js`, `bin/`, `mkdocs.yml`, `SECURITY.md`, `CITATION.cff`, `CODE_OF_CONDUCT.md` and `package.json`; its project page serves the previous README. |
+| npm `2.4.1` | 2026-10-01 | Built from the documentation rewrite; carries the `files` allowlist, the repaired launcher and the current README. |
+
+`pyproject.toml` was left at `2.4.1` and `release.yml` skips a version that
+already exists on PyPI, so the metadata on `main` cannot be published without a
+version bump. The npm workflow triggers on any change to `package.json`,
+`index.js` or `bin/**` and publishes without running `npm test` or a
+`npm pack` check, which is how a different artifact was produced under the same
+number. Both are release-process items, not documentation items, and are not
+changed by this entry.
+
+## v2.4.1 — PyPI 2026-09-29, npm 2026-10-01
+
+### Published to both registries
+
+- Metadata-only patch release: improved PyPI discovery keywords, classifiers, description, documentation links, and synchronized package version metadata.
+
+### Published to npm only (built from the documentation rewrite)
+
+#### README rebuilt around a verified quick start
 
 - **README rebuilt around a verified quick start:** explicit problem/solution framing, "who it is for", `pipx` and `pip` install paths, a five-minute walkthrough, Agent Skill invocation table, a `plan-auditor doctor` troubleshooting section, accurate CI/PyPI/npm/license badges, and a stated list of honest limits.
 - **Removed an inaccurate Python API example.** The previous README showed `from plan_auditor import AuditContract`; no such module exists in the distribution, which ships `supervisor` and `scripts`. The README now documents the real CLI only.
@@ -22,8 +111,15 @@
 - **`package.json` aligned with the real CLI.** `npm test` was `echo "Error: no test specified" && exit 1`; it now syntax-checks the launcher. Added an explicit `files` allowlist so the published tarball no longer ships the entire working tree (the previous package included local virtual environments and build output). Version bumped to `2.4.1` to match the Python distribution.
 - **`index.js` launcher repaired.** It contained a syntax error (`(code) =;`), so the published npm launcher could not run at all. It now forwards arguments to the Python CLI and propagates the child exit code. `files` ships everything the launcher needs at runtime (`supervisor`, `scripts`, `hooks`, `references`).
 - **Housekeeping:** `.gitignore` now excludes `.venv/`, `venv/`, `.tmp-site/`, `site/`, and `node_modules/`.
+- **Removed the broken PyPI downloads badge.** `img.shields.io/pypi/dm/plan-auditor`
+  answers HTTP 200 while rendering `downloads: inaccessible`, because shields.io
+  scrapes a third-party download API that is rate-limited or down. The README now
+  links the PyPI and npm project pages instead, which always answer 200 and always
+  carry the real numbers. No count is hardcoded. `tests/test_docs_metadata.py` now
+  fails if a `img.shields.io/pypi/d...` badge or a hand-copied download count
+  reappears anywhere in the docs.
 
-## Unreleased — npm launcher exit codes and transcript fidelity
+#### npm launcher exit codes and transcript fidelity
 
 - **Both npm entry points now propagate the verifier's exit code.** The fix was
   initially placed only in `index.js`, but `package.json` maps the `plan-auditor`
@@ -60,10 +156,6 @@
   instead of relying on text-mode universal newlines, and rejects any documented
   traceback that pins a version-specific frame.
 - **`.npmignore` added and `package.json` tightened:** `__pycache__` directories were still being packed despite the `files` allowlist, because the allowlist re-includes whole directories. Added `!**/__pycache__` and `!**/*.py[cod]` negation patterns and a minimal `.npmignore`. `npm pack --dry-run` now reports 59 entries / ~134 KB with zero `__pycache__`, `.venv`, or `site-packages` paths, down from 18502 entries / 29.1 MB.
-
-## v2.4.1 — 2026-09-29
-
-- Metadata-only patch release: improved PyPI discovery keywords, classifiers, description, documentation links, and synchronized package version metadata.
 
 ## v2.4.0 — 2026-09-06
 

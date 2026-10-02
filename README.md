@@ -54,10 +54,47 @@ pip install plan-auditor           # into the current environment / virtualenv
 
 Requires Python 3.10 or newer. No third-party runtime dependencies.
 
+The examples below invoke the interpreter as `python`. On a system that only
+provides `python3` (common on Debian/Ubuntu without `python-is-python3`), either
+activate a virtualenv where `python` exists, or change the `cmd` in the plan to
+`python3`. The npm launcher picks `python` on Windows and `python3` everywhere
+else, so that path is unaffected.
+
 ```bash
 plan-auditor --help
 plan-auditor-formalize --help
 ```
+
+The commands and transcripts below are written for a checkout of `main`. Read the
+next section before you assume the published packages match them.
+
+## Release status: the two registries are not in sync
+
+Checked against the live PyPI and npm registries on 2026-10-01. The two `2.4.1`
+artifacts are **different builds**, and neither is byte-identical to `main`:
+
+| Surface | What that build actually contains |
+|---|---|
+| PyPI `2.4.1` | Uploaded 2026-09-29, *before* the documentation and packaging rewrite. Its project page still serves the older README, and its wheel ships only the `supervisor` and `scripts` Python packages. |
+| npm `2.4.1` | Published 2026-10-01 from the current `main`. The repaired launcher, the `files` allowlist and this documentation are in it. |
+| `main` | The only surface where the quick start below is true exactly as written. |
+
+What that means in practice:
+
+- **To try the verified quick start below as written:** use a checkout of `main`
+  (see [Use it as an Agent Skill](#use-it-as-an-agent-skill) for the clone command).
+- **To install the CLI from PyPI:** `pipx install plan-auditor` works and the CLI
+  behaves as documented, but you are installing the pre-rewrite build. Nothing in
+  the CLI depends on this documentation being new.
+- **To install the repaired npm launcher:** `npm i plan-auditor@2.4.1` is enough.
+  The launcher is an npm-only surface; PyPI does not ship `index.js`.
+- **Skill files:** the PyPI **wheel does not contain `SKILL.md`, `references/` or
+  `hooks/`**, so a `pip`-only install cannot use the Agent Skill path. The PyPI
+  **sdist** does contain them.
+
+A single `2.4.2` is what makes both registries match `main`. Until then this
+section is the honest description of what you get; the release owner should
+delete it in the commit that bumps the version.
 
 ## Quick start (verified, 5 minutes)
 
@@ -220,9 +257,20 @@ the JSON verdict is the stable machine interface.
 
 ## Use it as an Agent Skill
 
-plan-auditor ships as a skill definition ([SKILL.md](SKILL.md)) for hosts that load
-skills by directory. Copy the repository (or just `SKILL.md`, `scripts/`,
-`references/`, `hooks/`) into your host's skills directory:
+plan-auditor ships a skill definition ([SKILL.md](https://github.com/Furox-Art/plan-auditor/blob/main/SKILL.md))
+for hosts that load skills by directory.
+
+**You need a checkout.** The skill files are not in the PyPI wheel, so
+`pipx install plan-auditor` alone is not enough for this path:
+
+```bash
+git clone https://github.com/Furox-Art/plan-auditor.git
+cp -r plan-auditor/SKILL.md plan-auditor/scripts plan-auditor/references plan-auditor/hooks \
+      ~/.config/opencode/skills/plan-auditor/   # or your host's path, from the table below
+```
+
+Copy `SKILL.md`, `scripts/`, `references/` and `hooks/` into your host's skills
+directory:
 
 | Host | User-level path | Project-level path | Invoke |
 |---|---|---|---|
@@ -236,7 +284,7 @@ want and let the skill build the plan, run the checks and refuse to stop until
 `plan-auditor audit <project>` exits `0`.
 
 Enforcement details, including the blocking `Stop` hook, are in
-[docs/integrations.md](docs/integrations.md).
+[docs/integrations.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md).
 
 ## npm
 
@@ -304,47 +352,92 @@ Fix the underlying problem, or re-arm deliberately with `plan-auditor run . 1 --
 
 Full troubleshooting guidance, including the observational-audit rule that fails a
 run when the workspace changes mid-audit, is in
-[docs/quickstart.md](docs/quickstart.md).
+[docs/quickstart.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/quickstart.md).
 
 ## Documentation
 
+Canonical entry point:
+<https://github.com/Furox-Art/plan-auditor/blob/main/docs/index.md>
+
 | Document | What it covers |
 |---|---|
-| [docs/index.md](docs/index.md) | Documentation home and reading order |
-| [docs/quickstart.md](docs/quickstart.md) | Install, first verified task, `doctor` troubleshooting |
-| [docs/cli.md](docs/cli.md) | Every `plan-auditor` subcommand with real invocations |
-| [docs/architecture.md](docs/architecture.md) | The 15 supervision layers and subsumption order |
-| [docs/dependency-graph.md](docs/dependency-graph.md) | Step DAGs, output contracts, requirement coverage |
-| [docs/formal-planning.md](docs/formal-planning.md) | LLM-free STRIPS reachability and PDDL export |
-| [docs/threat-model.md](docs/threat-model.md) | Trust boundary and what is explicitly *not* guaranteed |
-| [docs/deployment-isolation.md](docs/deployment-isolation.md) | Running against a deliberately hostile agent |
-| [docs/integrations.md](docs/integrations.md) | Skill hosts, blocking hooks, CI |
-| [docs/benchmark.md](docs/benchmark.md) | What is measurable here, and what is not |
+| [docs/index.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/index.md) | Documentation home and reading order |
+| [docs/quickstart.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/quickstart.md) | Install, first verified task, `doctor` troubleshooting |
+| [docs/cli.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/cli.md) | Every `plan-auditor` subcommand with real invocations |
+| [docs/architecture.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/architecture.md) | The 15 supervision layers (L0-L14, counted from the table in that page) and subsumption order |
+| [docs/dependency-graph.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/dependency-graph.md) | Step DAGs, output contracts, requirement coverage |
+| [docs/formal-planning.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/formal-planning.md) | LLM-free STRIPS reachability and PDDL export |
+| [docs/threat-model.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/threat-model.md) | Trust boundary and what is explicitly *not* guaranteed |
+| [docs/deployment-isolation.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/deployment-isolation.md) | Running against a deliberately hostile agent |
+| [docs/integrations.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md) | Skill hosts, blocking hooks, CI |
+| [docs/benchmark.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/benchmark.md) | What is measurable here, what is not, and where each number comes from |
 
-Build the site locally with `mkdocs serve` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Runnable example: [`examples/fib/`](https://github.com/Furox-Art/plan-auditor/tree/main/examples/fib)
+is a complete two-step plan you can audit end to end, including a deliberately
+broken variant.
+
+**No rendered documentation site is published yet.** `mkdocs.yml` is set up and
+its navigation covers every page, but publishing needs a GitHub Pages workflow
+that does not exist in this repository yet. Until then, read the Markdown on
+GitHub or build it yourself:
+
+```bash
+python -m pip install mkdocs-material
+mkdocs serve
+```
+
+`mkdocs-material` is a documentation-only dependency and is deliberately not part
+of the installable package, so `pip install plan-auditor` does not need it. See
+[CONTRIBUTING.md](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md)
+for the full contributor workflow.
+
+## Project status
+
+- Pre-1.0, `Development Status :: 4 - Beta` on both registries.
+- Maintained by a single person, with no external contributors yet. Review is slow
+  for that reason, not because contributions are unwanted.
+- No comparison against other tools has been measured. See
+  [docs/benchmark.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/benchmark.md)
+  for what is reproducible and what is explicitly not claimed.
+- No telemetry is collected, and no download or usage figure is printed anywhere
+  in this repository. Where a count would be useful, the link to the package page
+  is given instead, because the package page is the only place the number is
+  current.
+- The human-readable progress output is in Turkish (for example the `adım`,
+  `geçti` and `KALDI` lines in the transcripts above). There is no locale switch
+  yet, so parse the JSON verdict (`"outcome"`) rather than the prose.
 
 ## Project links
 
-- [Changelog](CHANGELOG.md)
-- [Security policy](SECURITY.md)
-- [Contributing guide](CONTRIBUTING.md)
-- [Code of conduct](CODE_OF_CONDUCT.md)
-- [Citation metadata](CITATION.cff)
-- [Issues](https://github.com/Furox-Art/plan-auditor/issues)
+- [Changelog](https://github.com/Furox-Art/plan-auditor/blob/main/CHANGELOG.md)
+- [Security policy](https://github.com/Furox-Art/plan-auditor/blob/main/SECURITY.md)
+- [Contributing guide](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md)
+- [Code of conduct](https://github.com/Furox-Art/plan-auditor/blob/main/CODE_OF_CONDUCT.md)
+- [Citation metadata](https://github.com/Furox-Art/plan-auditor/blob/main/CITATION.cff)
+- [Issues](https://github.com/Furox-Art/plan-auditor/issues) — bug, feature and
+  question templates are provided
+- [Open a pull request](https://github.com/Furox-Art/plan-auditor/pulls)
 
 ## Honest limits
 
 Read these before you rely on it:
 
 - It is **not** an OS sandbox. In a normal install the agent and the verifier run as
-  the same OS user. See [docs/deployment-isolation.md](docs/deployment-isolation.md).
+  the same OS user. See [docs/deployment-isolation.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/deployment-isolation.md).
 - Evidence is **tamper-evident**, not tamper-proof.
 - External HMAC integrity detects tampering only for a key the agent cannot read.
 - It verifies that *declared, checkable* requirements were met. Domain meaning that
   cannot be expressed as a deterministic check is reviewed by a human, not guessed.
-- The most recent release is published on PyPI and npm; there are no third-party
-  mirrors, forks, or packaged distributions listed here.
+- The npm package is a launcher: it needs Python 3.10 or newer already on `PATH`.
+- Progress output is Turkish-only for now; the JSON verdict is the stable interface.
+- The published PyPI and npm builds are currently out of sync. See
+  [Release status](#release-status-the-two-registries-are-not-in-sync).
+- There is no rendered documentation site yet, and the branch-coverage floor is
+  enforced in CI but the current measured value is not copied into this file, so
+  read the CI run rather than a number here.
+- Releases are published on PyPI and npm; there are no third-party mirrors, forks,
+  or packaged distributions listed here.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/Furox-Art/plan-auditor/blob/main/LICENSE).

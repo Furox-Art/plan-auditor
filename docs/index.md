@@ -19,8 +19,18 @@ Nothing on this site requires an LLM, a GPU, or a network connection.
 | Know the limits before relying on it | [Threat model](threat-model.md) |
 | Isolate against a deliberately hostile agent | [Deployment isolation](deployment-isolation.md) |
 | Wire it into a host or CI | [Integrations](integrations.md) |
+| Run the shipped example end to end | `examples/fib/` in the repository |
 | Know what can actually be measured here | [What is measurable](benchmark.md) |
 | Contribute a check type or fix a doc | [Contributing guide](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md) |
+
+## Release status, stated once
+
+The PyPI `2.4.1` artifact, the npm `2.4.1` artifact and `main` are three
+different builds. The PyPI wheel ships only the `supervisor` and `scripts` Python
+packages, so it contains no `SKILL.md`, `references/`, `hooks/`, `docs/` or
+`examples/`; the sdist and the npm tarball do contain them. The README carries a
+table of exactly what each published build has. Everything on this documentation
+site describes `main`.
 
 ## The five rules
 
