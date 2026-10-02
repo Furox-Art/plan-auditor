@@ -2,12 +2,20 @@ name: npm Publish
 
 on:
   workflow_dispatch:
+  # The same trigger the PyPI release uses, so one version bump updates both
+  # registries and the two cannot drift apart. The previous version of this
+  # workflow fired on any push touching package.json, which meant a documentation
+  # edit could trigger a publish attempt against an already-published version.
+  push:
+    branches: [main]
+    paths:
+      - ".github/pypi-release-trigger"
 
 concurrency:
   group: npm-publish
   cancel-in-progress: false
 
-# Read-only: publishing to npm needs a registry token, never repository write.
+# Read-only: publishing to npm needs an OIDC attestation, never repository write.
 permissions:
   contents: read
 
@@ -27,12 +35,19 @@ jobs:
           python-version: "3.12"
       - name: Install the package the launcher shells out to
         run: python -m pip install .
-      # This gate did not exist before: v2.4.0 was published with a JavaScript
-      # syntax error, so `npx plan-auditor` could not run at all.
+      # Every one of these gates exists because a defective build reached npm:
+      # 2.4.0 shipped a JavaScript syntax error, and 2.4.1 shipped a launcher
+      # that audited the installed package directory instead of the caller's.
       - name: Launcher syntax and contract tests
         run: npm test && npm run test:contract
       - name: Confirm the packed tarball ships only allowlisted files
         run: npm run test:tarball
+      # The decisive gate: packs the tarball, installs it somewhere unrelated,
+      # and runs the *installed* bin from a different working directory.
+      - name: Verify the installed tarball launches the CLI from the caller's cwd
+        run: npm run test:installed
+      - name: Require one version across every distribution surface
+        run: python .github/scripts/check_version_lockstep.py
 
   publish:
     name: publish to npm
@@ -41,6 +56,9 @@ jobs:
     environment: npm
     permissions:
       contents: read
+      # id-token is what mints the OIDC provenance attestation npm trusts. This
+      # is the primary publish path: no long-lived registry token is used.
+      id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -54,34 +72,47 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "package version: $version"
-      # npm republishing an existing version fails with E403, which made a
-      # no-op push to main a red build. The Python distribution gates the same
-      # way; this keeps the two registries consistent.
-      - name: Check whether the version is already published
+      - name: Refuse to publish a version that already exists
         id: gate
         shell: bash
         run: |
+          # npm versions are immutable, so republishing is an E403 failure. This
+          # turns a no-op push into a green skip instead of a red build.
           if npm view "plan-auditor@${{ steps.meta.outputs.version }}" version > /dev/null 2>&1; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "plan-auditor@${{ steps.meta.outputs.version }} is already on npm; nothing to do."
+            echo "plan-auditor@${{ steps.meta.outputs.version }} is already on npm; nothing to publish."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-      # No continue-on-error: a failed publish must fail the job rather than be
-      # reported as a successful release.
-      - name: Publish to npm
+      # Publishes from the checked-out source, not from a locally installed copy,
+      # so the tarball is built from exactly the reviewed commit. --provenance
+      # binds the upload to this workflow run via the OIDC token minted above.
+      - name: Publish to npm with trusted publishing
+        id: trusted_publish
         if: steps.gate.outputs.skip != 'true'
-        run: echo "npm publishing is disabled; PyPI is the install path" && exit 0
+        run: npm publish --access public --provenance
+      # Documented fallback, not the default path. It only runs if the primary
+      # step above fails, which should only happen when the trusted publisher has
+      # been removed from npmjs.com and the maintainer has provisioned
+      # NPM_TOKEN instead. Provenance is not requested here because the
+      # attestation comes from the OIDC exchange, which a plain token cannot
+      # produce. Delete this step once trusted publishing is confirmed working.
+      - name: Publish to npm with the token fallback
+        if: steps.gate.outputs.skip != 'true' && steps.trusted_publish.outcome != 'success'
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Confirm the published version
+      # No continue-on-error anywhere: a publish that silently fails is worse than
+      # a red build, because it leaves the registry and the repository disagreeing
+      # about what is released.
+      - name: Require the published version to be readable from the registry
         if: steps.gate.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          published="$(npm view "plan-auditor@${{ steps.meta.outputs.version }}" version)"
+          published="$(npm view "plan-auditor@${{ steps.meta.outputs.version }}" version 2>/dev/null || true)"
           if [ "$published" != "${{ steps.meta.outputs.version }}" ]; then
-            echo "ERROR: npm reports $published, expected ${{ steps.meta.outputs.version }}"
+            echo "ERROR: npm reports '${published:-nothing}', expected ${{ steps.meta.outputs.version }}"
             exit 1
           fi
           echo "npm registry confirms plan-auditor@$published"
