@@ -78,26 +78,7 @@ jobs:
       # caller-cwd resolution, and the tarball allowlist.
       - name: Launcher syntax and contract tests
         run: npm test && npm run test:contract
-      - name: Confirm the packed tarball ships only allowlisted files
+- name: Confirm the packed tarball ships only allowlisted files
         run: |
           npm pack --dry-run --json > pack.json
-          node -e '
-            const fs = require("fs");
-            const pack = JSON.parse(fs.readFileSync("pack.json", "utf8"))[0];
-            const paths = pack.files.map((f) => f.path);
-            const forbidden = paths.filter((p) =>
-              /(^|\/)(__pycache__|\.venv|node_modules|\.pytest_cache|dist|build)(\/|$)/.test(p)
-              || /\.(pyc|pyo|tgz)$/.test(p)
-            );
-            if (forbidden.length) {
-              console.error("tarball ships build artifacts:", forbidden);
-              process.exit(1);
-            }
-            for (const required of ["index.js", "bin/plan-auditor.js", "supervisor/cli.py"]) {
-              if (!paths.includes(required)) {
-                console.error("tarball is missing required file:", required);
-                process.exit(1);
-              }
-            }
-            console.log(`tarball OK: ${paths.length} files, all allowlisted`);
-          '
+          node bin/check_tarball_contents.js pack.json
