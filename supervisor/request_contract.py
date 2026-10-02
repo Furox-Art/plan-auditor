@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 
 from scripts import audit_check as core
 from scripts.contract import (
+    REQUEST_PLAN_BINDING_FIELD,
     canonical_digest,
     canonical_json,
     payload_without_auth,
@@ -35,12 +36,6 @@ REQUEST_FORMAT_VERSION = 1
 ACTIVATION_FORMAT_VERSION = 1
 REQUEST_NAME = "request.json"
 ACTIVATION_NAME = "activation.json"
-
-#: Cryptographic binding between the host request and the plan it approves.
-#: Stamped once at activation; the execution gate re-checks it against the
-#: sealed plan so a request derived from a different plan cannot be reused, and
-#: the seal binds the request digest so it cannot be swapped after sealing.
-REQUEST_PLAN_BINDING_FIELD = "plan_contract_sha256"
 
 
 def _canonical(value: Any) -> str:
@@ -175,14 +170,28 @@ def _auth_value(root: Path, key: KeyMaterial | None, domain: str, payload: Dict[
 
 
 def _stamp_plan_binding(workspace: Path, payload: Dict[str, Any]) -> None:
-    """Record which plan contract this request approves, when one exists."""
+    """Record which plan contracts this request approves, keyed by plan name.
+
+    Every active plan gets an entry (the default plan plus each
+    ``.plan-auditor/plans/<name>.json``), because a workspace may seal and audit
+    several plans under one request. Plans that cannot be read are skipped: the
+    request stays authoritative and the seal still binds it, so only the reverse
+    binding is deferred.
+    """
+    from .plans import all_plan_refs, load_plan_ref
+
+    bindings: Dict[str, str] = {}
     try:
-        current_plan = core.load_plan(str(workspace))
-    except (OSError, ValueError, SystemExit):
-        # No default plan to bind yet. The request is still authoritative and the
-        # seal will bind it; only the reverse binding is deferred.
-        return
-    payload[REQUEST_PLAN_BINDING_FIELD] = plan_hash(current_plan)
+        refs = all_plan_refs(workspace)
+    except (OSError, ValueError):
+        refs = []
+    for ref in refs:
+        try:
+            bindings[ref.key] = plan_hash(load_plan_ref(ref))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    if bindings:
+        payload[REQUEST_PLAN_BINDING_FIELD] = bindings
 
 
 def initialize_request(root: str | Path, source: Dict[str, Any]) -> RequestStatus:

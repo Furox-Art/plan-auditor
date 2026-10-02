@@ -306,7 +306,7 @@ def test_swapped_request_is_refused(tmp_path: Path):
 
     request_file = root / ".plan-auditor" / "request.json"
     original = json.loads(request_file.read_text(encoding="utf-8"))
-    assert original.get("plan_contract_sha256") == plan_hash(core.load_plan(str(root)))
+    assert original["plan_contract_sha256s"]["default"] == plan_hash(core.load_plan(str(root)))
 
     swapped = dict(original)
     swapped["task"] = "attacker substituted requirement"
@@ -349,7 +349,7 @@ def test_request_derived_from_a_different_plan_is_refused(tmp_path: Path):
     (root / ".plan-auditor" / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
     activate_for_plan(root, plan)
     request_file = root / ".plan-auditor" / "request.json"
-    stamped = json.loads(request_file.read_text(encoding="utf-8"))["plan_contract_sha256"]
+    stamped = json.loads(request_file.read_text(encoding="utf-8"))["plan_contract_sha256s"]["default"]
 
     # Re-seal against a genuinely different plan while leaving the request alone.
     other = _plan("python -c \"print('other')\"")
@@ -370,12 +370,33 @@ def test_request_derived_from_a_different_plan_is_refused(tmp_path: Path):
     assert stamped in str(excinfo.value)
 
 
+def test_request_binds_every_active_plan_not_only_the_default(tmp_path: Path):
+    """Regression: a workspace sealing a default and a named plan under one
+    request must authorise both, so the binding is per plan."""
+    root = _workspace(tmp_path)
+    plans_dir = root / ".plan-auditor" / "plans"
+    plans_dir.mkdir(parents=True)
+    named = _plan("python -c \"print('named')\"")
+    named["task"] = "named plan"
+    (plans_dir / "named.json").write_text(json.dumps(named, indent=2), encoding="utf-8")
+
+    default_plan = _plan()
+    (root / ".plan-auditor" / "plan.json").write_text(
+        json.dumps(default_plan, indent=2), encoding="utf-8"
+    )
+    activate_for_plan(root, default_plan)
+    request = json.loads((root / ".plan-auditor" / "request.json").read_text(encoding="utf-8"))
+    bindings = request["plan_contract_sha256s"]
+    assert bindings["default"] == plan_hash(default_plan)
+    assert bindings["named"] == plan_hash(named), "each active plan must be bound"
+
+
 def test_request_activation_binds_the_plan_it_approves(tmp_path: Path):
     root = _workspace(tmp_path)
     plan = _plan()
     activate_for_plan(root, plan)
     request = json.loads((root / ".plan-auditor" / "request.json").read_text(encoding="utf-8"))
-    assert request["plan_contract_sha256"] == plan_hash(core.load_plan(str(root)))
+    assert request["plan_contract_sha256s"]["default"] == plan_hash(core.load_plan(str(root)))
 
 
 def test_seal_binds_the_request_digest(tmp_path: Path):

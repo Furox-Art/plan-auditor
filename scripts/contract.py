@@ -28,6 +28,11 @@ except ImportError:  # pragma: no cover - direct-script execution fallback
 
 PG_DIR = ".plan-auditor"
 
+#: Field in an activated request contract holding ``{plan_key: plan_hash}``, the
+#: cryptographic binding from the host request back to the plans it approves. A
+#: workspace may seal several plans under one request, so the binding is per plan.
+REQUEST_PLAN_BINDING_FIELD = "plan_contract_sha256s"
+
 SEAL_FORMAT_VERSION = 4
 #: Seals older than this do not bind the full contract and cannot authorise
 #: execution. They still require the explicit migration/reseal step.

@@ -27,6 +27,7 @@ try:
     from scripts.contract import (
         MINIMUM_TRUSTED_SEAL_FORMAT,
         PG_DIR,
+        REQUEST_PLAN_BINDING_FIELD,
         SEALING_HINT,
         PlanTrustError,
         canonical_digest,
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - direct-script execution fallback
     from contract import (
         MINIMUM_TRUSTED_SEAL_FORMAT,
         PG_DIR,
+        REQUEST_PLAN_BINDING_FIELD,
         SEALING_HINT,
         PlanTrustError,
         canonical_digest,
@@ -108,7 +110,11 @@ def _verify_seal_mac(base: str, data: Dict[str, Any], label: str) -> None:
 
 
 def _verify_request_binding(
-    base: str, data: Dict[str, Any], expected_plan_hash: str, label: str
+    base: str,
+    data: Dict[str, Any],
+    plan_key: str,
+    expected_plan_hash: str,
+    label: str,
 ) -> None:
     """Bind the activated request contract to the sealed plan, both ways."""
     committed = _seal_environment(data).get("request_sha256")
@@ -134,12 +140,16 @@ def _verify_request_binding(
             "request contract does not match the request sealed in this workspace; "
             "the request was swapped after sealing (%s)" % SEALING_HINT
         )
-    stamped = request.get("plan_contract_sha256")
+    bindings = request.get(REQUEST_PLAN_BINDING_FIELD)
+    if not isinstance(bindings, dict):
+        return  # activated before plan binding existed; the seal digest still binds it
+    stamped = bindings.get(plan_key)
     if isinstance(stamped, str) and stamped and stamped != expected_plan_hash:
         raise PlanTrustError(
-            "request contract was derived from a different plan "
+            "request contract was derived from a different plan %r "
             "(plan_contract_sha256=%s, sealed plan=%s); re-run request init for "
-            "the current plan (%s)" % (stamped, expected_plan_hash, SEALING_HINT)
+            "the current plan (%s)"
+            % (plan_key, stamped, expected_plan_hash, SEALING_HINT)
         )
 
 
@@ -152,11 +162,12 @@ def require_plan_trust(
     contract to the exact authority that permitted execution.
     """
     try:
-        validate_plan_name(name)
+        safe_name = validate_plan_name(name)
     except ValueError as exc:
         raise PlanTrustError(str(exc)) from exc
 
-    label = "plan seal for %r" % (name or "default")
+    plan_key = safe_name or "default"
+    label = "plan seal for %r" % plan_key
     expected = plan_hash(plan)
     target = seal_path(base, name)
     try:
@@ -188,5 +199,5 @@ def require_plan_trust(
         )
 
     _verify_seal_mac(base, data, label)
-    _verify_request_binding(base, data, expected, label)
+    _verify_request_binding(base, data, plan_key, expected, label)
     return data
