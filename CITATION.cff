@@ -1,9 +1,32 @@
-cff-version: 1.2.0  
-message: "If you use this software, please cite it as below."  
-authors:  
-  - family-names: "Furox"  
-    given-names: "Art"  
-title: "Plan Auditor: Independent multi-layer verification supervisor for AI coding agents"  
-version: 2.4.1  
-date-released: 2026-09-29  
-url: "https://github.com/Furox-Art/plan-auditor" 
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it as below. The version field names the
+  release series; because the PyPI and npm artifacts published under 2.4.1 were
+  built from different commits, prefer citing the exact commit or tag you
+  actually used, and name the registry in your methods section.
+type: software
+title: "Plan Auditor: independent verification supervisor for AI coding agents"
+abstract: >-
+  Plan Auditor turns an AI agent's claim that work is complete into a checkable
+  fact. Every step must carry at least one deterministic behavioural check that a
+  separate process re-runs in a fresh subprocess; the result is appended to a
+  SHA-256 hash-chained evidence log. The plan's verification contract is sealed on
+  host approval and may only be strengthened afterwards, and the final gate fails
+  closed until every active plan has an intact contract and a fresh deterministic
+  audit. There is no language model in the verification path.
+authors:
+  - family-names: "Furox"
+    given-names: "Art"
+    alias: "Furox-Art"
+repository-code: "https://github.com/Furox-Art/plan-auditor"
+url: "https://github.com/Furox-Art/plan-auditor"
+license: MIT
+version: 2.4.1
+date-released: "2026-09-29"
+keywords:
+  - AI coding agents
+  - deterministic verification
+  - tamper-evident evidence
+  - independent completion gate
+  - STRIPS
+  - PDDL

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Furox-Art/plan-auditor/security/advisories/new
+    about: Private, encrypted-in-transit route. Do not open a public issue for a suspected vulnerability.
+  - name: Code of conduct report
+    url: https://github.com/Furox-Art/plan-auditor/blob/main/CODE_OF_CONDUCT.md
+    about: Reporting here is public. Use the private address in the Code of Conduct instead.
+  - name: Before filing a bug
+    url: https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md
+    about: The test suite, the coverage floor and the self-audit gate, plus how to extend a check type.

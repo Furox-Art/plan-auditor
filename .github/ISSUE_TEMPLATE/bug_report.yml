@@ -1,0 +1,110 @@
+name: Bug report
+description: Something the tool did that contradicts its documented behaviour
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This tool claims its behaviour is machine-checkable, so a good bug report
+        is one that shows the documented behaviour and the real behaviour side by
+        side. If the discrepancy is a security issue rather than a defect, do not
+        file it here — use the private advisory route in SECURITY.md.
+
+  - type: textarea
+    id: expected-vs-actual
+    attributes:
+      label: What happened, and what the documentation says should happen
+      description: Quote the exact error or unexpected output, and link or name the doc section that says otherwise.
+      placeholder: |
+        `plan-auditor audit .` printed `"outcome": "PASS"` even though
+        `plan-auditor plan verify .` had reported `seal_violations`.
+        docs/threat-model.md says a seal violation fails the gate.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The smallest `.plan-auditor/plan.json` and commands that show it. A failing plan is far more useful than a description of your real project.
+      placeholder: |
+        1. create a directory with `.plan-auditor/plan.json` containing ...
+        2. `plan-auditor request init . --file request-source.json`
+        3. `plan-auditor run . 1`
+        4. observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: commands
+    attributes:
+      label: Exact commands and output
+      description: Include the exit code, not just stdout. `echo $?` is the part that usually matters.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version and registry
+      description: Which artifact did you install, and from where?
+      placeholder: "pipx, 2.4.1 from PyPI"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which entry point
+      multiple: true
+      options:
+        - "plan-auditor (console script)"
+        - "npx plan-auditor (npm launcher)"
+        - "python scripts/audit_check.py (deterministic core)"
+        - "Agent Skill via a host"
+        - "hooks/gate_hook.py"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: "Operating system, Python version, and for the launcher, Node version."
+      placeholder: "Windows 11, CPython 3.12.10"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: verification
+    attributes:
+      label: Is the plan still valid after the failure?
+      description: If the gate refuses to pass a plan you believe is correct, that is a plan-integrity problem and we need to see the seal.
+      options:
+        - "Yes, `plan-auditor plan verify .` still reports PASS"
+        - "No, `plan verify` now reports a problem"
+        - "Not checked"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence-output
+    attributes:
+      label: "`plan-auditor doctor .` output
+      description: Machine-readable capability and health report. It is the first thing asked for when triaging.
+      render: json
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the open and closed issues for this already.
+          required: true
+        - label: I read SECURITY.md and this is a defect, not a vulnerability.
+          required: true
+        - label: I removed tokens, credentials and private paths from anything I pasted.
+          required: true
