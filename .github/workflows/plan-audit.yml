@@ -58,18 +58,30 @@ jobs:
       # warning when the secret is absent, and strictly enforced when present.
       # The report is always uploaded as an artifact either way, so the
       # measurement is never lost. Add the secret to enable the upload.
+      #
+      # The secret is resolved in a step and passed through `env`: the `secrets`
+      # context is not available in a step-level `if`, and referencing it there
+      # invalidates the whole workflow file rather than failing one step.
+      - name: Detect whether Codecov upload is configured
+        id: codecov
+        shell: bash
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CODECOV_TOKEN is not configured, so coverage was measured but not published."
+            echo "::warning::coverage.xml is still available as the coverage-report job artifact."
+          fi
       - name: Upload coverage to Codecov
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: steps.codecov.outputs.configured == 'true'
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           files: ./coverage.xml
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
-      - name: Report that Codecov upload is not configured
-        if: ${{ secrets.CODECOV_TOKEN == '' }}
-        run: |
-          echo "::warning::CODECOV_TOKEN is not configured, so coverage was measured but not published."
-          echo "::warning::coverage.xml was generated and is available as a job artifact."
       - name: Upload the coverage report as an artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
