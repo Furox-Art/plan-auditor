@@ -1,0 +1,41 @@
+name: Question
+description: How to use, configure or interpret the tool
+title: ""
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a behaviour that contradicts the documentation, use the bug report
+        template instead — a question that turns out to be a defect is faster to
+        act on as a bug.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do
+      description: Include the plan shape, the command you ran, and what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant plan excerpt
+      description: The `requirements`, `steps` and `verify` blocks are usually what is needed. Redact anything private.
+      render: json
+
+  - type: input
+    id: version
+    attributes:
+      label: Version and entry point
+      placeholder: "pipx, 2.4.1 from PyPI"
+    validations:
+      required: true
+
+  - type: textarea
+    id: read
+    attributes:
+      label: What you have already read
+      description: docs/quickstart.md has a troubleshooting section per common error message.
+      placeholder: "docs/quickstart.md, the Troubleshooting section"

@@ -19,8 +19,21 @@ Nothing on this site requires an LLM, a GPU, or a network connection.
 | Know the limits before relying on it | [Threat model](threat-model.md) |
 | Isolate against a deliberately hostile agent | [Deployment isolation](deployment-isolation.md) |
 | Wire it into a host or CI | [Integrations](integrations.md) |
+| Run the shipped example end to end | `examples/fib/` in the repository |
 | Know what can actually be measured here | [What is measurable](benchmark.md) |
 | Contribute a check type or fix a doc | [Contributing guide](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md) |
+
+## Release status, stated once
+
+The PyPI `2.4.1` artifact, the npm `2.4.1` artifact and `main` are three different
+builds, and everything on this site describes `main`.
+
+A wheel built from `main` ships the Python packages `supervisor` and `scripts`, and
+additionally ships the Agent Skill assets (`SKILL.md`, `scripts/`, `references/`,
+`hooks/` and the Node launcher) namespaced under `plan_auditor_skill/`. It does
+**not** ship `docs/` or `examples/`. The already-published PyPI `2.4.1` wheel
+predates that change and has only the Python packages. The README carries a table
+of exactly what each published build has.
 
 ## The five rules
 

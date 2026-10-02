@@ -1,9 +1,26 @@
 site_name: Plan Auditor
 site_description: Deterministic verification and evidence auditing for AI coding agents, completion proofs, sealed plans, STRIPS/PDDL checks, and an independent quality-assurance gate.
 repo_url: https://github.com/Furox-Art/plan-auditor
+repo_name: Furox-Art/plan-auditor
+edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: .tmp-site
-copyright: MIT licensed.
+copyright: MIT licensed. Content describes main and may be ahead of the published release.
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Furox-Art/plan-auditor
+      name: Source on GitHub
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/plan-auditor/
+      name: Package on PyPI
+    - icon: fontawesome/brands/npm
+      link: https://www.npmjs.com/package/plan-auditor
+      name: Launcher on npm
+    - icon: fontawesome/solid/fingerprint
+      link: https://github.com/Furox-Art/plan-auditor/blob/main/CITATION.cff
+      name: Citation metadata
 
 theme:
   name: material

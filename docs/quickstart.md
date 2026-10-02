@@ -1,7 +1,12 @@
 # Quick start
 
-Get a task proven end to end. Everything on this page is executed by
-`tests/test_readme_quickstart.py`, so the commands and their output are real.
+Get a task proven end to end. The commands and the transcript below are checked
+mechanically: `tests/test_readme_quickstart.py` executes the equivalent
+walkthrough from the README, `tests/test_doc_transcripts.py` compares the failing
+run shown here against real output, and
+`tests/test_docs_metadata.py` checks that every `plan-auditor` command on this
+page is a real subcommand. None of them run this page top to bottom, so treat the
+walkthrough as verified in pieces rather than as one executed script.
 
 ## Install
 
@@ -16,6 +21,15 @@ pip install plan-auditor
 ```
 
 Python 3.10 or newer. No third-party runtime dependencies.
+
+The commands and transcripts on this page were written against a checkout of
+`main`. The PyPI and npm `2.4.1` artifacts were not built from the same commit;
+see the release-status section of the README for what each published build
+actually contains. The CLI itself behaves as documented in every one of them.
+
+The examples invoke the interpreter as `python`. On a system that only provides
+`python3`, activate a virtualenv that has `python` or change the `cmd` in the
+plan to `python3`.
 
 ```bash
 plan-auditor --help
@@ -347,14 +361,36 @@ npx plan-auditor audit .
 echo $?
 ```
 
-If that prints `0` while the JSON verdict says `FAIL`, you are running the
-published `2.4.0`, which shipped a syntax error in the launcher. Upgrade to
-`2.4.1` or use the console script:
+If that prints `0` while the JSON verdict says `FAIL`, you are running npm
+`2.4.0`, which shipped a syntax error in the launcher so the `bin` entry point
+could not run at all. Update the package:
+
+```bash
+npm i plan-auditor@latest
+```
+
+or use the console script, which does not go through the launcher:
 
 ```bash
 pipx install --force plan-auditor
 plan-auditor audit .
 ```
+
+### The npm launcher audits the wrong directory
+
+A published `2.4.1` npm build runs the CLI with the *installed package directory*
+as its working directory, so a relative workspace path such as `.` resolves
+against the package instead of the directory you ran the command from. The output
+looks authoritative and refers to a tree you did not ask about. It is fixed on
+`main` and covered by a launcher contract test, and it ships with the next
+release. Until then, pass an absolute path or use the console script:
+
+```bash
+npx plan-auditor audit "$(pwd)"
+```
+
+For comparison, `plan-auditor audit .` from the same shell reports the workspace
+you are standing in, because the console script does not change directory.
 
 ### The agent keeps "fixing" the test instead of the code
 
