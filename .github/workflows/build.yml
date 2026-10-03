@@ -81,5 +81,11 @@ jobs:
         run: npm test && npm run test:contract
       - name: Publish-mode contract tests
         run: npm run test:publish-modes
+      # The lifecycle test runs the gate from inside a real dry-run publish with the
+      # same project .npmrc actions/setup-node writes. npm only emits its
+      # always-auth warning on stderr in that configuration, so this is the only
+      # invocation that reproduces what CI actually does.
+      - name: Pre-publish gate lifecycle test (inside a dry-run publish)
+        run: npm run test:lifecycle
       - name: Pre-publish gate (tarball contents + installed launcher)
         run: npm run test:gate
