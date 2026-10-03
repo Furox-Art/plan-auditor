@@ -65,6 +65,13 @@ jobs:
       # the same command `prepublishOnly` runs, so CI and the publish path cannot
       # diverge. It replaces `test:tarball` and `test:installed`, which each shelled
       # out to npm a second time and could die without a diagnostic.
+      # Runs the gate from inside a real dry-run publish lifecycle, with the
+      # project .npmrc that actions/setup-node writes. That combination is what
+      # broke runs 37120521494 and 37129620610: npm emits an always-auth warning
+      # on stderr there and nowhere else, so a direct invocation of the gate
+      # cannot reproduce it.
+      - name: Pre-publish gate lifecycle test (inside a dry-run publish)
+        run: npm run test:lifecycle
       - name: Pre-publish gate (tarball contents + installed launcher)
         run: npm run test:gate
       - name: Require one version across every distribution surface

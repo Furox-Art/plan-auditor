@@ -29,7 +29,8 @@
     "test:contract": "node --check bin/launcher_contract.test.js && node bin/launcher_contract.test.js",
     "test:publish-modes": "node --check bin/publish_mode_contract.test.js && node bin/publish_mode_contract.test.js",
     "test:gate": "node --check bin/prepublish_gate.js && node bin/prepublish_gate.js",
-    "test:all": "npm run test && npm run test:contract && npm run test:publish-modes && npm run test:gate",
+    "test:lifecycle": "node --check bin/prepublish_lifecycle.test.js && node bin/prepublish_lifecycle.test.js",
+    "test:all": "npm run test && npm run test:contract && npm run test:publish-modes && npm run test:lifecycle && npm run test:gate",
     "prepublishOnly": "npm run test:all"
   },
   "engines": {

@@ -181,14 +181,27 @@ function runNpm(args, options = {}) {
 /* ------------------------------------------------------- tarball inspection */
 
 /**
- * Extract the JSON payload from `npm pack --json` output.
+ * Extract the JSON payload from an npm result.
  *
- * npm writes a progress bar whose "[====]" prefix parses as the start of an
- * array, plus its own npm notice lines, to the same stream, so the first "["
- * cannot be trusted. Try each candidate and keep the first that parses as the
- * array of pack results we expect.
+ * The payload is read from stdout ONLY. npm writes its `--json` document to
+ * stdout and its warnings, progress bar and deprecation notices to stderr, and
+ * concatenating the two streams puts text after the closing bracket. Every
+ * `JSON.parse` over that remainder throws "Extra data", so the gate reported
+ * "npm pack produced no parseable file list" on a run where npm had exited 0
+ * and written a perfectly good tarball. That is what broke run 37129620610: the
+ * CI runner's project `.npmrc` (written by actions/setup-node) makes npm emit
+ * `npm warn Unknown project config "always-auth"` on stderr, and Windows
+ * produced no such warning, so the same code passed locally and failed in CI.
+ *
+ * stderr is still reported on failure, because a warning is often the only
+ * explanation for what npm did, but it is never parsed.
+ *
+ * npm 11 on a terminal also prefixes stdout with a progress bar whose
+ * "[====]" looks like the start of an array, so the scan still tries each
+ * candidate "[" and keeps the first that parses.
  */
-function parsePayload(text) {
+function parsePayload(result) {
+  const text = typeof result === 'string' ? result : result.stdout || '';
   for (let i = text.indexOf('['); i !== -1; i = text.indexOf('[', i + 1)) {
     if (text.slice(0, i).split('\n').length > 400) break;
     let candidate;
@@ -241,13 +254,14 @@ let tarballPaths = null;
   } else if (!packed.ok) {
     fail('npm pack exited non-zero', packed.describe);
   } else {
-    const parsed = parsePayload(`${packed.stdout}${packed.stderr}`);
+    const parsed = parsePayload(packed);
     if (parsed === null) {
       fail(
-        'npm pack produced no parseable file list',
-        `${packed.describe}\n\nThe output above is what npm actually emitted. ` +
-          'If it is empty, npm wrote nothing to the pipe: check that npm is on ' +
-          'PATH and that npm_config_* in this environment is not suppressing output.',
+        'npm pack produced no parseable file list on stdout',
+        `${packed.describe}\n\nThe payload is read from stdout only, so anything ` +
+          'above on stderr is an npm warning and not the cause. If stdout is empty, ' +
+          'npm wrote nothing: check that npm is on PATH and that no inherited ' +
+          'npm_config_* is suppressing output.',
       );
     } else {
       const produced = fs
@@ -271,7 +285,7 @@ if (tarballPaths !== null) {
   // The allowlist check reads the file list npm itself reported, so it is the
   // same data npm will upload.
   const listed = runNpm(['pack', '--dry-run', '--json']);
-  const parsed = listed.ok ? parsePayload(`${listed.stdout}${listed.stderr}`) : null;
+  const parsed = listed.ok ? parsePayload(listed) : null;
   if (parsed === null) {
     fail(
       'npm pack --dry-run produced no parseable file list',

@@ -146,6 +146,46 @@ check('the gate works the same in both publish modes', () => {
   }
 });
 
+check('the gate parses npm stdout only, never stdout+stderr', () => {
+  // Run 37129620610: npm exited 0 and wrote a valid tarball, but the gate read
+  // "no parseable file list" because it concatenated stderr onto stdout before
+  // parsing. Any future concatenation inside the parser reintroduces the bug.
+  //
+  // Scope this to the parser body: the gate legitimately joins the two streams
+  // when composing a diagnostic message, and that is not what broke.
+  const body = /function parsePayload\([\s\S]*?\n\}/.exec(CODE);
+  if (body === null) throw new Error('parsePayload could not be located in the gate');
+  const parser = body[0];
+  if (/stderr/.test(parser)) {
+    throw new Error('parsePayload references stderr again; the payload must come from stdout only');
+  }
+  assertMatch(
+    /result\.stdout\s*\|\|\s*''/,
+    'the parser no longer reads the payload from result.stdout',
+  );
+});
+
+check('the gate reports stderr on failure without parsing it', () => {
+  assertMatch(
+    /--- stderr ---/,
+    'stderr is no longer shown in the failure detail',
+  );
+});
+
+check('the lifecycle test exists and is wired into the chain', () => {
+  const lifecycleTest = path.join(ROOT, 'bin', 'prepublish_lifecycle.test.js');
+  if (!fs.existsSync(lifecycleTest)) {
+    throw new Error('bin/prepublish_lifecycle.test.js is missing; the CI reproduction is gone');
+  }
+  const all = pkg.scripts['test:all'] || '';
+  if (!all.includes('test:lifecycle')) {
+    throw new Error(`test:all does not run the lifecycle test: ${all}`);
+  }
+  if (!(pkg.scripts['test:lifecycle'] || '').includes('prepublish_lifecycle.test.js')) {
+    throw new Error(`test:lifecycle does not invoke the lifecycle test: ${pkg.scripts['test:lifecycle']}`);
+  }
+});
+
 check('the gate uses the lifecycle-provided npm_execpath first', () => {
   // Inside a lifecycle script npm_execpath is set and correct on every platform;
   // without it the gate has to guess and can pick a shim it cannot execute.
