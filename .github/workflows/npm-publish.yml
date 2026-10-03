@@ -2,6 +2,15 @@ name: npm Publish
 
 on:
   workflow_dispatch:
+    inputs:
+      use_token_fallback:
+        description: >-
+          Publish with the NPM_TOKEN secret instead of OIDC trusted publishing.
+          Token publishing cannot produce a provenance attestation. Only needed
+          while no trusted publisher is registered on npmjs.com for this package.
+        type: boolean
+        required: false
+        default: false
   # The same trigger the PyPI release uses, so one version bump updates both
   # registries and the two cannot drift apart. The previous version of this
   # workflow fired on any push touching package.json, which meant a documentation
@@ -15,7 +24,8 @@ concurrency:
   group: npm-publish
   cancel-in-progress: false
 
-# Read-only: publishing to npm needs an OIDC attestation, never repository write.
+# Read-only by default. The publish job opts into id-token only when it actually
+# uses OIDC, so the token path never mints an attestation it will not use.
 permissions:
   contents: read
 
@@ -29,12 +39,19 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "20"
+          # Node 24 ships npm 11.x. Trusted publishing and `--provenance` need
+          # npm >= 11.5.1 and Node >= 22.14.0; npm 10.x has neither and fails at
+          # upload time rather than at startup. Node 20 was the wrong floor here.
+          node-version: "24"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install the package the launcher shells out to
         run: python -m pip install .
+      - name: Report the toolchain used for this publish
+        run: |
+          echo "node $(node --version)"
+          echo "npm  $(npm --version)"
       # Every one of these gates exists because a defective build reached npm:
       # 2.4.0 shipped a JavaScript syntax error, and 2.4.1 shipped a launcher
       # that audited the installed package directory instead of the caller's.
@@ -56,14 +73,15 @@ jobs:
     environment: npm
     permissions:
       contents: read
-      # id-token is what mints the OIDC provenance attestation npm trusts. This
-      # is the primary publish path: no long-lived registry token is used.
+      # id-token mints the OIDC attestation npm trusts. Granted unconditionally
+      # so the job does not change shape between modes; the token path simply
+      # does not use it.
       id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
       - name: Resolve the version from package.json
         id: meta
@@ -72,6 +90,74 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "package version: $version"
+      # Decide the publish mode once, up front, and fail closed here rather than
+      # discovering a missing credential at upload time.
+      #
+      # A push to main carries no inputs, so use_token_fallback is empty and the
+      # workflow resolves to "oidc". Dispatching with the checkbox forces "token".
+      - name: Select the publish mode and validate its credential
+        id: mode
+        shell: bash
+        env:
+          USE_TOKEN_FALLBACK: ${{ inputs.use_token_fallback }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ "$USE_TOKEN_FALLBACK" = "true" ]; then
+            mode="token"
+          else
+            mode="oidc"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "selected publish mode: $mode"
+
+          if [ "$mode" = "token" ]; then
+            if [ -z "$NODE_AUTH_TOKEN" ]; then
+              echo "::error::use_token_fallback was requested but the NPM_TOKEN secret is empty."
+              echo "::error::Add an npm automation token with publish scope, or dispatch with the checkbox off to use OIDC trusted publishing."
+              exit 1
+            fi
+            echo "using the NPM_TOKEN secret; this path publishes WITHOUT --provenance"
+            echo "because a registry token cannot mint an attestation"
+          else
+            echo "using OIDC trusted publishing with --provenance"
+            echo "if this fails with E404, no trusted publisher is registered on npmjs.com"
+            echo "for Furox-Art/plan-auditor / npm-publish.yml / npm; dispatch with"
+            echo "use_token_fallback=true to publish with NPM_TOKEN instead"
+          fi
+      # Numeric semver comparison, not a regex. A pattern like
+      # ^11\.(5[1-9]|[6-9][0-9])\.|^1[2-9]\. is wrong: [6-9][0-9] does not
+      # match 11.19.0's minor 19 only by luck of how the alternation is read,
+      # and the 1[2-9] branch depends on the same accident. Comparing parsed
+      # numbers states the floor directly.
+      - name: Require an npm version that supports trusted publishing
+        if: steps.mode.outputs.mode == 'oidc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const { execSync } = require("child_process");
+            const raw = execSync("npm --version", { encoding: "utf8" }).trim();
+            const MIN = [11, 5, 1];
+            const parse = (v) => {
+              const core = v.split("-")[0].split(".").map((n) => parseInt(n, 10));
+              return [core[0] || 0, core[1] || 0, core[2] || 0];
+            };
+            const [major, minor, patch] = parse(raw);
+            const atLeast =
+              major > MIN[0] ||
+              (major === MIN[0] &&
+                (minor > MIN[1] || (minor === MIN[1] && patch >= MIN[2])));
+            console.log(`npm ${raw}, required >= ${MIN.join(".")}`);
+            if (!atLeast) {
+              console.error(
+                `npm ${raw} is too old for trusted publishing. ` +
+                  `Node 24 ships npm 11.x; npm >= ${MIN.join(".")} is required.`
+              );
+              process.exit(1);
+            }
+          '
       - name: Refuse to publish a version that already exists
         id: gate
         shell: bash
@@ -88,17 +174,16 @@ jobs:
       # so the tarball is built from exactly the reviewed commit. --provenance
       # binds the upload to this workflow run via the OIDC token minted above.
       - name: Publish to npm with trusted publishing
-        id: trusted_publish
-        if: steps.gate.outputs.skip != 'true'
+        if: steps.gate.outputs.skip != 'true' && steps.mode.outputs.mode == 'oidc'
         run: npm publish --access public --provenance
-      # Documented fallback, not the default path. It only runs if the primary
-      # step above fails, which should only happen when the trusted publisher has
-      # been removed from npmjs.com and the maintainer has provisioned
-      # NPM_TOKEN instead. Provenance is not requested here because the
-      # attestation comes from the OIDC exchange, which a plain token cannot
-      # produce. Delete this step once trusted publishing is confirmed working.
-      - name: Publish to npm with the token fallback
-        if: steps.gate.outputs.skip != 'true' && steps.trusted_publish.outcome != 'success'
+      # Explicit opt-in token path. Deliberately no --provenance: npm would fail
+      # the publish rather than silently publish without an attestation, and a
+      # token cannot produce one. This replaces the previous unconditional
+      # fallback, which ran automatically after any trusted-publishing failure
+      # and so could downgrade a release to an unattested upload without anyone
+      # asking for it.
+      - name: Publish to npm with the NPM_TOKEN secret
+        if: steps.gate.outputs.skip != 'true' && steps.mode.outputs.mode == 'token'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
