@@ -27,7 +27,7 @@ anything else at the site-packages root. Print the directory and copy them out:
 python -c "import supervisor,pathlib;print(pathlib.Path(supervisor.__file__).resolve().parent.parent/'plan_auditor_skill')"
 ```
 
-The already-published PyPI `2.4.1` wheel does not contain them; CI asserts that
+The published PyPI `2.4.2` wheel contains them; CI asserts that
 every wheel it builds does, via `.github/scripts/check_dist_assets.py`.
 
 | Tool | User-level path | Project-level path | Typical invocation |

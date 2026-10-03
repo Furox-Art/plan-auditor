@@ -8,12 +8,31 @@ explicitly out of scope.
 
 | Version | Supported | Notes |
 |---|---|---|
-| `2.4.x` on npm | Yes | `2.4.0` shipped a syntax error in the `bin` launcher, so the published entry point could not run. Use `2.4.1` or newer. |
-| `2.4.x` on PyPI | Yes | The `2.4.1` sdist and wheel are the pre-documentation-rewrite build; the supervisor behaviour is the same. |
+| `>= 2.4.2` on npm | Yes | The current release. `2.4.0` shipped a syntax error in the `bin` launcher and `2.4.1` shipped a launcher that resolved a relative workspace path against the installed package directory. Both are defective and cannot be withdrawn, because npm versions are immutable. |
+| `2.4.0`, `2.4.1` on npm | No | Defective releases. Do not install them. |
+| `>= 2.4.2` on PyPI | Yes | The current release, published with a PEP 740 provenance attestation. |
+| `2.4.0`, `2.4.1` on PyPI | No | Superseded by `2.4.2`. |
 | `<= 2.3.0` | No | No fixes. Reproduce on `main` and open an issue if the problem still reproduces. |
 
 Only the latest `2.4.x` is tested across the Python and operating-system matrix
 that CI runs. Older minors are not.
+
+### Verifying an install
+
+The two registries do not offer the same guarantee, so check them differently:
+
+- **PyPI** publishes through OIDC trusted publishing, so every `2.4.2` artifact
+  carries a [PEP 740](https://peps.python.org/pep-0740/) provenance
+  attestation. Fetch it at
+  `https://pypi.org/integrity/plan-auditor/<version>/<file>/provenance` and
+  confirm the statement's SHA-256 matches the artifact you downloaded.
+- **npm `2.4.2` carries no provenance attestation.** It was published in token
+  mode, and a registry token cannot mint one; the `dist.signatures` block in the
+  packument is npm's own signature over the packument, not evidence of how the
+  tarball was built. Verify it with `npm view plan-auditor@<version>
+  dist.integrity` instead, and compare it against the tarball you received.
+
+When reporting a problem, say which registry and which verification you used.
 
 ## Reporting a vulnerability
 

@@ -56,7 +56,7 @@ Use the action from this repository when the check should run in CI. It installs
     path: .
 ```
 
-`SKILL.md` is the agent-skill install. Copy it into the host skill directory. npm is no longer published.
+`SKILL.md` is the agent-skill install. Copy it into the host skill directory. The npm package is published again as of `2.4.2`; see [Release status](#release-status).
 
 ## Install
 
@@ -81,36 +81,58 @@ plan-auditor-formalize --help
 The commands and transcripts below are written for a checkout of `main`. Read the
 next section before you assume the published packages match them.
 
-## Release status: the published builds are behind `main`
+## Release status: `2.4.2` is published on both registries
 
-Checked against the live PyPI and npm registries and against a wheel built from
-`main`. The published `2.4.1` artifacts are **different builds**, and neither is
-byte-identical to `main`:
+Checked directly against the live registries, not against this repository.
 
-| Surface | What that build actually contains |
+| Surface | Version | Published | Notes |
+|---|---|---|---|
+| npm (`latest`) | `2.4.2` | 2026-10-03 | Byte-identical to `npm pack` of the current `main` tip: `shasum` `0a284a48fb4fe18cf9de8e45134142b7425f7b47` and integrity `sha512-AMTy8LLGVz5ySoAJN80RhT+I0ku9hat2d2DUbj7pKHNSdmpwiiOLDtH7CDfNGwkU7LDUQ2NE3vMUKlAzwES2NQ==` both reproduce from a clean checkout. |
+| PyPI | `2.4.2` | 2026-10-02 | Carries a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation. Its wheel's Python runtime is identical to `main`; the only content difference is the bundled `plan_auditor_skill/package.json` (npm dev-script names and the `engines.node` floor), which is not used at runtime. |
+
+Both registries therefore agree that `2.4.2` is current, so the
+[quick start](#quick-start-verified-5-minutes) below describes the published
+packages, not only a checkout.
+
+### `2.4.0` and `2.4.1` were defective; `2.4.2` is the fixed release
+
+| Version | Defect |
 |---|---|
-| PyPI `2.4.1` (uploaded 2026-09-29) | Pre-rewrite. Its project page still serves the older README. Its wheel ships only the `supervisor` and `scripts` packages — **no** `SKILL.md`, `references/`, `hooks/` or launcher. |
-| npm `2.4.1` (published 2026-10-01) | The documentation rewrite and the `files` allowlist. Its launcher resolves a relative workspace path against the *package directory* instead of your working directory, so `npx plan-auditor audit .` can audit the wrong tree while looking authoritative. |
-| `main` | The only surface where the quick start below is true exactly as written, and where the wheel carries the skill assets. |
+| `2.4.0` | A JavaScript syntax error in the `bin` launcher: the published entry point could not run at all. |
+| `2.4.1` | The launcher passed `cwd: __dirname`, so a relative workspace path resolved against the *installed package directory*. `npx plan-auditor audit .` audited the wrong tree while looking authoritative. An absolute workspace path still worked, which made the failure silent. |
+| `2.4.2` | Fixes both, and adds the pre-publish gate that would have caught them. |
 
-What that means in practice:
+npm versions are immutable, so `2.4.0` and `2.4.1` cannot be withdrawn. Pin
+`plan-auditor>=2.4.2` if you consume the npm package.
 
-- **To try the verified quick start below as written:** use a checkout of `main`.
-- **To install the CLI from PyPI:** `pipx install plan-auditor` works and the CLI
-  behaves as documented. You get the pre-rewrite build.
-- **To use the Agent Skill from a `pip` install:** only possible from a build of
-  `main` or later. The wheel now ships the skill assets under
-  `plan_auditor_skill/` — see
-  [Use it as an Agent Skill](#use-it-as-an-agent-skill) for the exact path and a
-  command that prints it. The already-published `2.4.1` wheel does not.
-- **To install the npm launcher:** prefer a `pip`/`pipx` install. The npm
-  `2.4.1` launcher has the working-directory defect described above; it is fixed
-  on `main` and will ship with the next release.
+### Supply chain: what is and is not attested
 
-`docs/` and `examples/` are in the repository and the sdist, but still not in the
-wheel. A single `2.4.2` is what makes both registries match `main`. Until then
-this section is the honest description of what you get; the release owner should
-delete it in the commit that bumps the version.
+Be precise about this, because the two registries differ:
+
+- **PyPI `2.4.2` has a real provenance attestation.** The endpoint
+  `https://pypi.org/integrity/plan-auditor/2.4.2/plan_auditor-2.4.2-py3-none-any.whl/provenance`
+  returns a signed in-toto v1 statement with predicate type
+  `https://docs.pypi.org/attestations/publish/v1`, bound to the artifact's
+  SHA-256. It exists because PyPI publishes through OIDC trusted publishing.
+- **npm `2.4.2` has no Sigstore attestation.** There is no `provenance` field in
+  the packument and
+  `https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.2`
+  returns `404`. The `dist.signatures` block that *is* present is npm's own
+  ECDSA signature over the packument, not evidence of how the tarball was built.
+  This is expected: npm `2.4.2` was published in **token mode** (the workflow log
+  records `selected publish mode: token`), and token publishing runs
+  `npm publish --access public` without `--provenance` because a registry token
+  cannot mint an attestation. Registering a trusted publisher for this package on
+  npmjs.com would enable OIDC and change this.
+
+Until that happens, verify npm artifacts by the integrity hash the registry
+serves, not by an attestation:
+
+```bash
+npm view plan-auditor@2.4.2 dist.integrity
+```
+
+`docs/` and `examples/` are in the repository and the sdist, but not in the wheel.
 
 ## Quick start (verified, 5 minutes)
 
@@ -293,8 +315,8 @@ python -c "import supervisor,pathlib;print(pathlib.Path(supervisor.__file__).res
 ```
 
 then copy `SKILL.md`, `scripts/`, `references/` and `hooks/` out of it. The
-already-published PyPI `2.4.1` wheel does **not** contain them; see
-[Release status](#release-status-the-published-builds-are-behind-main).
+published `2.4.2` wheel does contain them; see
+[Release status](#release-status-242-is-published-on-both-registries).
 
 Copy them into your host's skills directory:
 
@@ -329,11 +351,10 @@ script. Verified exit codes: a failing `run` returns `1`, a blocked `audit` retu
 `2`, a proven workspace returns `0`, and an unstartable Python fails closed with a
 nonzero code.
 
-One caveat about the *published* `2.4.1` npm build specifically: it ran the CLI
-with the package directory as the working directory, so a relative workspace path
-such as `.` resolved against the installed package instead of your project. It is
-fixed on `main` and covered by a launcher contract test, but until a release ships
-that fix, prefer `pipx` or `pip`.
+The npm package is `2.4.2` on the registry and its launcher is fixed. The
+`2.4.0` and `2.4.1` builds were defective — see
+[Release status](#242-and-241-were-defective-242-is-the-fixed-release) — so pin
+`plan-auditor@2.4.2` or newer if you use `npx`.
 
 ## Troubleshooting
 
@@ -463,8 +484,9 @@ Read these before you rely on it:
   cannot be expressed as a deterministic check is reviewed by a human, not guessed.
 - The npm package is a launcher: it needs Python 3.10 or newer already on `PATH`.
 - Progress output is Turkish-only for now; the JSON verdict is the stable interface.
-- The published PyPI and npm builds are behind `main`. See
-  [Release status](#release-status-the-published-builds-are-behind-main).
+- The published PyPI and npm packages are both `2.4.2`. npm publishes without a
+  provenance attestation; PyPI publishes with one. See
+  [Release status](#supply-chain-what-is-and-is-not-attested).
 - There is no rendered documentation site yet. The strict docs build *is* a
   required CI check, so the Markdown is known to build, but nothing serves it.
 - The branch-coverage floor is enforced in CI and the measured value lives in the
