@@ -4,6 +4,34 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+## v2.4.3 - 2026-10-04
+
+A documentation release. The README restructure and the three corrections below
+land on PyPI's project page for the first time: `2.4.2`'s `long_description` is
+the old 499-line README and still carries the "so it cannot drift from reality"
+claim that this release removes. PyPI serves `description` per release, so only
+a new release can change it.
+
+**No behaviour change in `supervisor/`, in the deterministic core, or in the npm
+launcher.** Verified against the published artifacts, not the working tree:
+`supervisor/` has no commit since `311f4dc`, and the `index.js` and
+`bin/plan-auditor.js` inside the PyPI `2.4.2` wheel are byte-identical to those
+on `main`.
+
+Two packaging changes do reach users. Both are already live on npm at `2.4.2`,
+which was published at 16:16:46Z -- after #29 landed at 16:14:02Z -- so this is
+the first release in which they reach PyPI:
+
+- **The wheel's embedded `package.json` now declares `engines.node >=22.14.0`.**
+  The `2.4.2` wheel says `>=18`, because it was uploaded 2026-10-02T23:06:40Z and
+  therefore predates #27. Anyone copying the bundled launcher out of this wheel
+  onto Node 18 or 20 now gets npm's engine warning.
+- **The sdist and npm tarball carry `bin/prepublish_gate.js`** in place of the
+  `bin/check_tarball_contents.js` and `bin/verify_installed_launcher.js` it
+  replaces. Both old scripts only ran under `prepublishOnly`; so does the new
+  one. Installed behaviour is unchanged -- what a publisher executes differs.
+
+
 - **Three false claims in the README and quickstart are corrected.**
   - The quick-start transcript documented `request_sha256`
     `7b347f48...0db55f`. The CLI has never printed that value: `request_contract.py`
