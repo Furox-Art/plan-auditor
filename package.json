@@ -28,9 +28,8 @@
     "test": "node --check index.js && node --check bin/plan-auditor.js",
     "test:contract": "node --check bin/launcher_contract.test.js && node bin/launcher_contract.test.js",
     "test:publish-modes": "node --check bin/publish_mode_contract.test.js && node bin/publish_mode_contract.test.js",
-    "test:tarball": "node bin/check_tarball_contents.js",
-    "test:installed": "node bin/verify_installed_launcher.js",
-    "test:all": "npm run test && npm run test:contract && npm run test:publish-modes && npm run test:tarball && npm run test:installed",
+    "test:gate": "node --check bin/prepublish_gate.js && node bin/prepublish_gate.js",
+    "test:all": "npm run test && npm run test:contract && npm run test:publish-modes && npm run test:gate",
     "prepublishOnly": "npm run test:all"
   },
   "engines": {

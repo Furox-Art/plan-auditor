@@ -57,12 +57,16 @@ jobs:
       # that audited the installed package directory instead of the caller's.
       - name: Launcher syntax and contract tests
         run: npm test && npm run test:contract
-      - name: Confirm the packed tarball ships only allowlisted files
-        run: npm run test:tarball
-      # The decisive gate: packs the tarball, installs it somewhere unrelated,
-      # and runs the *installed* bin from a different working directory.
-      - name: Verify the installed tarball launches the CLI from the caller's cwd
-        run: npm run test:installed
+      - name: Publish-mode contract tests
+        run: npm run test:publish-modes
+      # The consolidated pre-publish gate: it packs the tarball, checks the
+      # allowlist against npm's own file list, installs it somewhere unrelated,
+      # and runs the *installed* bin from a different working directory. This is
+      # the same command `prepublishOnly` runs, so CI and the publish path cannot
+      # diverge. It replaces `test:tarball` and `test:installed`, which each shelled
+      # out to npm a second time and could die without a diagnostic.
+      - name: Pre-publish gate (tarball contents + installed launcher)
+        run: npm run test:gate
       - name: Require one version across every distribution surface
         run: python .github/scripts/check_version_lockstep.py
 
