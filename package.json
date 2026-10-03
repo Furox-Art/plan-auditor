@@ -27,12 +27,14 @@
   "scripts": {
     "test": "node --check index.js && node --check bin/plan-auditor.js",
     "test:contract": "node --check bin/launcher_contract.test.js && node bin/launcher_contract.test.js",
+    "test:publish-modes": "node --check bin/publish_mode_contract.test.js && node bin/publish_mode_contract.test.js",
     "test:tarball": "node bin/check_tarball_contents.js",
     "test:installed": "node bin/verify_installed_launcher.js",
-    "prepublishOnly": "npm run test && npm run test:contract && npm run test:tarball && npm run test:installed"
+    "test:all": "npm run test && npm run test:contract && npm run test:publish-modes && npm run test:tarball && npm run test:installed",
+    "prepublishOnly": "npm run test:all"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.14.0"
   },
   "keywords": [
     "ai-agents",

@@ -188,6 +188,72 @@ check('the installed launcher is the version package.json declares', () => {
   }
 });
 
+/* ------------------------------------------------- publish-mode coverage */
+
+// The publish path has two modes, and this verifier runs in both. It exercises
+// the artifact identically either way, but it asserts that whichever mode is
+// selected is internally coherent, because the failure that motivated this file
+// was a mode-specific one: `npm publish --provenance` on a registry with no
+// trusted publisher signs a statement, writes it to the Sigstore transparency
+// log, and *then* gets a 404 from the upload. The signature existed; the package
+// did not. Nothing about the packed artifact would have caught that.
+const publishMode = process.env.PA_PUBLISH_MODE || 'oidc';
+
+check('the selected publish mode is one this verifier understands', () => {
+  if (publishMode !== 'oidc' && publishMode !== 'token') {
+    throw new Error(
+      `PA_PUBLISH_MODE is "${publishMode}", expected "oidc" or "token"`,
+    );
+  }
+});
+
+check('the OIDC mode requires a Node/npm toolchain that supports it', () => {
+  // npm >= 11.5.1 and Node >= 22.14.0 are the documented floors for trusted
+  // publishing. Checked numerically: a regex such as
+  // ^11\.(5[1-9]|[6-9][0-9])\.|^1[2-9]\. gets 11.19.0 wrong.
+  if (publishMode !== 'oidc') return;
+  const [major, minor] = process.versions.node.split('.').map((n) => parseInt(n, 10));
+  const floor = [22, 14, 0];
+  const nodeOk =
+    major > floor[0] || (major === floor[0] && (minor > floor[1] || minor === floor[1]));
+  if (!nodeOk) {
+    throw new Error(
+      `Node ${process.versions.node} is below the ${floor.join('.')} floor for trusted publishing`,
+    );
+  }
+});
+
+check('the token mode does not depend on an attestation it cannot produce', () => {
+  // A registry token cannot mint a provenance statement. The workflow must omit
+  // --provenance on this path; this asserts the same contract from the script
+  // side so a future edit to the workflow cannot quietly re-add it.
+  if (publishMode !== 'token') return;
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'npm-publish.yml'),
+    'utf8',
+  );
+  const tokenStep = workflow.slice(
+    workflow.indexOf('- name: Publish to npm with the NPM_TOKEN secret'),
+  );
+  const commandLine = tokenStep
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.includes('npm publish'));
+  if (commandLine === undefined) {
+    throw new Error('could not find the token-mode publish command in npm-publish.yml');
+  }
+  if (commandLine.includes('--provenance')) {
+    throw new Error(
+      `token mode must not pass --provenance, npm-publish.yml has: ${commandLine}`,
+    );
+  }
+  if (!tokenStep.includes('NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}')) {
+    throw new Error('the token-mode publish step does not pass NPM_TOKEN');
+  }
+});
+
+process.stdout.write(`    publish mode: ${publishMode}\n`);
+
 fs.rmSync(root, { recursive: true, force: true });
 
 process.stdout.write(
