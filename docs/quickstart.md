@@ -23,9 +23,8 @@ pip install plan-auditor
 Python 3.10 or newer. No third-party runtime dependencies.
 
 The commands and transcripts on this page were written against a checkout of
-`main`. The PyPI and npm `2.4.1` artifacts were not built from the same commit;
-see the release-status section of the README for what each published build
-actually contains. The CLI itself behaves as documented in every one of them.
+`main` and re-checked against the published `2.4.2` release. See the
+release-status section of the README for what each published version contains.
 
 The examples invoke the interpreter as `python`. On a system that only provides
 `python3`, activate a virtualenv that has `python` or change the `cmd` in the
@@ -378,12 +377,14 @@ plan-auditor audit .
 
 ### The npm launcher audits the wrong directory
 
-A published `2.4.1` npm build runs the CLI with the *installed package directory*
-as its working directory, so a relative workspace path such as `.` resolves
-against the package instead of the directory you ran the command from. The output
-looks authoritative and refers to a tree you did not ask about. It is fixed on
-`main` and covered by a launcher contract test, and it ships with the next
-release. Until then, pass an absolute path or use the console script:
+npm `2.4.1` is affected by this and must not be used: it ran the CLI with the
+*installed package directory* as its working directory, so a relative workspace
+path such as `.` resolved against the package instead of the directory you ran
+the command from. The output looks authoritative and refers to a tree you did not
+ask about.
+
+`2.4.2` is fixed and is the release to use. If you are pinned to an older build,
+pass an absolute path or use the console script instead:
 
 ```bash
 npx plan-auditor audit "$(pwd)"

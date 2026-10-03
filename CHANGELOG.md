@@ -2,6 +2,38 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## Unreleased
+
+- **A successful npm publish is no longer reported as a failed one.** Run
+  37136117550 published `plan-auditor@2.4.2` and then failed its own
+  verification step one second later with `ERROR: npm reports 'nothing',
+  expected 2.4.2`. `npm publish` returns when the registry's *write* path accepts
+  the upload, while clients read from a CDN that converges asynchronously; the
+  run's own timestamps show the window, with the probe at 16:15:10Z against a
+  registry `time["2.4.2"]` of 16:16:46Z. The verification step now polls with a
+  growing backoff over a bounded budget â€” 12 attempts, ~200s of waiting, first
+  match wins â€” and a version that never appears still fails closed with a
+  `::warning::` explaining what to check. Both directions are covered by
+  `tests/test_npm_registry_visibility.py`.
+- **The poll queries the registry over HTTP instead of `npm view`.** `npm view`'s
+  stdout is not a stable contract, its on-disk HTTP cache can answer from state
+  staler than the registry, and it inherits `npm_config_*` and `NODE_AUTH_TOKEN`
+  from the environment. `GET /<package>/<version>` is exactly what an
+  independent reader requests, with no cache in between.
+- **Documentation now matches the registries.** `README.md`, `SECURITY.md` and
+  `docs/index.md`, `docs/quickstart.md`, `docs/integrations.md` no longer say npm
+  is unpublished or that the published builds are behind `main`. `2.4.2` is on
+  both registries; `2.4.0` and `2.4.1` carried the defects and `2.4.2` is the
+  fixed release.
+- **The attestation story is stated per registry, from the registries themselves.**
+  PyPI `2.4.2` carries a PEP 740 provenance attestation. npm `2.4.2` does **not**:
+  the attestations endpoint returns `404` and the packument has no `provenance`
+  field, because it was published in token mode, which cannot mint one. The npm
+  `dist.signatures` block is npm's own signature over the packument and is not
+  described as provenance.
+- **The npm badge is retained** only after confirming the registry's `latest`
+  (`2.4.2`) matches PyPI's version (`2.4.2`).
+
 ## v2.4.2 - 2026-10-03
 
 - **npm publishing is restored, and `2.4.2` exists because the published `2.4.1`
@@ -11,7 +43,7 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
   workspace directory resolves `.` against the *installed package directory* and
   reports `plan yok: .../node_modules/plan-auditor/.plan-auditor/plan.json`. The
   launcher starts and an absolute workspace path works, so the failure is silent
-  and looks authoritative — it audits the wrong tree. `2.4.1` cannot be
+  and looks authoritative â€” it audits the wrong tree. `2.4.1` cannot be
   republished because npm versions are immutable, hence the patch bump.
 - **The launcher now runs the CLI in the caller's working directory.** `index.js`
   keeps `process.cwd()` and prepends the package directory to `PYTHONPATH`
@@ -20,9 +52,13 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 - **`npm publish` runs again.** The previous commit replaced the publish step
   with `echo "npm publishing is disabled" && exit 0`, so the workflow reported
   success while publishing nothing. Publishing is back, gated on the version not
-  already existing on the registry, using OIDC trusted publishing with
-  `npm publish --provenance`. `NPM_TOKEN` remains available as an explicitly
-  documented fallback only.
+  already existing on the registry, and selectable between OIDC trusted
+  publishing and an `NPM_TOKEN` fallback that must be requested explicitly.
+  Correction: `2.4.2` itself was published in **token mode** â€” the run log
+  records `selected publish mode: token` â€” so it carries **no** provenance
+  attestation. The attestation endpoint for `plan-auditor@2.4.2` returns `404`
+  and the packument has no `provenance` field. Only PyPI publishes with
+  attestation, via trusted publishing.
 - **The publish path proves the artifact works before uploading it.** The gate
   packs the tarball, installs it into a throwaway directory, and runs the
   *installed* `bin/plan-auditor.js` from an unrelated working directory against a
@@ -32,12 +68,11 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
   `.github/pypi-release-trigger` on `main` publishes the same version to both
   registries, so the two cannot drift apart.
 
-## Unreleased — OSS visibility and onboarding
+### OSS visibility and onboarding (shipped in `2.4.2`)
 
 Documentation and project-metadata work only. No behaviour in the supervisor, the
-deterministic core or the npm launcher changed, and the version numbers in
-`pyproject.toml`, `package.json`, `SKILL.md` and `CITATION.cff` are untouched at
-`2.4.1` — a release owner must bump them for any of this to reach a registry.
+deterministic core or the npm launcher changed. This work was merged before the
+`2.4.2` release commit, so it is part of `2.4.2` rather than still pending.
 
 - **The README now states the real release status instead of implying parity.** The
   published PyPI `2.4.1` was built 2026-09-29 and npm `2.4.1` 2026-10-01, from
@@ -92,7 +127,7 @@ deterministic core or the npm launcher changed, and the version numbers in
   there is no PGP key. `CODE_OF_CONDUCT.md` moved enforcement off the public
   issue tracker, which would have exposed reporters, onto a private address, and
   its Contact section now matches what Contributor Covenant 2.1 requires.
-- **`CONTRIBUTING.md` documents the workflow the code actually implements** — the
+- **`CONTRIBUTING.md` documents the workflow the code actually implements** â€” the
   real test and coverage commands, the seal and trust chain, exit codes, the
   `CHECK_TYPES` extension path, and the release procedure including the reason the
   two registries diverged.
@@ -103,15 +138,15 @@ deterministic core or the npm launcher changed, and the version numbers in
   GitHub" link, and social links for the repository, PyPI, npm and the citation
   file. Navigation is unchanged and still covers every page.
 
-### Re-verified against `main` after #24
+#### Re-verified against `main` after #24
 
 - **The README's release-status text was corrected against the merged code rather
   than the previous `main`.** The wheel now force-includes the Agent Skill assets
   under `plan_auditor_skill/`, so the earlier claim that a `pip` install cannot
   supply `SKILL.md`, `references/` or `hooks/` was true of the published `2.4.1`
   wheel and false of anything built from `main`. The README and
-  `docs/integrations.md` now document both routes — a checkout, or the installed
-  `plan_auditor_skill/` directory — with a command that prints its location, and
+  `docs/integrations.md` now document both routes â€” a checkout, or the installed
+  `plan_auditor_skill/` directory â€” with a command that prints its location, and
   the claim is scoped to the already-published build. `docs/` and `examples/` are
   still not in the wheel, which is stated as such.
 - **The npm surface was re-checked against the merged launcher, not the old one.**
@@ -158,7 +193,7 @@ that already exists on PyPI, so the metadata on `main` cannot be published witho
 a version bump. That part is unchanged by this entry.
 
 The other half has been fixed since, by #24: the npm workflow now runs a `verify`
-job — the launcher tests and the packed-tarball check — before publishing, and
+job â€” the launcher tests and the packed-tarball check â€” before publishing, and
 refuses a version already on the registry, so the absence of any gate that let
 `2.4.0` ship a syntax error is no longer the state of the tree. `main` is also
 now protected by a ruleset with no bypass actors, so none of the required checks
@@ -167,7 +202,7 @@ can be skipped by pushing to `main`.
 **Still outstanding:** the version bump itself. Until `2.4.2` is published to both
 registries, a `pip` user keeps seeing the pre-rewrite README on the project page.
 
-## v2.4.1 — PyPI 2026-09-29, npm 2026-10-01
+## v2.4.1 â€” PyPI 2026-09-29, npm 2026-10-01
 
 ### Published to both registries
 
@@ -199,7 +234,7 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 
 - **Both npm entry points now propagate the verifier's exit code.** The fix was
   initially placed only in `index.js`, but `package.json` maps the `plan-auditor`
-  bin to `bin/plan-auditor.js` — the file `npx plan-auditor` actually executes —
+  bin to `bin/plan-auditor.js` â€” the file `npx plan-auditor` actually executes â€”
   and that file discarded the child's result entirely. Verified: `node
   bin/plan-auditor.js run <failing plan>` returned `0` while `index.js` returned
   `1`. `index.js` now exposes `runPythonAndPropagate()`, which attaches the
@@ -215,9 +250,9 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 - `test_docs_metadata.py` and `test_doc_transcripts.py` now check that the `bin`
   field resolves to a launcher that propagates rather than a bare spawn, and that
   documented launcher commands reference a file that exists.
-- **Verbatim transcripts.** The README and `docs/quickstart.md`/`docs/cli.md` failure transcripts previously showed a single collapsed `çıktı:` line while the tool actually prints a `|`-joined multi-line traceback. Both blocks now reproduce the real output line for line and state that nothing is elided.
+- **Verbatim transcripts.** The README and `docs/quickstart.md`/`docs/cli.md` failure transcripts previously showed a single collapsed `Ã§Ä±ktÄ±:` line while the tool actually prints a `|`-joined multi-line traceback. Both blocks now reproduce the real output line for line and state that nothing is elided.
 - **Removed a fabricated transcript line from `docs/benchmark.md`:** it showed
-  `çıktı: AssertionError` where the tool emits a full traceback. Replaced with
+  `Ã§Ä±ktÄ±: AssertionError` where the tool emits a full traceback. Replaced with
   verbatim output, plus the equivalent launcher invocation and its exit code.
 - **Transcripts are now stable across the CI matrix.** Two platform differences
   had made the documented failure output wrong somewhere: the core joins a
@@ -233,7 +268,7 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
   traceback that pins a version-specific frame.
 - **`.npmignore` added and `package.json` tightened:** `__pycache__` directories were still being packed despite the `files` allowlist, because the allowlist re-includes whole directories. Added `!**/__pycache__` and `!**/*.py[cod]` negation patterns and a minimal `.npmignore`. `npm pack --dry-run` now reports 59 entries / ~134 KB with zero `__pycache__`, `.venv`, or `site-packages` paths, down from 18502 entries / 29.1 MB.
 
-## v2.4.0 — 2026-09-06
+## v2.4.0 â€” 2026-09-06
 
 - **Deterministic automatic formalization:** `plan-auditor-formalize compile` converts structured Plan Auditor requirements, coverage, dependencies, named outputs, `requires_outputs`, and deterministic checks into a conservative grounded STRIPS contract without asking an LLM to invent authoritative symbolic semantics.
 - **Independent formalization proof:** generated contracts carry a `formalization-source:<SHA256>` marker and are independently recompiled from the current plan; stale, weakened, omitted, or manually edited generated contracts are rejected even if their embedded contract SHA is recomputed.
@@ -242,7 +277,7 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 - **New installed CLI:** adds `plan-auditor-formalize compile|verify`; package and skill identity advance to stable `2.4.0`.
 - **Regression coverage:** tests exercise exact recompilation, source-staleness detection, goal weakening, dropped output preconditions, fake initial requirement goals, idempotence, sealed-plan mutation refusal, and manual-contract preservation.
 
-## v2.3.0 — 2026-09-06
+## v2.3.0 â€” 2026-09-06
 
 - **Sealed classical planning:** non-trivial multi-step plans can embed one sealed `formal_planning` contract with explicit initial facts, final goals, one grounded STRIPS-style action per Plan Auditor step, symbolic preconditions, add effects and delete effects.
 - **Native LLM-free reachability:** monotonic contracts use deterministic forward reasoning while delete-effect contracts use bounded state-space search. Exhausting the configured state budget returns UNKNOWN instead of manufacturing PASS.
@@ -253,12 +288,12 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 - **Regression coverage:** dedicated formal-planning and semantic-binding tests cover reachable/unreachable contracts, delete-effect dead ends, alternate valid orderings, bounded search, PDDL sanitization, duplicate anchors, requirement omissions and formal-contract mutation.
 - **Version identity:** source/package/skill version advances to `2.3.0`, so the post-v2.2.0 formal-planning and semantic-binding code is no longer distributed under the already-published `2.2.0` identity.
 
-## v2.2.0 — 2026-09-05
+## v2.2.0 â€” 2026-09-05
 
 - **Physical control-plane confinement:** existing `.plan-auditor`, plan, seal, request/activation and policy path components are inspected with `lstat`; symlinked parents/leaves cannot redefine the workspace trust root.
 - **Policy read confinement:** `load_config` authorizes only symlink-free workspace policy directories before policy loading; a resolved external symlink target is rejected before its files are read.
 - **Sealed scope freeze:** automatic monotonic strengthening remains available for extra deterministic checks/prerequisites, but new steps, requirements, tools, coverage assignments or declared outputs now require a new host-approved request generation.
-- **Safe v3→v4 migration:** `plan-auditor-migrate-seal` provides a representation-only migration path for exact full-contract v3 seals. It requires authoritative request alignment and refuses any plan-scope change.
+- **Safe v3â†’v4 migration:** `plan-auditor-migrate-seal` provides a representation-only migration path for exact full-contract v3 seals. It requires authoritative request alignment and refuses any plan-scope change.
 - **Seal self-consistency:** v3/v4 seals validate their contract hash and criteria count on load/save before being trusted or authenticated.
 - **Streaming evidence verification:** JSONL verification, hashing and HMAC migration retain one record/chunk at a time instead of reading complete evidence/archive files into RAM.
 - **PID-aware registry locking:** registry transaction locks carry PID + random token; live owners are never evicted because of age alone, and stale cleanup requires a provably dead PID plus unchanged lock identity.
@@ -268,7 +303,7 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 - **Trust-boundary documentation:** deliberate same-OS-user interference is explicitly treated as an OS isolation problem; separate account/container/VM deployment is required when that attacker is in scope.
 - **Regression coverage:** new tests cover plan/policy symlink escapes, scope expansion, config-only activation, PID-aware registry locks, streaming evidence verification and exact legacy-seal migration.
 
-## v2.1.0 — 2026-09-05
+## v2.1.0 â€” 2026-09-05
 
 - **Aggregate multi-plan completion:** the integrated supervisor now enumerates the default plan and every safe `.plan-auditor/plans/<name>.json` plan. Global PASS requires every active plan to PASS; a passing default plan cannot hide an unfinished named plan, and a named-only workspace is no longer misclassified as `NO_PLAN`.
 - **Explicit requirement coverage:** Supervisor Mode requires explicit requirements and deterministic `covers` links from steps. Every `must`/`should` requirement must be covered; omitted user requirements, unknown coverage IDs and duplicate requirement contracts block plan approval/PASS.
@@ -290,7 +325,7 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 - **Regression hardening:** dedicated failure-injection tests cover named-plan bypasses, seal-contract weakening, environment downgrade, HMAC seal tampering, invalid config/policies, path traversal, evidence races/rotation/retry history, active-log tampering, rollback cleanup, executable-bit fingerprint changes, canonical agent conflicts, missing tools and bounded verifier output.
 - **Observational final audit:** a full audit fails if a verifier mutates product workspace content, type, or mode. Verification must prove pre-existing implementation state rather than creating the claimed result during the audit itself.
 
-## v2.0.2 — 2026-09-05
+## v2.0.2 â€” 2026-09-05
 
 - **Integrated supervisor pipeline:** new `supervisor/orchestrator.py` wires plan validation, requirements, workspace state, policies, sealing, deterministic evidence, adversarial review, completion gating, lifecycle state, and multi-agent state into one fail-closed assessment.
 - **Real hook enforcement:** `hooks/gate_hook.py` no longer trusts `status=verified` or fabricated integrity flags; PASS requires a valid seal and matching fresh full-audit evidence.
@@ -302,7 +337,7 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 - **Workspace safety:** file checks and rollback are path-confined; workspace observation is read-only and uses `shutil.which()` instead of shell redirections that could create files.
 - **Daemon integration:** the background supervisor persists an integrated assessment and final gate outcome on every observation cycle.
 
-## v1.1.0 — 2026-09-03
+## v1.1.0 â€” 2026-09-03
 
 - **Portable skill paths:** `SKILL.md` resolves auditor scripts relative to the skill directory.
 - **Hard attempt cap:** `run` refuses a step after the configured failed-attempt cap unless explicitly forced.
@@ -310,7 +345,7 @@ registries, a `pip` user keeps seeing the pre-rewrite README on the project page
 - **Snapshot / rollback:** snapshot and rollback support were introduced and recorded in evidence.
 - **Evidence rotation:** large evidence logs rotate into `.plan-auditor/archive/`.
 
-## v1.0.0 — 2026-09-03
+## v1.0.0 â€” 2026-09-03
 
 - Initial strict plan + independent auditor Agent Skill.
 - Machine-checkable `verify` checks (`run`, `exec`, `file_exists`, `regex`, `pytest`).

@@ -24,11 +24,14 @@ SKILL = ROOT / "SKILL.md"
 CITATION = ROOT / "CITATION.cff"
 WORKFLOWS = ROOT / ".github" / "workflows"
 
-CLAIMED_MARKETING = [
+# Supply-chain signals the project never configures, so the docs must never imply
+# them. ``provenance`` is deliberately not here: it is handled separately by
+# ``test_readme_has_no_unverifiable_trust_badges``, because the two registries
+# differ and the README has to be able to say which one attests and which does not.
+NEVER_CLAIMED_SIGNALS = [
     "scorecard",
     "openssf",
     "slsa",
-    "provenance",
 ]
 
 UNVERIFIED_ADOPTION = [
@@ -192,9 +195,58 @@ def test_readme_points_at_the_pypi_project_page_for_downloads() -> None:
 
 
 def test_readme_has_no_unverifiable_trust_badges() -> None:
-    readme = _read(README).lower()
-    for marker in CLAIMED_MARKETING:
-        assert marker not in readme, f"README must not imply a {marker} signal that is not configured"
+    """No supply-chain signal may be claimed unless it is real.
+
+    ``scorecard``, ``openssf`` and ``slsa`` stay banned outright: the project
+    configures no such badge or level, so any mention would be a claim.
+
+    ``provenance`` is different, and is now scoped rather than banned. The two
+    registries genuinely differ -- PyPI publishes through trusted publishing and
+    serves a PEP 740 attestation, while npm ``2.4.2`` has none -- so the README
+    has to be able to say so. Every mention must therefore name a registry or
+    state an absence. That keeps the original intent (never imply a signal you do
+    not have) and makes it checkable per sentence instead of by word count.
+    """
+    text = _read(README)
+    lowered = text.lower()
+
+    for marker in NEVER_CLAIMED_SIGNALS:
+        assert marker not in lowered, (
+            f"README must not imply a {marker} signal that is not configured"
+        )
+
+    scoped = re.compile(
+        r"pypi|npm|not\b|no\b|without|absent|absence|404|cannot|mint",
+        re.I,
+    )
+    offenders = [
+        f"  line {number}: {line.strip()}"
+        for number, line in enumerate(text.splitlines(), 1)
+        if "provenance" in line.lower() and not scoped.search(line)
+    ]
+    assert not offenders, (
+        "every README mention of provenance must name a registry or state an "
+        "absence; these do neither:\n" + "\n".join(offenders)
+    )
+
+
+def test_readme_states_the_npm_attestation_gap() -> None:
+    """The npm attestation gap is a documented fact, not an omission.
+
+    Guarding the negative claim in both directions: the README must say npm has
+    no provenance attestation, so nobody reads the PyPI attestation as covering
+    both registries.
+    """
+    lowered = _read(README).lower()
+    assert "npm" in lowered
+    assert re.search(
+        r"npm[^.]*?provenance|npm[^.]*?attestation|attestation[^.]*?npm",
+        lowered,
+        re.S,
+    ), "README must state npm's attestation status explicitly"
+    assert re.search(r"\b404\b|no provenance|not attested|without.{0,40}attestation", lowered), (
+        "README must state that npm 2.4.2 carries no provenance attestation"
+    )
 
 
 @pytest.mark.parametrize("source", _markdown_files(), ids=lambda p: p.name)
