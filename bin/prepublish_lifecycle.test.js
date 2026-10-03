@@ -15,11 +15,13 @@
  * parser concatenated stdout and stderr before parsing -- so the warning landed
  * after the closing bracket and every `JSON.parse` threw "Extra data".
  *
- * The stderr noise is produced here the way npm itself does it: by pointing npm
- * at a config file containing an unsupported key. Which .npmrc it is does not
- * matter -- the CI runner writes a user config, a project checkout produces a
- * project config -- so both are set up, and the assertion is simply "npm wrote
- * something to stderr".
+ * The stderr noise is raised here with `loglevel=verbose`, which makes npm log
+ * its own invocation on stderr on every npm version. The specific warning npm
+ * happens to print in CI is not the point: the point is that npm wrote to
+ * stderr while stdout still carried the whole payload. Keying off a particular
+ * unsupported config option only reproduces that on some runners -- npm 11 calls
+ * it "user config" and older npm stays silent -- and an earlier version of this
+ * test failed for exactly that reason.
  *
  * Phases:
  *   1  npm emits a warning on stderr (the CI precondition)
@@ -38,7 +40,6 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const PKG = path.join(ROOT, 'package.json');
 const NPMRC = path.join(ROOT, '.npmrc');
-const USER_NPMRC = path.join(os.homedir(), '.npmrc');
 
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const useShell = process.platform === 'win32';
@@ -52,7 +53,6 @@ if (
 
 const pkgOriginal = fs.readFileSync(PKG, 'utf8');
 const projectNpmrcOriginal = fs.existsSync(NPMRC) ? fs.readFileSync(NPMRC) : null;
-const userNpmrcOriginal = fs.existsSync(USER_NPMRC) ? fs.readFileSync(USER_NPMRC) : null;
 
 let failures = 0;
 
@@ -88,22 +88,14 @@ function realPack() {
 }
 
 /**
- * Install an npmrc carrying a key npm rejects, so npm prints a warning to stderr.
+ * Make npm log on stderr, so the gate reads a stream shaped like the one in CI:
+ * a complete payload on stdout with diagnostics appended on stderr.
  *
- * setup-node writes to the user config; a project checkout reproduces it with a
- * project .npmrc. Which one applies depends on npm's config precedence, so the
- * warning is generated on whichever npm actually reads.
+ * `loglevel=verbose` is honoured by every npm this project supports and does not
+ * change what `npm pack --json` writes to stdout, which is verified below.
  */
-function installUnsupportedKey() {
-  const noisy = 'always-auth=false\n';
-  fs.writeFileSync(NPMRC, noisy, 'utf8');
-  if (!userNpmrcOriginal) {
-    try {
-      fs.writeFileSync(USER_NPMRC, noisy, 'utf8');
-    } catch {
-      // A read-only HOME is fine: the project config alone may be enough.
-    }
-  }
+function installStderrNoise() {
+  fs.writeFileSync(NPMRC, 'loglevel=verbose\n', 'utf8');
 }
 
 function restore() {
@@ -112,11 +104,6 @@ function restore() {
     if (fs.existsSync(NPMRC)) fs.unlinkSync(NPMRC);
   } else {
     fs.writeFileSync(NPMRC, projectNpmrcOriginal);
-  }
-  if (userNpmrcOriginal === null) {
-    if (fs.existsSync(USER_NPMRC)) fs.unlinkSync(USER_NPMRC);
-  } else {
-    fs.writeFileSync(USER_NPMRC, userNpmrcOriginal);
   }
 }
 
@@ -147,8 +134,8 @@ function publishWith(prepublishScript, extraEnv = {}) {
 try {
   process.stdout.write('=== inside a real dry-run npm publish lifecycle ===\n');
 
-  check('npm writes a warning to stderr (the CI precondition)', () => {
-    installUnsupportedKey();
+  check('npm writes diagnostics to stderr while stdout holds the payload', () => {
+    installStderrNoise();
     const packed = realPack();
     if (packed.stderr.trim() === '') {
       throw new Error(
@@ -156,15 +143,19 @@ try {
           `at all (status=${packed.status}, stdout=${packed.stdout.length} bytes)`,
       );
     }
+    // The shape that broke CI: npm succeeded, stdout carried the payload, and
+    // diagnostics followed on stderr.
+    JSON.parse(packed.stdout);
     process.stdout.write(
-      `      reproduced: ${JSON.stringify(packed.stderr.trim().slice(0, 70))}\n` +
+      `      reproduced: ${JSON.stringify(packed.stderr.trim().split('\n')[0].slice(0, 70))}\n` +
         `      npm pack itself succeeded: status=${packed.status} ` +
-        `tarballs=${packed.tarballs} stdout=${packed.stdout.length} bytes\n`,
+        `tarballs=${packed.tarballs} stdout=${packed.stdout.length} bytes ` +
+        `stderr=${packed.stderr.length} bytes\n`,
     );
   });
 
   check('the gate PASSES inside the publish lifecycle', () => {
-    installUnsupportedKey();
+    installStderrNoise();
     const result = publishWith('node bin/prepublish_gate.js', {
       NODE_AUTH_TOKEN: 'lifecycle-test-token',
     });
@@ -177,6 +168,7 @@ try {
   });
 
   check('the pre-fix parse returns null on this very stream', () => {
+    installStderrNoise();
     const packed = realPack();
     // The parser as it was before this fix: stdout concatenated with stderr.
     const oldParse = (text) => {
@@ -207,7 +199,7 @@ try {
   });
 
   check('the gate passes with npm_config_dry_run in its own environment', () => {
-    installUnsupportedKey();
+    installStderrNoise();
     const result = publishWith('node bin/prepublish_gate.js', {
       NODE_AUTH_TOKEN: 'lifecycle-test-token',
       npm_config_dry_run: 'true',
