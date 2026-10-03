@@ -135,6 +135,121 @@ def test_readme_quickstart_commands_really_run_and_pass(
     assert not missing, f"README transcript lines are not real CLI output: {missing}"
 
 
+def _key_lines(text: str) -> dict[int, list[str]]:
+    """JSON object keys grouped by indentation, in document order."""
+    grouped: dict[int, list[str]] = {}
+    for line in text.splitlines():
+        match = re.match(r'^(\s*)"([^"]+)":', line)
+        if match:
+            grouped.setdefault(len(match.group(1)), []).append(match.group(2))
+    return grouped
+
+
+def _elided_indents(text: str) -> set[int]:
+    """Indentation levels where the document used a lone ``...`` elision marker."""
+    return {
+        len(line) - len(line.lstrip()) for line in text.splitlines() if line.strip() == "..."
+    }
+
+
+def _chunks_by_command(text: str) -> dict[str, str]:
+    """Split a console block into ``{command: output shown for it}``."""
+    chunks: dict[str, str] = {}
+    command: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("$ "):
+            if command is not None:
+                chunks[command] = "\n".join(buf)
+            command = line[2:].strip()
+            buf = []
+            continue
+        buf.append(line)
+    if command is not None:
+        chunks[command] = "\n".join(buf)
+    return chunks
+
+
+def test_readme_quickstart_hashes_are_not_normalised_away(
+    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture
+) -> None:
+    """Every hash in the transcript must be the one the CLI actually printed.
+
+    ``_mask`` exists so that the line-level comparison above is not defeated by a
+    re-ordered evidence chain, but it also means that comparison alone cannot see a
+    *wrong* hash: substituting any 64-hex string passes. That was verified by
+    mutation -- replacing ``request_sha256`` with ``dead0...`` left the whole suite
+    green, because the check is a subset test over masked text.
+
+    So this test does the comparison without the mask. A hash in the README is
+    only acceptable if the tool printed that exact digest.
+    """
+    workspace = _workspace(tmp_path, quickstart)
+    observed: list[str] = []
+    for command in quickstart["commands"]:
+        main(_argv(command, workspace))
+        observed.append(capfd.readouterr().out)
+    verbatim = "".join(observed).replace("\r\n", "\n")
+
+    documented = sorted(
+        {match.group(0) for block in quickstart["transcript"] for match in HEX64.finditer(block)}
+    )
+    assert documented, "the quick start should document at least one digest"
+    fabricated = [digest for digest in documented if digest not in verbatim]
+    assert not fabricated, (
+        "these digests appear in the README transcript but the CLI never printed "
+        f"them: {fabricated}"
+    )
+
+
+def test_readme_quickstart_json_keys_match_the_real_output(
+    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture
+) -> None:
+    """A JSON block that elides nothing must document every key the tool emits.
+
+    The transcript comparison is a subset check, so a key the tool prints and the
+    README omits -- ``policy_findings`` and ``verdict``, for instance -- is
+    silently tolerated and the reader gets a shape that no longer exists. Here each
+    indentation level is compared as a sequence, and only the levels where the
+    document actually used a ``...`` marker are allowed to be shorter.
+    """
+    workspace = _workspace(tmp_path, quickstart)
+    observed: list[str] = []
+    for command in quickstart["commands"]:
+        main(_argv(command, workspace))
+        observed.append(capfd.readouterr().out)
+
+    documented_chunks = _chunks_by_command("\n".join(quickstart["transcript"]))
+    problems: list[str] = []
+    for index, command in enumerate(quickstart["commands"]):
+        shown = documented_chunks.get(command)
+        if shown is None or not shown.strip():
+            continue
+        real = observed[index].replace("\r\n", "\n")
+        shown_keys = _key_lines(shown)
+        if not shown_keys:
+            continue
+        real_keys = _key_lines(real)
+        elided = _elided_indents(shown)
+        for indent, keys in sorted(shown_keys.items()):
+            if indent in elided:
+                extra = [key for key in keys if key not in real_keys.get(indent, [])]
+                if extra:
+                    problems.append(
+                        f"{command}: keys the tool never emitted at indent {indent}: {extra}"
+                    )
+                continue
+            if real_keys.get(indent, []) != keys:
+                problems.append(
+                    f"{command}: keys at indent {indent} are {keys} but the tool "
+                    f"emitted {real_keys.get(indent, [])}; add a scoped '...' elision "
+                    "or document the real shape"
+                )
+    assert not problems, "README JSON shape does not match real output:\n  " + "\n  ".join(
+        problems
+    )
+
+
 def test_readme_quickstart_transcript_covers_every_documented_command(
     quickstart: dict,
 ) -> None:

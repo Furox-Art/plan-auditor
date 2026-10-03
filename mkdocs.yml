@@ -43,6 +43,7 @@ nav:
       - Threat model: threat-model.md
       - Deployment isolation: deployment-isolation.md
   - Integrations: integrations.md
+  - Release status: release-status.md
   - Evidence and claims: benchmark.md
 
 markdown_extensions:

@@ -4,6 +4,82 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+- **Three false claims in the README and quickstart are corrected.**
+  - The quick-start transcript documented `request_sha256`
+    `7b347f48...0db55f`. The CLI has never printed that value: `request_contract.py`
+    stamps `plan_contract_sha256s` into the request before hashing, so the printed
+    digest is not a hash of the source file. Running the documented walkthrough in
+    a clean virtualenv yields `d7d47e409fc1c53b9830346740bac2a20e716aefc71e7396ad3db0ebbdd837f2`.
+    Fixed in `README.md` and `docs/quickstart.md`. The value was unaffected by
+    reformatting the JSON, because the digest is taken over the parsed contract
+    rather than the file bytes.
+  - The README claimed the transcript "cannot drift from reality" because
+    `tests/test_readme_quickstart.py` executes it. It could. `_mask()` rewrites
+    every 64-hex string to `<sha256>` and the transcript check is a subset test, so
+    substituting `dead0000...` for the real digest left the suite green: measured
+    at 389 passed, 0 failed. The claim is corrected and two new tests close the gap
+    (see below).
+  - The README and `CONTRIBUTING.md` both described `examples/fib` as shipping a
+    "deliberately broken variant". It does not; the directory holds four files, none
+    of them broken. `docs/benchmark.md` is where you break it yourself, and says so.
+
+- **`tests/test_readme_quickstart.py` can now fail on the two ways it used to
+  pass.** Proven by mutation against this commit.
+  - `test_readme_quickstart_hashes_are_not_normalised_away` compares the documented
+    digests against the *unmasked* real output, so a fabricated hash is rejected.
+    Replacing `request_sha256` with `dead0000...`: **389 passed / 0 failed before,
+    1 failed after**.
+  - `test_readme_quickstart_json_keys_match_the_real_output` compares the JSON key
+    sequence at each indentation level and only tolerates a shorter sequence where
+    the document actually used a `...` marker. Dropping `deterministic_core` from
+    the `audit` block, which had no elision, is now a failure. This check caught a
+    real omission introduced while compressing this very README.
+  - A third mutation, inserting a fabricated `plan_hash`, fails both the original
+    subset test and the new hash test.
+
+- **The README now explains the repository instead of only the happy path.**
+  Measured against a 60-surface checklist drawn from the code, coverage goes from
+  14/60 to 60/60. Added: the L0-L14 layer table with the two layers that can decide
+  a verdict; all 11 command groups and their 17 nested actions; the other three
+  console scripts including `plan-auditor-formal`'s `verify`/`export-pddl`/
+  `make-check`; the core's `status`/`snapshot`/`rollback` modes; the `regex` check
+  type and the rule that `regex` and `file_exists` are non-behavioural; profiles,
+  run modes and the four LLM tiers; every file written under `.plan-auditor/`;
+  `hooks/gate_hook.py` as the single authoritative gate with no per-host adapter
+  files; exit codes including `3` for `UNKNOWN`; and
+  `references/plan-format.md`.
+  - Two checklist items from the audit were wrong and are documented as the code
+    actually is: the tiers are `NO_LLM`/`SMALL_LOCAL`/`STRONG_LOCAL`/`REMOTE`
+    (four, not "T1/T2/T3"), and there are no six hook adapters — `hooks/` contains
+    `gate_hook.py` and its README, and the per-host wiring patterns are documented
+    in `docs/integrations.md`.
+
+- **The 53-line release-status block moved to `docs/release-status.md`** and is in
+  the mkdocs navigation. Almost all of it describes one version number and would be
+  wrong at the next release. The README keeps two lines, and keeps them honest
+  rather than dropping the substance: `2.4.2` is current on both registries, npm
+  has no provenance attestation and returns `404` for one, and PyPI publishes with a
+  PEP 740 attestation. `test_readme_states_the_npm_attestation_gap` still passes
+  against the shortened text, so the move did not cost the supply-chain disclosure.
+
+- **Sections that GitHub or the docs already render are gone from the README:**
+  the inline `Troubleshooting` block (a 158-line per-error guide lives in
+  `docs/quickstart.md`), the standalone `npm` section, `Project links`, and
+  `License`. README length falls from 499 to 356 lines.
+
+- **Two doc tests were updated because they pinned text that moved, not because
+  they were inconvenient.** `test_readme_adoption_region_covers_the_essentials`
+  used `## Troubleshooting` as its region sentinel; the sentinel is now
+  `## Documentation`, and the ordering assertions it exists to protect are
+  unchanged. `test_doc_transcripts.py` no longer requires the README to carry a
+  failing run, but now also requires the README to link the page that does, and
+  that page to still document the most common failure.
+
+- **A new test keeps the deleted troubleshooting reachable.**
+  `test_readme_points_at_the_full_troubleshooting_page` fails if the README stops
+  linking `docs/quickstart.md`, or if that page stops documenting
+  `"request contract is not activated"`.
+
 - **A successful npm publish is no longer reported as a failed one.** Run
   37136117550 published `plan-auditor@2.4.2` and then failed its own
   verification step one second later with `ERROR: npm reports 'nothing',

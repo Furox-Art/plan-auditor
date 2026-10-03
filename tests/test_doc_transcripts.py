@@ -161,18 +161,18 @@ def test_failing_transcript_check_fixtures_are_real(tmp_path: Path) -> None:
     assert "çıktı:" not in joined, observed[-800:]
 
 
-def _assert_verbatim(document: Path, tmp_path: Path) -> None:
+def _assert_verbatim(document: Path, tmp_path: Path, *, require_failure_block: bool = True) -> None:
     observed = _real_failing_run(tmp_path)
+    blocks = _console_blocks(document.read_text(encoding="utf-8"))
     documented: list[str] = []
-    for block in _console_blocks(document.read_text(encoding="utf-8")):
+    for block in blocks:
         documented.extend(_output_lines(block))
     # Only compare the failure blocks, identified by their distinctive markers.
     failure_blocks = [
-        block
-        for block in _console_blocks(document.read_text(encoding="utf-8"))
-        if any("[FAIL]" in line or "[ATLADI]" in line for line in block)
+        block for block in blocks if any("[FAIL]" in line or "[ATLADI]" in line for line in block)
     ]
-    assert failure_blocks, f"{document.name} must show a real failing run"
+    if require_failure_block:
+        assert failure_blocks, f"{document.name} must show a real failing run"
     for block in failure_blocks:
         for line in _output_lines(block):
             assert line in observed, (
@@ -183,7 +183,20 @@ def _assert_verbatim(document: Path, tmp_path: Path) -> None:
 
 
 def test_readme_failure_transcript_is_verbatim(tmp_path: Path) -> None:
-    _assert_verbatim(README, tmp_path)
+    """The README keeps a success transcript but no longer a failure walkthrough.
+
+    The per-error troubleshooting block moved to ``docs/quickstart.md`` rather than
+    being duplicated, so the README is not required to carry a failing run. Its
+    success lines are still required to be real, and the README must link the page
+    that does carry the failure transcript.
+    """
+    _assert_verbatim(README, tmp_path, require_failure_block=False)
+    readme = README.read_text(encoding="utf-8")
+    assert "docs/quickstart.md" in readme, (
+        "README must link the page that carries the failure transcripts"
+    )
+    # The failure transcript on that page is checked by its own test,
+    # test_quickstart_failure_transcript_is_verbatim.
 
 
 def test_quickstart_failure_transcript_is_verbatim(tmp_path: Path) -> None:
