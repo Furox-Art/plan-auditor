@@ -266,11 +266,17 @@ def test_benchmark_doc_makes_no_unverified_comparative_claims() -> None:
 
 
 def test_readme_adoption_region_covers_the_essentials() -> None:
-    """Everything a visitor needs to try the tool appears before Troubleshooting."""
+    """Everything a visitor needs to try the tool appears before the doc index.
+
+    The region used to end at ``## Troubleshooting``. Troubleshooting now lives
+    only in ``docs/quickstart.md`` -- it is a page of per-error guidance and
+    duplicated it here -- so the sentinel is the Documentation section instead.
+    The orderings below are the point of the test and are unchanged.
+    """
     readme = _read(README)
     assert readme.lstrip().startswith("# plan-auditor")
-    adoption = readme.split("\n## Troubleshooting", 1)
-    assert len(adoption) == 2, "README must have a Troubleshooting section"
+    adoption = readme.split("\n## Documentation", 1)
+    assert len(adoption) == 2, "README must have a Documentation section"
     region = adoption[0]
     for needle in (
         "## The problem",
@@ -286,6 +292,24 @@ def test_readme_adoption_region_covers_the_essentials() -> None:
         assert needle in region, f"README adoption region must show {needle!r}"
     assert region.index("## The problem") < region.index("## Install")
     assert region.index("## Install") < region.index("## Quick start (verified, 5 minutes)")
+
+
+def test_readme_points_at_the_full_troubleshooting_page() -> None:
+    """Deleting the inline Troubleshooting section must not lose the guidance.
+
+    The README no longer carries the per-error walkthroughs, so it has to link the
+    page that does, or a reader who hits ``request contract is not activated`` has
+    nothing to click.
+    """
+    readme = _read(README)
+    assert "docs/quickstart.md" in readme, "README must link docs/quickstart.md"
+    quickstart = _read(DOCS / "quickstart.md")
+    assert "## Troubleshooting" in quickstart, (
+        "docs/quickstart.md must carry the troubleshooting section the README points at"
+    )
+    assert "request contract is not activated" in quickstart, (
+        "the most common failure mode must still be documented somewhere reachable"
+    )
 
 
 def test_readme_links_project_signals() -> None:

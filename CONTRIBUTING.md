@@ -299,7 +299,7 @@ the point: nothing in the release path depends on a maintainer remembering a ste
 | `plan-auditor doctor .` | Machine-readable capability and health report. Run this first when anything misbehaves. |
 | `SKILL.md` | The Agent Skill definition loaded by skill hosts. |
 | `hooks/gate_hook.py` | The authoritative hook gate for hosts that support blocking hooks. |
-| `examples/fib/` | A complete, runnable two-step plan, including a deliberately broken variant. |
+| `examples/fib/` | A complete, runnable two-step plan whose second step is a pytest run. |
 | `docs/` | The documentation set. Navigation is defined in `mkdocs.yml`. |
 
 ## Conduct and security

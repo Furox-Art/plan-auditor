@@ -146,7 +146,7 @@ $ plan-auditor request init . --file request-source.json
   "activated": true,
   "valid": true,
   "reason": "request contract active",
-  "request_sha256": "7b347f48ca610db107039976990f3bbaa8be0c45bffd9b2158b5790ca40db55f",
+  "request_sha256": "d7d47e409fc1c53b9830346740bac2a20e716aefc71e7396ad3db0ebbdd837f2",
   "authenticated": false
 }
 $ plan-auditor plan verify .
