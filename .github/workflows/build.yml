@@ -74,9 +74,12 @@ jobs:
           python-version: "3.12"
       - name: Install the package the launcher shells out to
         run: python -m pip install .
-      # node --check plus the behavioural contract: exit-code propagation,
-      # caller-cwd resolution, and the tarball allowlist.
+      # node --check, the behavioural contract, the publish-mode contract, and
+      # the pre-publish gate: tarball allowlist, required runtime files, and the
+      # installed launcher running from the caller's working directory.
       - name: Launcher syntax and contract tests
         run: npm test && npm run test:contract
-      - name: Confirm the packed tarball ships only allowlisted files
-        run: npm run test:tarball
+      - name: Publish-mode contract tests
+        run: npm run test:publish-modes
+      - name: Pre-publish gate (tarball contents + installed launcher)
+        run: npm run test:gate
