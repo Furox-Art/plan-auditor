@@ -94,3 +94,15 @@ jobs:
       # permissions, before a run turns red with no diagnostic.
       - name: Validate workflow syntax, pinning and permissions
         run: python .github/scripts/check_workflows.py
+      # Syntax validation proves a pin is a well-formed 40-character string. It
+      # does not prove the commit exists: npm-publish.yml carried a SHA one
+      # character away from the real one, so the whole npm publish workflow
+      # failed at setup in run 37199866973 before a single job started. This
+      # resolves every pin against its upstream repository.
+      - name: Verify every pinned action SHA exists upstream
+        env:
+          # Unauthenticated requests are capped at 60/hour, which a busy fork
+          # can exhaust; the automatic token raises that ceiling. Read-only is
+          # all it needs and all it gets.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/check_action_pins.py
