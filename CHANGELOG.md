@@ -4,6 +4,68 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+### Fixed
+
+- **Supply-chain claims are now measured, scoped and separated by mechanism.** The three
+  things that get blurred into "attested" are now named separately wherever they appear
+  in `README.md`, `SECURITY.md` and `docs/release-status.md`:
+  1. a **digest** (`dist.integrity`, `digests.sha256`) proves the bytes match what was
+     published and says nothing about the build;
+  2. npm's **`dist.signatures`** is a registry *transport* signature over the packument,
+     present for every package whether or not it was built in CI, and is never build
+     provenance;
+  3. a **build attestation** (Sigstore/in-toto on npm, PEP 740 on PyPI) is the only one of
+     the three that names a workflow, repository and commit.
+- **The current version was stale at `2.4.2` in the release-status claims** while `2.4.3` is
+  the release on both registries. Refreshed, with the npm `shasum`, integrity, file count
+  and unpacked size, and the PyPI wheel and sdist SHA-256, all re-measured. The npm values
+  were re-checked by running `npm pack` on `main` (`45fd5ee`): integrity reproduces exactly.
+- **The PyPI integrity URL shape is called out explicitly**, because reading the wrong shape
+  is how a false negative gets reported. PyPI serves attestations **per file**, so the path
+  ends in `/<filename>/provenance`. `https://pypi.org/integrity/plan-auditor/2.4.3/` is not
+  an endpoint and returns `404`; that `404` means "no such URL", **not** "no attestation".
+  The per-file endpoint returns `200` with an in-toto v1 statement, predicate type
+  `https://docs.pypi.org/attestations/publish/v1`, publisher
+  `kind=GitHub, repository=Furox-Art/plan-auditor, workflow=release.yml, environment=pypi`,
+  whose subject digest equals the SHA-256 PyPI serves for the file.
+- **The condition for npm provenance is stated as pending**, with the four facts it needs:
+  a trusted publisher on npmjs.com for owner `Furox-Art`, package `plan-auditor`, workflow
+  filename `npm-publish.yml`, and the environment the publish job declares. Nothing in this
+  repository needs to change. Until that record exists, npm consumers verify by digest and
+  the docs keep saying so.
+- `SECURITY.md` gained the per-channel verification commands and the mechanism table, so a
+  reader can check a claim without trusting this repository.
+
+### Added
+
+- **`docs/check_attestation_claims.py`** — a regression guard for supply-chain claims, with
+  its own negative control. It rejects any attestation claim that names no channel, that
+  states no definite status, that presents `dist.signatures` as provenance, or that calls a
+  stale version current. Run it three ways:
+
+  ```bash
+  python docs/check_attestation_claims.py             # scan the docs
+  python docs/check_attestation_claims.py --online    # also re-measure both registries
+  python docs/check_attestation_claims.py --self-test # negative control
+  ```
+
+  The negative control feeds the guard five deliberately false claims and fails unless all
+  five are rejected, plus one correct claim it must accept and two same-word-different-meaning
+  cases (`docs/benchmark.md` measurement provenance, `docs/formal-planning.md` source
+  provenance) it must not flag. A guard that cannot be shown to reject a known lie is not a
+  guard, so `--self-test` is part of the deliverable rather than a nicety.
+
+  It is not wired into CI, because this change set does not touch workflows. Adding one step
+  to `.github/workflows/plan-audit.yml` that runs
+  `python docs/check_attestation_claims.py --self-test && python docs/check_attestation_claims.py`
+  would close that; until then it runs on demand.
+
+### Not claimed
+
+- No security claim is weakened anywhere. npm is still described as digest-only, and the
+  PyPI attestation is still described as present, because that is what the registries
+  return.
+
 ## v2.4.3 - 2026-10-04
 
 A documentation release. The README restructure and the three corrections below

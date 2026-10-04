@@ -8,9 +8,9 @@ explicitly out of scope.
 
 | Version | Supported | Notes |
 |---|---|---|
-| `>= 2.4.2` on npm | Yes | The current release. `2.4.0` shipped a syntax error in the `bin` launcher and `2.4.1` shipped a launcher that resolved a relative workspace path against the installed package directory. Both are defective and cannot be withdrawn, because npm versions are immutable. |
+| `>= 2.4.2` on npm | Yes | `2.4.3` is the current release. `2.4.0` shipped a syntax error in the `bin` launcher and `2.4.1` shipped a launcher that resolved a relative workspace path against the installed package directory. Both are defective and cannot be withdrawn, because npm versions are immutable. |
 | `2.4.0`, `2.4.1` on npm | No | Defective releases. Do not install them. |
-| `>= 2.4.2` on PyPI | Yes | The current release, published with a PEP 740 provenance attestation. |
+| `>= 2.4.2` on PyPI | Yes | `2.4.3` is the current release, published with a PEP 740 provenance attestation. |
 | `2.4.0`, `2.4.1` on PyPI | No | Superseded by `2.4.2`. |
 | `<= 2.3.0` | No | No fixes. Reproduce on `main` and open an issue if the problem still reproduces. |
 
@@ -19,18 +19,60 @@ that CI runs. Older minors are not.
 
 ### Verifying an install
 
-The two registries do not offer the same guarantee, so check them differently:
+Three different mechanisms are in play, and conflating them is how a supply-chain check
+ends up proving less than it looks:
 
-- **PyPI** publishes through OIDC trusted publishing, so every `2.4.2` artifact
-  carries a [PEP 740](https://peps.python.org/pep-0740/) provenance
-  attestation. Fetch it at
-  `https://pypi.org/integrity/plan-auditor/<version>/<file>/provenance` and
-  confirm the statement's SHA-256 matches the artifact you downloaded.
-- **npm `2.4.2` carries no provenance attestation.** It was published in token
-  mode, and a registry token cannot mint one; the `dist.signatures` block in the
-  packument is npm's own signature over the packument, not evidence of how the
-  tarball was built. Verify it with `npm view plan-auditor@<version>
-  dist.integrity` instead, and compare it against the tarball you received.
+| Mechanism | What it proves | Where to read it |
+|---|---|---|
+| `dist.integrity` / `sha256` digest | The bytes you received are the bytes that were published. Integrity only — says nothing about how they were built. | `npm view <pkg> dist.integrity`, PyPI `digests.sha256` |
+| npm `dist.signatures` | The **registry** signed the packument entry, so the metadata was not altered in transit. A transport signature, **not** build provenance. | `npm view <pkg> dist.signatures` |
+| Build attestation | A CI run built this artifact from a named workflow, repo and commit, and a transparency log has the statement. | see per channel below |
+
+The two channels differ, so check them differently. Both were measured on `2.4.3`:
+
+- **PyPI — attested.** Publishing goes through OIDC trusted publishing, so every `2.4.3`
+  artifact carries a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation
+  with predicate type `https://docs.pypi.org/attestations/publish/v1`, bound to the
+  artifact's SHA-256. Fetch and check it yourself:
+
+  ```bash
+  curl -s https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance
+  # statement subject sha256 must equal the digest PyPI serves for the file:
+  curl -s https://pypi.org/pypi/plan-auditor/2.4.3/json | python -c "import json,sys;print(json.load(sys.stdin)['urls'][0]['digests']['sha256'])"
+  ```
+
+  Note the URL shape: PyPI serves attestations **per file**, so the path ends in
+  `/<filename>/provenance`. `https://pypi.org/integrity/plan-auditor/2.4.3/` is not an
+  endpoint and returns `404` — that 404 means "no such URL", not "no attestation".
+
+- **npm — not attested.** `2.4.3` was published in token mode, and a registry token cannot
+  mint an attestation. The attestations endpoint returns `404`:
+
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' \
+    https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3   # -> 404
+  ```
+
+  So verify the npm artifact by digest instead, and treat that as integrity only:
+
+  ```bash
+  npm view plan-auditor@2.4.3 dist.integrity
+  ```
+
+### What would give npm provenance
+
+This is **pending**, and is the only reason npm is weaker than PyPI here. It needs one
+thing on npmjs.com and nothing in this repository: a trusted publisher with
+
+| Field | Value |
+|---|---|
+| Owner | `Furox-Art` |
+| Package | `plan-auditor` |
+| Workflow filename | `npm-publish.yml` |
+| Environment | the one this workflow publishes under |
+
+Once that exists, the OIDC path publishes with `--provenance` and an attestation appears.
+Until then the npm package is verifiable by digest only, and this document will say so.
 
 When reporting a problem, say which registry and which verification you used.
 
