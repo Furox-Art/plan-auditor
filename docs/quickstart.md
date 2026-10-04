@@ -168,21 +168,21 @@ $ plan-auditor plan verify .
   "outcome": "PASS"
 }
 $ plan-auditor run . 1
-[OK ] adım 1: README.md exists and is readable (deneme 1/3)
-       - geçti | README.md VAR
-       - geçti | exit=0 (beklenen 0)
+[OK ] step 1: README.md exists and is readable (attempt 1/3)
+       - passed | README.md EXISTS
+       - passed | exit=0 (expected 0)
 $ plan-auditor audit .
-TAM DENETİM: tüm adımlar taze subprocess ile yeniden test ediliyor...
+FULL AUDIT: all steps are being retested in fresh subprocesses...
 
-[OK ] adım 1: README.md exists and is readable
-       - geçti | README.md VAR
-       - geçti | exit=0 (beklenen 0)
+[OK ] step 1: README.md exists and is readable
+       - passed | README.md EXISTS
+       - passed | exit=0 (expected 0)
 
 ID   ADIM                                       DURUM     KONTROL
 ----------------------------------------------------------------------
 1    README.md exists and is readable           VERIFIED  2 kontrol
 
-SONUÇ: audit GEÇTİ — tüm adımlar kanıtlı.
+RESULT: audit PASSED — every step is proven.
 {
   "outcome": "PASS",
   "plans": {
@@ -303,21 +303,21 @@ the representation-only migration path.
 
 ```console
 $ plan-auditor run . 1
-[FAIL] adım 1: the sentinel script exits nonzero (deneme 1/3)
-       - KALDI | exit=3 (beklenen 0)
+[FAIL] step 1: the sentinel script exits nonzero (attempt 1/3)
+       - FAILED | exit=3 (expected 0)
 $ plan-auditor run . 1
-[FAIL] adım 1: the sentinel script exits nonzero (deneme 2/3)
-       - KALDI | exit=3 (beklenen 0)
+[FAIL] step 1: the sentinel script exits nonzero (attempt 2/3)
+       - FAILED | exit=3 (expected 0)
 $ plan-auditor run . 1
-[FAIL] adım 1: the sentinel script exits nonzero (deneme 3/3)
-       - KALDI | exit=3 (beklenen 0)
+[FAIL] step 1: the sentinel script exits nonzero (attempt 3/3)
+       - FAILED | exit=3 (expected 0)
 $ plan-auditor run . 1
-[ATLADI] adım 1: the sentinel script exits nonzero önceki gerçek başarısız deneme — 3 sınırı aşıldı.
+[SKIPPED] step 1: the sentinel script exits nonzero previous genuine failed attempts — 3 limit exceeded.
 ```
 
 Nothing is elided and every invocation exits `1`. The check here is
 `python -c "import sys; sys.exit(3)"` against `expect_exit: 0`; a failing command
-that writes to stderr additionally gets a `çıktı:` line, joined with `" | "`.
+that writes to stderr additionally gets a `output:` line, joined with `" | "`.
 
 Fix the underlying problem. Re-arm deliberately with `plan-auditor run . 1 --force`
 only when you are certain the check is correct and the implementation is wrong.

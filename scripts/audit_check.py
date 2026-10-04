@@ -100,9 +100,9 @@ _VALID_RUNTIME_MODES = {"serial", "parallel-warn", "parallel-strict"}
 def _strict_runtime_int(data, key, default, minimum, maximum):
     value = data.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError("%s integer olmalı" % key)
+        raise ValueError("%s must be an integer" % key)
     if not minimum <= value <= maximum:
-        raise ValueError("%s %s..%s aralığında olmalı" % (key, minimum, maximum))
+        raise ValueError("%s must be between %s..%s" % (key, minimum, maximum))
     return value
 
 
@@ -114,29 +114,29 @@ def _validated_runtime_config(base):
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError("geçersiz supervisor config: %s" % exc) from exc
+        raise ValueError("invalid supervisor config: %s" % exc) from exc
     if not isinstance(data, dict):
-        raise ValueError("supervisor config kökü obje olmalı")
+        raise ValueError("supervisor config root must be an object")
 
     profile = data.get("profile", "standard")
     if not isinstance(profile, str) or profile.lower() not in {"light", "standard", "strict"}:
-        raise ValueError("profile light/standard/strict string olmalı")
+        raise ValueError("profile must be the string light/standard/strict")
     tier = data.get("tier", 1)
     if isinstance(tier, bool) or not isinstance(tier, int) or tier not in {1, 2, 3, 4}:
-        raise ValueError("tier 1..4 arası integer olmalı")
+        raise ValueError("tier must be an integer between 1..4")
     mode = data.get("mode", "serial")
     if not isinstance(mode, str) or mode not in _VALID_RUNTIME_MODES:
-        raise ValueError("mode serial/parallel-warn/parallel-strict olmalı")
+        raise ValueError("mode must be serial/parallel-warn/parallel-strict")
     pg_dir = data.get("pg_dir", PG_DIR)
     if not isinstance(pg_dir, str) or pg_dir != PG_DIR:
-        raise ValueError("pg_dir sabit olarak .plan-auditor olmalı")
+        raise ValueError("pg_dir must be exactly .plan-auditor")
     policies = data.get("policies_dir", "policies")
     if not isinstance(policies, str) or not policies:
-        raise ValueError("policies_dir boş olmayan string olmalı")
+        raise ValueError("policies_dir must be a non-empty string")
     if os.path.isabs(policies) or ".." in policies.replace("\\", "/").split("/"):
-        raise ValueError("policies_dir workspace içinde göreli yol olmalı")
+        raise ValueError("policies_dir must be a relative path inside the workspace")
     if "extra" in data and not isinstance(data.get("extra"), dict):
-        raise ValueError("extra obje olmalı")
+        raise ValueError("extra must be an object")
 
     _strict_runtime_int(data, "max_attempts", MAX_ATTEMPTS, 1, 100)
     _strict_runtime_int(data, "owner_timeout_sec", 300, 1, 86_400)
@@ -168,7 +168,7 @@ def validate_plan_name(name):
         return None
     value = str(name)
     if value in {".", ".."} or not _PLAN_NAME_RE.fullmatch(value) or "/" in value or "\\" in value:
-        raise ValueError("geçersiz plan adı; yalnız [A-Za-z0-9._-] ve güvenli basename kullanılabilir")
+        raise ValueError("invalid plan name; only [A-Za-z0-9._-] and a safe basename are allowed")
     return value
 
 
@@ -254,7 +254,7 @@ def plan_path(base, name=None):
         root = os.path.realpath(os.path.join(base, PG_DIR, "plans"))
         target = os.path.realpath(os.path.join(root, safe + ".json"))
         if os.path.commonpath([root, target]) != root:
-            raise ValueError("plan yolu .plan-auditor/plans dışına çıkıyor")
+            raise ValueError("plan path escapes .plan-auditor/plans")
         return target
     return os.path.join(base, PG_DIR, "plan.json")
 
@@ -325,43 +325,43 @@ def validate_plan(data):
         if "timeout" in check:
             value = check.get("timeout")
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0 < value <= 86_400):
-                add("%s: timeout 0..86400 arası sayı olmalı" % label)
+                add("%s: timeout must be a number between 0..86400" % label)
         if "expect_exit" in check:
             value = check.get("expect_exit")
             if isinstance(value, bool) or not isinstance(value, int) or not (-255 <= value <= 255):
-                add("%s: expect_exit -255..255 arası int olmalı" % label)
+                add("%s: expect_exit must be an int between -255..255" % label)
         if "max_output_bytes" in check:
             value = check.get("max_output_bytes")
             if isinstance(value, bool) or not isinstance(value, int) or not (1_024 <= value <= 50_000_000):
-                add("%s: max_output_bytes 1024..50000000 arası int olmalı" % label)
+                add("%s: max_output_bytes must be an int between 1024..50000000" % label)
         if "output_regex" in check:
             value = check.get("output_regex")
             if not isinstance(value, str) or not value:
-                add("%s: output_regex boş olmayan string olmalı" % label)
+                add("%s: output_regex must be a non-empty string" % label)
             else:
                 try:
                     re.compile(value)
                 except re.error as exc:
-                    add("%s: geçersiz output_regex: %s" % (label, exc))
+                    add("%s: invalid output_regex: %s" % (label, exc))
 
     def validate_check(check, sid, label):
         if not isinstance(check, dict) or check.get("type") not in CHECK_TYPES:
-            add("%s: geçersiz kontrol %r" % (label, check))
+            add("%s: invalid check %r" % (label, check))
             return
         kind = check["type"]
         if kind in ("file_exists", "regex"):
             path = check.get("path")
             if not safe_relative(path):
-                add("%s: %s kontrolü güvenli göreli 'path' ister" % (label, kind))
+                add("%s: %s check requires a safe relative 'path'" % (label, kind))
         if kind == "regex":
             pattern = check.get("pattern")
             if not isinstance(pattern, str) or not pattern:
-                add("%s: regex kontrolü boş olmayan 'pattern' ister" % label)
+                add("%s: regex check requires a non-empty 'pattern'" % label)
             else:
                 try:
                     re.compile(pattern)
                 except re.error as exc:
-                    add("%s: geçersiz regex pattern: %s" % (label, exc))
+                    add("%s: invalid regex pattern: %s" % (label, exc))
         if kind in ("run", "exec"):
             has_cmd_key = "cmd" in check
             has_argv_key = "argv" in check
@@ -375,103 +375,103 @@ def validate_plan(data):
             if has_cmd_key == has_argv_key:
                 add("%s: %s tam olarak bir 'cmd' veya 'argv' ister" % (label, kind))
             if has_cmd_key and not has_cmd:
-                add("%s: %s cmd boş olmayan string olmalı" % (label, kind))
+                add("%s: %s cmd must be a non-empty string" % (label, kind))
             if has_argv_key and not has_argv:
-                add("%s: %s argv boş olmayan string listesi olmalı" % (label, kind))
+                add("%s: %s argv must be a non-empty list of strings" % (label, kind))
             if "shell" in check:
-                add(f"{label}: {kind} shell kaldırıldı; 'shell' anahtarı artık "
-                    "kabul edilmez, argv listesi ya da kabuksuz ayrıştırılan "
-                    "'cmd' kullanın")
+                add(f"{label}: {kind} shell was removed; the 'shell' key is no longer "
+                    "accepted; use an argv list or a shell-less parsed "
+                    "'cmd' instead")
             validate_runtime_fields(check, label)
         elif kind == "pytest":
             if any(key in check for key in ("cmd", "argv", "shell")):
-                add("%s: pytest cmd/argv/shell kabul etmez; yalnız args kullan" % label)
+                add("%s: pytest does not accept cmd/argv/shell; use args only" % label)
             args = check.get("args", "")
             if not (
                 isinstance(args, str)
                 or (isinstance(args, list) and all(isinstance(arg, str) and bool(arg) for arg in args))
             ):
-                add("%s: pytest args string veya string listesi olmalı" % label)
+                add("%s: pytest args must be a string or a list of strings" % label)
             validate_runtime_fields(check, label)
 
     if not isinstance(data, dict):
-        return ["plan kökü bir obje olmalı"]
+        return ["plan root must be an object"]
     if not isinstance(data.get("task"), str) or not data["task"].strip():
-        add("task: boş olmayan string olmalı")
+        add("task: must be a non-empty string")
     created = data.get("created")
     if not isinstance(created, str) or not created.strip():
-        add("created: ISO zaman damgası olmalı")
+        add("created: must be an ISO timestamp")
     else:
         try:
             datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
         except ValueError:
-            add("created: geçerli ISO zaman damgası olmalı")
+            add("created: must be a valid ISO timestamp")
     if "snapshot" in data:
         raw_snapshot = data.get("snapshot")
         if not isinstance(raw_snapshot, list) or any(not safe_relative(item) for item in raw_snapshot):
-            add("snapshot: güvenli göreli dosya/dizin yolu listesi olmalı")
+            add("snapshot: must be a list of safe relative file/directory paths")
     if "required_tools" in data:
         raw_tools = data.get("required_tools")
         if (
             not isinstance(raw_tools, list)
             or any(not isinstance(item, str) or not item.strip() for item in raw_tools)
         ):
-            add("required_tools: boş olmayan string listesi olmalı")
+            add("required_tools: must be a non-empty list of strings")
     if "requirements" in data:
         requirements = data.get("requirements")
         if not isinstance(requirements, list) or not requirements:
-            add("requirements: verildiyse boş olmayan liste olmalı")
+            add("requirements: if given must be a non-empty list")
         else:
             seen_req = set()
             for index, req in enumerate(requirements, 1):
                 if isinstance(req, str):
                     if not req.strip():
-                        add("requirement %s boş string olamaz" % index)
+                        add("requirement %s must not be an empty string" % index)
                     continue
                 if not isinstance(req, dict):
-                    add("requirement %s obje veya string olmalı" % index)
+                    add("requirement %s must be an object or a string" % index)
                     continue
                 rid = req.get("id")
                 if not isinstance(rid, str) or not rid.strip():
                     add("requirement %s id ister" % index)
                 elif rid in seen_req:
-                    add("requirement id tekrarlı: %s" % rid)
+                    add("duplicate requirement id: %s" % rid)
                 else:
                     seen_req.add(rid)
                 if not isinstance(req.get("description"), str) or not req.get("description", "").strip():
                     add("requirement %s description ister" % (rid or index))
                 priority = req.get("priority", "must")
                 if not isinstance(priority, str) or priority.lower() not in {"must", "should", "may"}:
-                    add("requirement %s priority must/should/may string olmalı" % (rid or index))
+                    add("requirement %s priority must be the string must/should/may" % (rid or index))
 
     steps = data.get("steps")
     if not isinstance(steps, list) or not steps:
-        add("steps: boş olmayan liste olmalı")
+        add("steps: must be a non-empty list")
         return errs
 
     seen = set()
     for step in steps:
         if not isinstance(step, dict):
-            add("adım obje olmalı: %r" % (step,))
+            add("step must be an object: %r" % (step,))
             continue
         sid = step.get("id")
         if isinstance(sid, bool) or not isinstance(sid, int) or sid < 1:
-            add("adım id pozitif int olmalı: %r" % (sid,))
+            add("step id must be a positive int: %r" % (sid,))
         elif sid in seen:
-            add("adım id tekrarlı: %s" % sid)
+            add("duplicate step id: %s" % sid)
         else:
             seen.add(sid)
         if not isinstance(step.get("title"), str) or not step.get("title", "").strip():
-            add("adım %s: title boş olamaz" % sid)
+            add("step %s: title must not be empty" % sid)
         if "covers" in step and (
             not isinstance(step.get("covers"), list)
             or any(not isinstance(item, str) or not item.strip() for item in step.get("covers", []))
         ):
-            add("adım %s: covers string listesi olmalı" % sid)
+            add("step %s: covers must be a list of strings" % sid)
 
         checks = step.get("verify")
         if not isinstance(checks, list) or not checks:
-            add("adım %s: verify boş olamaz" % sid)
+            add("step %s: verify must not be empty" % sid)
         else:
             behavioral = [
                 check for check in checks
@@ -479,11 +479,11 @@ def validate_plan(data):
             ]
             if not behavioral:
                 add(
-                    "adım %s: en az bir DAVRANIŞSAL kontrol (run/pytest/exec) zorunlu — "
-                    "yalnızca file_exists/regex ile adım doğrulanamaz" % sid
+                    "step %s: at least one BEHAVIORAL check (run/pytest/exec) is required — "
+                    "a step cannot be verified with file_exists/regex alone" % sid
                 )
             for check in checks:
-                validate_check(check, sid, "adım %s" % sid)
+                validate_check(check, sid, "step %s" % sid)
 
         try:
             declared_outputs = output_index(step)
@@ -492,7 +492,7 @@ def validate_plan(data):
             declared_outputs = {}
         for name, output in declared_outputs.items():
             for check in output.get("verify", []):
-                validate_check(check, sid, "adım %s output %r" % (sid, name))
+                validate_check(check, sid, "step %s output %r" % (sid, name))
 
     try:
         effective_dependencies(data)
@@ -534,7 +534,7 @@ def norm_check(check):
 
 def _safe_path(base, relative):
     if not isinstance(relative, str) or not relative:
-        raise ValueError("path boş olmayan string olmalı")
+        raise ValueError("path must be a non-empty string")
     root = os.path.realpath(base)
     target = os.path.realpath(os.path.join(root, relative))
     try:
@@ -542,7 +542,7 @@ def _safe_path(base, relative):
     except ValueError:
         inside = False
     if not inside:
-        raise ValueError("path workspace dışına çıkıyor: %s" % relative)
+        raise ValueError("path escapes the workspace: %s" % relative)
     return target
 
 
@@ -595,7 +595,7 @@ def _windows_argv(command: str) -> list[str]:
         started = True
         index += 1
     if quoted:
-        raise ValueError("cmd ayrıştırılamadı: kapanmamış tırnak")
+        raise ValueError("cmd could not be parsed: unclosed quote")
     if started:
         argv.append("".join(current))
     return argv
@@ -609,9 +609,9 @@ def _legacy_split(cmd: str) -> list[str]:
         try:
             argv = shlex.split(cmd, posix=True)
         except ValueError as exc:
-            raise ValueError("cmd ayrıştırılamadı: %s" % exc) from exc
+            raise ValueError("cmd could not be parsed: %s" % exc) from exc
     if not argv:
-        raise ValueError("cmd boş komuta dönüştü")
+        raise ValueError("cmd parsed to an empty command")
     return argv
 
 
@@ -619,10 +619,10 @@ def _legacy_split(cmd: str) -> list[str]:
 #: entire command line to an interpreter, so ``;``, ``&&``, pipes and redirection
 #: became control flow instead of literal arguments.
 _SHELL_UNSUPPORTED = (
-    "shell yürütme kaldırıldı: 'shell': true artık kullanılamaz, çünkü komut "
-    "satırının tamamını bir kabuk yorumlayıcısına veriyordu. 'argv' kullanın "
-    "(argüman listesi; hiçbir karakter yorumlanmaz) veya 'cmd'yi koruyun — "
-    "'cmd' kabuk olmadan argv'ye ayrıştırılır."
+    "shell execution was removed: 'shell': true is no longer usable because it "
+    "passed the whole command line to a shell interpreter. Use 'argv' "
+    "(an argument list; no character is interpreted) or keep 'cmd' — "
+    "'cmd' is parsed to argv without a shell."
 )
 
 
@@ -639,13 +639,13 @@ def _command_spec(check: dict) -> list[str]:
     if "argv" in check:
         raw = check.get("argv")
         if not isinstance(raw, list) or not raw or not all(isinstance(arg, str) and bool(arg) for arg in raw):
-            raise ValueError("argv boş olmayan string listesi olmalı")
+            raise ValueError("argv must be a non-empty list of strings")
         # Every element was just validated as a non-empty str, so this preserves
         # the argv exactly while giving the caller a concretely typed list.
         return [arg for arg in raw if isinstance(arg, str)]
     cmd = check.get("cmd")
     if not isinstance(cmd, str) or not cmd.strip():
-        raise ValueError("cmd boş olmayan string olmalı")
+        raise ValueError("cmd must be a non-empty string")
     return _legacy_split(cmd)
 
 
@@ -768,34 +768,34 @@ def run_check(check, base, timeout=300):
             timeout_value = check.get("timeout", timeout)
             expected = check.get("expect_exit", 0)
             if isinstance(max_output, bool) or not isinstance(max_output, int) or not (1_024 <= max_output <= 50_000_000):
-                raise ValueError("max_output_bytes 1024..50000000 arası int olmalı")
+                raise ValueError("max_output_bytes must be an int between 1024..50000000")
             if isinstance(timeout_value, bool) or not isinstance(timeout_value, (int, float)) or not (0 < timeout_value <= 86_400):
-                raise ValueError("timeout 0..86400 arası sayı olmalı")
+                raise ValueError("timeout must be a number between 0..86400")
             if isinstance(expected, bool) or not isinstance(expected, int) or not (-255 <= expected <= 255):
-                raise ValueError("expect_exit -255..255 arası int olmalı")
+                raise ValueError("expect_exit must be an int between -255..255")
         except (TypeError, ValueError) as exc:
-            return False, "komut başlatılamadı: %s" % exc, ""
+            return False, "command could not start: %s" % exc, ""
         rc, state, output, overflow = _bounded_command(
             command, base, timeout_value, max_output
         )
         if state == "timeout":
-            return False, "komut zaman aşımına uğradı; process tree sonlandırıldı", output[-1500:]
+            return False, "command timed out; process tree terminated", output[-1500:]
         if state == "overflow":
-            return False, "çıktı limiti aşıldı (%s byte); process tree sonlandırıldı" % max_output, output[-1500:]
+            return False, "output limit exceeded (%s bytes); process tree terminated" % max_output, output[-1500:]
         if state == "start":
-            return False, "komut başlatılamadı: %s" % output, ""
+            return False, "command could not start: %s" % output, ""
         ok = rc == expected and not overflow
-        detail = "exit=%s (beklenen %s)" % (rc, expected)
+        detail = "exit=%s (expected %s)" % (rc, expected)
         pattern = check.get("output_regex")
         if pattern is not None:
             if not isinstance(pattern, str) or not pattern:
-                return False, "output_regex boş olmayan string olmalı", output[-1500:]
+                return False, "output_regex must be a non-empty string", output[-1500:]
             try:
                 matched = re.search(pattern, output) is not None
             except re.error as exc:
-                return False, "geçersiz output_regex: %s" % exc, output[-1500:]
+                return False, "invalid output_regex: %s" % exc, output[-1500:]
             ok = ok and matched
-            detail += "; output_regex=%s" % ("eşleşti" if matched else "EŞLEŞMEDİ")
+            detail += "; output_regex=%s" % ("matched" if matched else "DID NOT MATCH")
         return ok, detail, output[-1500:]
 
     if kind == "file_exists":
@@ -804,7 +804,7 @@ def run_check(check, base, timeout=300):
         except (KeyError, ValueError) as exc:
             return False, str(exc), ""
         ok = os.path.isfile(path)
-        return ok, "%s %s" % (check["path"], "VAR" if ok else "YOK"), ""
+        return ok, "%s %s" % (check["path"], "EXISTS" if ok else "MISSING"), ""
 
     if kind == "regex":
         try:
@@ -812,19 +812,19 @@ def run_check(check, base, timeout=300):
         except (KeyError, ValueError) as exc:
             return False, str(exc), ""
         if not os.path.isfile(path):
-            return False, "%s YOK" % check["path"], ""
+            return False, "%s MISSING" % check["path"], ""
         with open(path, encoding="utf-8", errors="replace") as handle:
             content = handle.read()
         pattern = check.get("pattern")
         if not isinstance(pattern, str) or not pattern:
-            return False, "regex pattern boş olmayan string olmalı", ""
+            return False, "regex pattern must be a non-empty string", ""
         try:
             ok = re.search(pattern, content) is not None
         except re.error as exc:
-            return False, "geçersiz regex: %s" % exc, ""
-        return ok, "pattern %s" % ("eşleşti" if ok else "EŞLEŞMEDİ"), ""
+            return False, "invalid regex: %s" % exc, ""
+        return ok, "pattern %s" % ("matched" if ok else "DID NOT MATCH"), ""
 
-    return False, "bilinmeyen kontrol tipi: %s" % kind, ""
+    return False, "unknown check type: %s" % kind, ""
 
 
 def evidence_path(base):
@@ -1024,7 +1024,7 @@ def maybe_rotate(base):
     key = runtime_key(base)
     if key is not None:
         _write_evidence_head(base, key)
-    print("NOT: evidence log arşivlendi (rotasyon) — %s" % name)
+    print("NOT: evidence log archived (rotation) — %s" % name)
 
 
 def append_evidence(base, rec):
@@ -1086,19 +1086,19 @@ def verify_chain(base):
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
-                return False, count, "satır %s JSON değil" % line_no
+                return False, count, "line %s is not JSON" % line_no
             if rec.get("prev") != prev:
-                return False, count, "satır %s: prev zinciri kopuk" % line_no
+                return False, count, "line %s: prev chain broken" % line_no
             actual = rec.get("hash")
             expected = hashlib.sha256(canonical(_evidence_hash_payload(rec)).encode("utf-8")).hexdigest()
             if actual != expected:
-                return False, count, "satır %s: hash uyuşmuyor (kurcalama?)" % line_no
+                return False, count, "line %s: hash mismatch (tampered?)" % line_no
             auth = rec.get("auth")
             if key is not None:
                 if not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec), auth):
-                    return False, count, "satır %s: HMAC doğrulaması başarısız" % line_no
+                    return False, count, "line %s: HMAC verification failed" % line_no
             elif auth is not None:
-                return False, count, "satır %s: authenticated evidence requires HMAC key" % line_no
+                return False, count, "line %s: authenticated evidence requires an HMAC key" % line_no
             prev = actual
             count += 1
     if key is not None:
@@ -1114,14 +1114,14 @@ def verify_chain(base):
 
 def _normalize_snapshot_rel(value):
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("snapshot yolu boş olmayan string olmalı")
+        raise ValueError("snapshot path must be a non-empty string")
     if os.path.isabs(value) or os.path.splitdrive(value)[0]:
-        raise ValueError("snapshot yolu göreli olmalı: %s" % value)
+        raise ValueError("snapshot path must be relative: %s" % value)
     parts = value.replace("\\", "/").split("/")
     if any(part in {"", ".", ".."} for part in parts):
-        raise ValueError("snapshot yolu güvenli basename parçalarından oluşmalı: %s" % value)
+        raise ValueError("snapshot path must consist of safe basename parts: %s" % value)
     if parts[0] in _FINGERPRINT_SKIP_DIRS:
-        raise ValueError("auditor/git/cache metadata snapshot kapsamına alınamaz: %s" % value)
+        raise ValueError("auditor/git/cache metadata cannot be included in a snapshot: %s" % value)
     return "/".join(parts)
 
 
@@ -1133,21 +1133,21 @@ def _snapshot_lexical_path(base, rel):
         if os.path.commonpath([root, target]) != root:
             raise ValueError
     except ValueError as exc:
-        raise ValueError("snapshot yolu workspace dışına çıkıyor: %s" % rel) from exc
+        raise ValueError("snapshot path escapes the workspace: %s" % rel) from exc
     parent = os.path.realpath(os.path.dirname(target))
     try:
         if os.path.commonpath([root, parent]) != root:
             raise ValueError
     except ValueError as exc:
-        raise ValueError("snapshot parent symlink workspace dışına çıkıyor: %s" % rel) from exc
+        raise ValueError("snapshot parent symlink escapes the workspace: %s" % rel) from exc
     return target
 
 
 def _safe_snapshot_symlink_target(base, rel, target):
     if not isinstance(target, str) or not target:
-        raise ValueError("symlink hedefi boş olamaz: %s" % rel)
+        raise ValueError("symlink target must not be empty: %s" % rel)
     if os.path.isabs(target) or os.path.splitdrive(target)[0]:
-        raise ValueError("snapshot dış hedefli symlink kabul etmez: %s" % rel)
+        raise ValueError("snapshot does not accept external-target symlinks: %s" % rel)
     root = os.path.realpath(base)
     link_path = _snapshot_lexical_path(base, rel)
     resolved = os.path.realpath(os.path.join(os.path.dirname(link_path), target))
@@ -1155,7 +1155,7 @@ def _safe_snapshot_symlink_target(base, rel, target):
         if os.path.commonpath([root, resolved]) != root:
             raise ValueError
     except ValueError as exc:
-        raise ValueError("symlink hedefi workspace dışına çıkıyor: %s" % rel) from exc
+        raise ValueError("symlink target escapes the workspace: %s" % rel) from exc
     return target
 
 
@@ -1177,7 +1177,7 @@ def _snapshot_manifest_entry(base, rel):
                 digest.update(chunk)
         entry["sha256"] = digest.hexdigest()
     else:
-        raise ValueError("snapshot yalnız regular file/dir/symlink destekler: %s" % rel)
+        raise ValueError("snapshot supports only regular file/dir/symlink: %s" % rel)
     return entry
 
 
@@ -1261,7 +1261,7 @@ def make_snapshot(base, plan, label="snapshot"):
         "archive": os.path.basename(zpath),
         "scope": scope,
     })
-    print("ANLIK GÖRÜNTÜ: %s (%s kayıt)" % (os.path.basename(zpath), len(manifest["entries"])))
+    print("SNAPSHOT: %s (%s entries)" % (os.path.basename(zpath), len(manifest["entries"])))
     return zpath
 
 
@@ -1296,23 +1296,23 @@ def _restore_snapshot_v3(base, archive, manifest):
     absent = manifest.get("absent", [])
     scope = manifest.get("scope")
     if scope not in {"full-workspace", "explicit"} or not isinstance(entries, list):
-        raise ValueError("snapshot v3 manifest geçersiz")
+        raise ValueError("snapshot v3 manifest is invalid")
     if not isinstance(roots, list) or not isinstance(absent, list):
-        raise ValueError("snapshot v3 roots/absent listesi geçersiz")
+        raise ValueError("snapshot v3 roots/absent list is invalid")
 
     by_path = {}
     for entry in entries:
         if not isinstance(entry, dict):
-            raise ValueError("snapshot manifest kaydı obje olmalı")
+            raise ValueError("snapshot manifest entry must be an object")
         rel = _normalize_snapshot_rel(entry.get("path"))
         if rel in by_path:
             raise ValueError("snapshot manifest duplicate path: %s" % rel)
         kind = entry.get("type")
         if kind not in {"file", "dir", "symlink"}:
-            raise ValueError("snapshot manifest type geçersiz: %s" % rel)
+            raise ValueError("snapshot manifest type is invalid: %s" % rel)
         mode = entry.get("mode")
         if isinstance(mode, bool) or not isinstance(mode, int) or mode < 0:
-            raise ValueError("snapshot mode geçersiz: %s" % rel)
+            raise ValueError("snapshot mode is invalid: %s" % rel)
         if kind == "file" and not isinstance(entry.get("sha256"), str):
             raise ValueError("snapshot file hash eksik: %s" % rel)
         if kind == "symlink":
@@ -1326,16 +1326,16 @@ def _restore_snapshot_v3(base, archive, manifest):
         for index in range(1, len(parts)):
             parent = "/".join(parts[:index])
             if parent in by_path and by_path[parent]["type"] != "dir":
-                raise ValueError("snapshot child non-directory parent altında: %s" % rel)
+                raise ValueError("snapshot child sits under a non-directory parent: %s" % rel)
 
     names = archive.namelist()
     if len(names) != len(set(names)):
-        raise ValueError("snapshot archive duplicate member içeriyor")
+        raise ValueError("snapshot archive contains a duplicate member")
     expected_members = {SNAPSHOT_MANIFEST} | {
         rel for rel, entry in by_path.items() if entry["type"] == "file"
     }
     if set(names) != expected_members:
-        raise ValueError("snapshot archive manifest dışı/eksik payload içeriyor")
+        raise ValueError("snapshot archive contains off-manifest/missing payload")
 
     current = _current_snapshot_entries(base)
     allowed = set(by_path)
@@ -1376,7 +1376,7 @@ def _restore_snapshot_v3(base, archive, manifest):
                     digest.update(chunk)
                     dst.write(chunk)
             if digest.hexdigest() != entry["sha256"]:
-                raise ValueError("snapshot hash uyuşmuyor: %s" % rel)
+                raise ValueError("snapshot hash mismatch: %s" % rel)
             if os.name != "nt":
                 os.chmod(target, entry["mode"])
         restored.append(rel)
@@ -1389,26 +1389,26 @@ def _restore_snapshot_v3(base, archive, manifest):
     for rel, entry in by_path.items():
         target = _snapshot_lexical_path(base, rel)
         if not os.path.lexists(target) or _entry_kind(target) != entry["type"]:
-            raise ValueError("snapshot restore type doğrulaması başarısız: %s" % rel)
+            raise ValueError("snapshot restore type verification failed: %s" % rel)
         if entry["type"] == "symlink" and os.readlink(target) != entry["target"]:
-            raise ValueError("snapshot symlink doğrulaması başarısız: %s" % rel)
+            raise ValueError("snapshot symlink verification failed: %s" % rel)
         if entry["type"] == "file":
             digest = hashlib.sha256()
             with open(target, "rb") as handle:
                 for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                     digest.update(chunk)
             if digest.hexdigest() != entry["sha256"]:
-                raise ValueError("snapshot restore hash doğrulaması başarısız: %s" % rel)
+                raise ValueError("snapshot restore hash verification failed: %s" % rel)
     for rel in absent:
         if os.path.lexists(_snapshot_lexical_path(base, rel)):
-            raise ValueError("snapshot absent path geri yüklenemedi: %s" % rel)
+            raise ValueError("snapshot absent path could not be restored: %s" % rel)
     return restored
 
 
 def _restore_snapshot_v2(base, archive, manifest):
     entries = manifest.get("files", [])
     if not isinstance(entries, list):
-        raise ValueError("snapshot manifest files listesi geçersiz")
+        raise ValueError("snapshot manifest files list is invalid")
     allowed = {_normalize_snapshot_rel(item.get("path")) for item in entries if isinstance(item, dict)}
     if manifest.get("scope") == "full-workspace":
         current = _current_snapshot_entries(base)
@@ -1418,7 +1418,7 @@ def _restore_snapshot_v2(base, archive, manifest):
     restored = []
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
-            raise ValueError("snapshot manifest kaydı geçersiz")
+            raise ValueError("snapshot manifest entry is invalid")
         rel = _normalize_snapshot_rel(entry["path"])
         target = _snapshot_lexical_path(base, rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -1429,7 +1429,7 @@ def _restore_snapshot_v2(base, archive, manifest):
             os.symlink(target_value, target)
         else:
             if rel not in archive.namelist():
-                raise ValueError("snapshot archive dosyası eksik: %s" % rel)
+                raise ValueError("snapshot archive file missing: %s" % rel)
             digest = hashlib.sha256()
             with archive.open(rel) as src, open(target, "wb") as dst:
                 while True:
@@ -1440,7 +1440,7 @@ def _restore_snapshot_v2(base, archive, manifest):
                     dst.write(chunk)
             expected = entry.get("sha256")
             if expected and digest.hexdigest() != expected:
-                raise ValueError("snapshot hash uyuşmuyor: %s" % rel)
+                raise ValueError("snapshot hash mismatch: %s" % rel)
             if os.name != "nt" and isinstance(entry.get("mode"), int):
                 os.chmod(target, entry["mode"])
         restored.append(rel)
@@ -1450,17 +1450,17 @@ def _restore_snapshot_v2(base, archive, manifest):
 def restore_snapshot(base, zpath):
     with zipfile.ZipFile(zpath) as archive:
         if SNAPSHOT_MANIFEST not in archive.namelist():
-            raise ValueError("legacy snapshot manifest içermiyor; güvenli rollback için yeniden snapshot alın")
+            raise ValueError("legacy snapshot has no manifest; take a new snapshot for safe rollback")
         manifest = json.loads(archive.read(SNAPSHOT_MANIFEST).decode("utf-8"))
         if not isinstance(manifest, dict):
-            raise ValueError("snapshot manifest obje olmalı")
+            raise ValueError("snapshot manifest must be an object")
         version = manifest.get("format_version")
         if version == 3:
             names = _restore_snapshot_v3(base, archive, manifest)
         elif version == 2:
             names = _restore_snapshot_v2(base, archive, manifest)
         else:
-            raise ValueError("desteklenmeyen snapshot formatı: %r" % version)
+            raise ValueError("unsupported snapshot format: %r" % version)
     append_evidence(base, {
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
         "mode": "rollback",
@@ -1470,7 +1470,7 @@ def restore_snapshot(base, zpath):
         "files": len(names),
         "archive": os.path.basename(zpath),
     })
-    print("GERİ YÜKLEME: %s → %s kayıt proje üzerine geri yüklendi." % (os.path.basename(zpath), len(names)))
+    print("RESTORE: %s → %s entries restored onto the project." % (os.path.basename(zpath), len(names)))
 
 
 def latest_snapshot(base):
@@ -1485,13 +1485,13 @@ def latest_snapshot(base):
 def print_table(plan, name=None):
     if name:
         print("PLAN: %s" % name)
-    print("%-4s %-42s %-9s %s" % ("ID", "ADIM", "DURUM", "KONTROL"))
+    print("%-4s %-42s %-9s %s" % ("ID", "STEP", "STATUS", "CHECKS"))
     print("-" * 70)
     for step in plan["steps"]:
         title = (step.get("title") or "")[:40]
         checks = step.get("verify", [])
         print("%-4s %-42s %-9s %s" % (
-            step["id"], title, step.get("status", "pending").upper(), "%s kontrol" % len(checks),
+            step["id"], title, step.get("status", "pending").upper(), "%s checks" % len(checks),
         ))
 
 
@@ -1558,7 +1558,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
         if output_problems:
             raise PlanGraphError("; ".join(output_problems))
     except (PlanGraphError, ValueError) as exc:
-        print("[FAIL] plan/runtime contract geçersiz: %s" % exc)
+        print("[FAIL] plan/runtime contract is invalid: %s" % exc)
         return False
 
     by_id = {step["id"]: step for step in plan["steps"] if isinstance(step, dict)}
@@ -1614,14 +1614,14 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
                 "status": "blocked",
                 "reason": "prerequisite step or required output is not independently verified",
             })
-            print("[BLOK] adım %s: prerequisite/output doğrulaması geçmedi" % sid)
+            print("[BLOCKED] step %s: prerequisite/output validation failed" % sid)
             continue
 
         attempt = 1
         if mode == "run":
             attempt = count_failed_attempts(base, sid, plan=key) + 1
             if attempt > max_attempts and not force:
-                print("[ATLADI] adım %s: %s önceki gerçek başarısız deneme — %s sınırı aşıldı." % (
+                print("[SKIPPED] step %s: %s previous genuine failed attempts — %s limit exceeded." % (
                     sid, step.get("title", ""), max_attempts,
                 ))
                 passed_this_run[sid] = False
@@ -1676,16 +1676,16 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
         append_evidence(base, rec)
 
         mark = "OK " if ok_all else "FAIL"
-        label = "adım %s: %s" % (sid, step.get("title", ""))
+        label = "step %s: %s" % (sid, step.get("title", ""))
         if mode == "run":
-            label += " (deneme %s/%s)" % (min(attempt, max_attempts), max_attempts)
+            label += " (attempt %s/%s)" % (min(attempt, max_attempts), max_attempts)
         print("[%s] %s" % (mark, label))
         for result in results:
-            print("       - %s | %s" % ("geçti" if result["passed"] else "KALDI", result["detail"]))
+            print("       - %s | %s" % ("passed" if result["passed"] else "FAILED", result["detail"]))
             if not result["passed"] and result["output_tail"]:
-                print("         çıktı: %s" % result["output_tail"][-400:].replace("\n", " | "))
+                print("         output: %s" % result["output_tail"][-400:].replace("\n", " | "))
         for output in output_results:
-            print("       - output %s | %s" % (output["name"], "geçti" if output["passed"] else "KALDI"))
+            print("       - output %s | %s" % (output["name"], "passed" if output["passed"] else "FAILED"))
 
     save_plan(base, plan, name)
     if mode == "audit":
@@ -1729,9 +1729,9 @@ def cmd_validate(args):
     errs = validate_plan(plan)
     if errs:
         for err in errs:
-            print("ŞEMA HATASI: %s" % err)
+            print("SCHEMA ERROR: %s" % err)
         return 1
-    print("Şema geçerli: %s adım" % len(plan["steps"]))
+    print("Schema valid: %s steps" % len(plan["steps"]))
     return 0
 
 
@@ -1744,13 +1744,13 @@ def cmd_run(args):
         return 2
     ok, _count, problem = verify_chain(args.dir)
     if not ok:
-        print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
+        print("EVIDENCE CHAIN TAMPERED: %s" % problem)
         return 2
     plan = load_plan(args.dir, args.plan)
     errs = validate_plan(plan)
     if errs:
         for err in errs:
-            print("ŞEMA HATASI: %s" % err)
+            print("SCHEMA ERROR: %s" % err)
         return 1
     ids = args.ids or None
     target_ids = [step["id"] for step in plan["steps"] if step.get("status") != "verified"] if ids is None else ids
@@ -1759,7 +1759,7 @@ def cmd_run(args):
     try:
         require_plan_trust(args.dir, plan, args.plan)
     except PlanTrustError as exc:
-        print("GÜVENLİK: %s" % exc)
+        print("SECURITY: %s" % exc)
         return 2
     all_ok = audit_steps(args.dir, plan, ids=target_ids, mode="run", name=args.plan, force=args.force)
     return 0 if all_ok else 1
@@ -1774,27 +1774,27 @@ def cmd_audit(args):
         return 2
     ok, _count, problem = verify_chain(args.dir)
     if not ok:
-        print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
+        print("EVIDENCE CHAIN TAMPERED: %s" % problem)
         return 2
     plan = load_plan(args.dir, args.plan)
     errs = validate_plan(plan)
     if errs:
         for err in errs:
-            print("ŞEMA HATASI: %s" % err)
+            print("SCHEMA ERROR: %s" % err)
         return 1
     try:
         require_plan_trust(args.dir, plan, args.plan)
     except PlanTrustError as exc:
-        print("GÜVENLİK: %s" % exc)
+        print("SECURITY: %s" % exc)
         return 2
-    print("TAM DENETİM: tüm adımlar taze subprocess ile yeniden test ediliyor...\n")
+    print("FULL AUDIT: all steps are being retested in fresh subprocesses...\n")
     all_ok = audit_steps(args.dir, plan, ids=None, mode="audit", name=args.plan)
     print()
     print_table(plan, args.plan)
     if not all_ok:
-        print("\nSONUÇ: audit KALDI — görev bitmiş sayılmaz.")
+        print("\nRESULT: audit FAILED — the task is not counted as done.")
         return 1
-    print("\nSONUÇ: audit GEÇTİ — tüm adımlar kanıtlı.")
+    print("\nRESULT: audit PASSED — every step is proven.")
     return 0
 
 
@@ -1802,19 +1802,19 @@ def cmd_status(args):
     ok, count, problem = verify_chain(args.dir)
     plan = load_plan(args.dir, args.plan)
     print_table(plan, args.plan)
-    print("\nevidence kaydı: %s" % (count if ok else "ZİNCİR KOPUK"))
+    print("\nevidence records: %s" % (count if ok else "CHAIN BROKEN"))
     if not ok:
-        print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
+        print("EVIDENCE CHAIN TAMPERED: %s" % problem)
         return 2
     done = sum(1 for step in plan["steps"] if step.get("status") == "verified")
-    print("özet: %s/%s adım verified" % (done, len(plan["steps"])))
+    print("summary: %s/%s steps verified" % (done, len(plan["steps"])))
     return 0
 
 
 def cmd_snapshot(args):
     ok, _count, problem = verify_chain(args.dir)
     if not ok:
-        print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
+        print("EVIDENCE CHAIN TAMPERED: %s" % problem)
         return 2
     plan = load_plan(args.dir, args.plan)
     return 0 if make_snapshot(args.dir, plan) else 1
@@ -1823,21 +1823,21 @@ def cmd_snapshot(args):
 def cmd_rollback(args):
     ok, _count, problem = verify_chain(args.dir)
     if not ok:
-        print("KAYIT ZİNCİRİ KURCALANMIŞ: %s" % problem)
+        print("EVIDENCE CHAIN TAMPERED: %s" % problem)
         return 2
     if args.to:
         candidate = os.path.join(snapshots_dir(args.dir), args.to)
         zpath = candidate if os.path.isfile(candidate) else (args.to if os.path.isfile(args.to) else None)
         if not zpath:
-            sys.exit("HATA: anlık görüntü bulunamadı: %s" % args.to)
+            sys.exit("ERROR: snapshot not found: %s" % args.to)
     else:
         zpath = latest_snapshot(args.dir)
         if not zpath:
-            sys.exit("HATA: anlık görüntü yok — önce 'snapshot' çalıştır.")
+            sys.exit("ERROR: no snapshot exists — run 'snapshot' first.")
     try:
         restore_snapshot(args.dir, zpath)
     except (ValueError, zipfile.BadZipFile, json.JSONDecodeError, OSError) as exc:
-        print("HATA: güvenli rollback başarısız: %s" % exc)
+        print("ERROR: safe rollback failed: %s" % exc)
         return 1
     return 0
 
@@ -1854,12 +1854,12 @@ def main():
     for name in ("validate", "run", "audit", "status", "snapshot", "rollback"):
         item = sub.add_parser(name)
         item.add_argument("dir", nargs="?", default=".", help="proje dizini")
-        item.add_argument("--plan", help="plan adı (.plan-auditor/plans/<ad>.json); varsayılan: plan.json")
+        item.add_argument("--plan", help="plan name (.plan-auditor/plans/<name>.json); default: plan.json")
         if name == "run":
-            item.add_argument("ids", nargs="*", type=int, help="denetlenecek adım id'leri")
-            item.add_argument("--force", action="store_true", help="%s deneme sınırını zorla aş" % MAX_ATTEMPTS)
+            item.add_argument("ids", nargs="*", type=int, help="step ids to audit")
+            item.add_argument("--force", action="store_true", help="force past the %s attempt limit" % MAX_ATTEMPTS)
         if name == "rollback":
-            item.add_argument("--to", help="geri yüklenecek zip; varsayılan: en yenisi")
+            item.add_argument("--to", help="zip to restore; default: the most recent one")
 
     args = parser.parse_args()
     args.dir = os.path.abspath(args.dir)

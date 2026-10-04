@@ -97,14 +97,14 @@ plan-auditor audit .
 
 ```console
 $ plan-auditor run .
-[OK ] adım 1: fib.py defines a correct fib() function (deneme 1/3)
-       - geçti | fib.py VAR
-       - geçti | pattern eşleşti
-       - geçti | exit=0 (beklenen 0)
-       - output fib-implementation | geçti
-[OK ] adım 2: pytest regression for fib() passes (deneme 1/3)
-       - geçti | test_fib.py VAR
-       - geçti | exit=0 (beklenen 0)
+[OK ] step 1: fib.py defines a correct fib() function (attempt 1/3)
+       - passed | fib.py EXISTS
+       - passed | pattern matched
+       - passed | exit=0 (expected 0)
+       - output fib-implementation | passed
+[OK ] step 2: pytest regression for fib() passes (attempt 1/3)
+       - passed | test_fib.py EXISTS
+       - passed | exit=0 (expected 0)
 ```
 
 Now break the implementation and watch the gate refuse to pass. Replace the body of
@@ -112,16 +112,16 @@ Now break the implementation and watch the gate refuse to pass. Replace the body
 
 ```console
 $ plan-auditor run .
-[FAIL] adım 1: fib.py defines a correct fib() function (deneme 1/3)
-       - geçti | fib.py VAR
-       - geçti | pattern eşleşti
-       - KALDI | exit=1 (beklenen 0)
+[FAIL] step 1: fib.py defines a correct fib() function (attempt 1/3)
+       - passed | fib.py EXISTS
+       - passed | pattern matched
+       - FAILED | exit=1 (expected 0)
 ...
-       - output fib-implementation | geçti
-[BLOK] adım 2: prerequisite/output doğrulaması geçmedi
+       - output fib-implementation | passed
+[BLOCKED] step 2: prerequisite/output validation failed
 ```
 
-**Scoped omission:** the single elided line is the tool's `çıktı:` block, which
+**Scoped omission:** the single elided line is the tool's `output:` block, which
 carries the captured Python traceback as one physical output line joined with
 `" | "`. Its interior frames depend on your Python version — 3.11 and newer add
 the offending source line and a caret — so quoting it verbatim would be correct on
@@ -134,18 +134,18 @@ is what `npx plan-auditor` resolves to:
 
 ```console
 $ node bin/plan-auditor.js run /path/to/examples/fib
-[FAIL] adım 1: fib.py defines a correct fib() function (deneme 1/3)
-       - geçti | fib.py VAR
-       - geçti | pattern eşleşti
-       - KALDI | exit=1 (beklenen 0)
+[FAIL] step 1: fib.py defines a correct fib() function (attempt 1/3)
+       - passed | fib.py EXISTS
+       - passed | pattern matched
+       - FAILED | exit=1 (expected 0)
 ...
-       - output fib-implementation | geçti
-[BLOK] adım 2: prerequisite/output doğrulaması geçmedi
+       - output fib-implementation | passed
+[BLOCKED] step 2: prerequisite/output validation failed
 $ echo $?
 1
 ```
 
-The same scoped omission applies to the launcher's `çıktı:` line; the launcher exit
+The same scoped omission applies to the launcher's `output:` line; the launcher exit
 code of `1` is reproduced by `tests/test_npm_launcher.py`, which also asserts that
 a passing `run` yields `0` and that an unstartable Python fails closed.
 

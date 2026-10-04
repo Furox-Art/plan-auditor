@@ -44,9 +44,9 @@ UNVERIFIED_ADOPTION = [
 ]
 
 # Fraction claims are the shape a fabricated comparison table takes. The CLI's own
-# attempt counter prints `deneme 1/3`, so that specific spelling is exempt.
+# attempt counter prints `attempt 1/3`, so that specific spelling is exempt.
 COMPARATIVE_FRACTION = re.compile(r"\b\d+\s*/\s*\d+\b")
-ATTEMPT_COUNTER = re.compile(r"deneme\s*\d+\s*/\s*\d+", re.I)
+ATTEMPT_COUNTER = re.compile(r"attempt\s*\d+\s*/\s*\d+", re.I)
 
 UNVERIFIED_RESULTS = [
     re.compile(r"\bwe\s+(?:tested|ran|measured|benchmarked|surveyed)\b", re.I),
@@ -258,7 +258,7 @@ def test_docs_make_no_unverified_adoption_claims(source: Path) -> None:
 
 
 def test_benchmark_doc_makes_no_unverified_comparative_claims() -> None:
-    text = ATTEMPT_COUNTER.sub("deneme", _read(DOCS / "benchmark.md"))
+    text = ATTEMPT_COUNTER.sub("attempt", _read(DOCS / "benchmark.md"))
     for pattern in UNVERIFIED_RESULTS:
         match = pattern.search(text)
         assert match is None, f"benchmark.md: unverified claim {match.group(0)!r}"

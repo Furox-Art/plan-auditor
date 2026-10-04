@@ -79,7 +79,7 @@ def test_output_limit_kills_process_tree_before_descendant_escapes(tmp_path: Pat
         "timeout": 10,
     }, str(tmp_path))
     assert not ok
-    assert "çıktı limiti" in detail
+    assert "output limit" in detail
     time.sleep(1.4)
     assert not marker.exists()
 
@@ -93,7 +93,7 @@ def test_timeout_kills_process_tree_before_descendant_escapes(tmp_path: Path):
         "max_output_bytes": 4096,
     }, str(tmp_path))
     assert not ok
-    assert "zaman aşımı" in detail
+    assert "timed out" in detail
     time.sleep(1.4)
     assert not marker.exists()
 

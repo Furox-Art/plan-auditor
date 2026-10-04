@@ -180,7 +180,7 @@ def test_shell_true_is_rejected_by_the_schema(tmp_path: Path):
         {"type": "run", "cmd": MARKER_CMD, "shell": True, "expect_exit": 0}
     ]
     errors = core.validate_plan(plan)
-    assert any("shell" in item and "kaldırıldı" in item for item in errors), errors
+    assert any("shell" in item and "was removed" in item for item in errors), errors
 
 
 def test_shell_true_is_rejected_at_execution(tmp_path: Path):
@@ -196,7 +196,7 @@ def test_shell_true_is_rejected_at_execution(tmp_path: Path):
     assert any("shell" in err for err in core.validate_plan(plan))
     ok, detail, _ = core.run_check(core.norm_check(plan["steps"][0]["verify"][0]), str(root))
     assert ok is False
-    assert "kaldırıldı" in detail
+    assert "was removed" in detail
     assert not _marker(root).exists()
 
 
@@ -205,7 +205,7 @@ def test_shell_true_is_rejected_for_exec_checks(tmp_path: Path):
     check = {"type": "exec", "cmd": MARKER_CMD, "shell": True, "expect_exit": 0}
     with pytest.raises(ValueError) as excinfo:
         core.norm_check(check)
-    assert "kaldırıldı" in str(excinfo.value)
+    assert "was removed" in str(excinfo.value)
     assert not _marker(root).exists()
 
 
@@ -261,7 +261,7 @@ def test_command_spec_never_returns_a_shell_flag(tmp_path: Path):
     assert core._command_spec({"cmd": "python -c print"}) == ["python", "-c", "print"]
     with pytest.raises(ValueError) as excinfo:
         core._command_spec({"cmd": "echo hi", "shell": True})
-    assert "kaldırıldı" in str(excinfo.value)
+    assert "was removed" in str(excinfo.value)
 
 
 def test_bounded_command_executes_without_a_shell(tmp_path: Path):

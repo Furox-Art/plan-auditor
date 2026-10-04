@@ -81,10 +81,10 @@ def validate_plan_name(name: str | None) -> str | None:
     value = str(name)
     if value in {".", ".."} or not PLAN_NAME_RE.fullmatch(value):
         raise ValueError(
-            "geçersiz plan adı; yalnız [A-Za-z0-9._-] ve güvenli basename kullanılabilir"
+            "invalid plan name; only [A-Za-z0-9._-] and a safe basename are allowed"
         )
     if "/" in value or "\\" in value:
-        raise ValueError("geçersiz plan adı; yol ayırıcı içeremez")
+        raise ValueError("invalid plan name; cannot contain a path separator")
     return value
 
 
@@ -168,5 +168,5 @@ def seal_path(base: str | os.PathLike[str], name: str | None = None) -> str:
     container = os.path.realpath(os.path.join(root, PG_DIR, "seals"))
     target = os.path.realpath(os.path.join(container, safe + ".json"))
     if os.path.commonpath([container, target]) != container:
-        raise ValueError("seal yolu .plan-auditor/seals dışına çıkıyor")
+        raise ValueError("seal path escapes .plan-auditor/seals")
     return target

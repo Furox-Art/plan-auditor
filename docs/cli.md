@@ -141,16 +141,16 @@ stdout, verbatim, for a workspace with no `README.md`:
 
 ```console
 $ plan-auditor run . 1
-[FAIL] adım 1: the sentinel script exits nonzero (deneme 1/3)
-       - KALDI | exit=3 (beklenen 0)
+[FAIL] step 1: the sentinel script exits nonzero (attempt 1/3)
+       - FAILED | exit=3 (expected 0)
 $ plan-auditor run . 1
-[FAIL] adım 1: the sentinel script exits nonzero (deneme 2/3)
-       - KALDI | exit=3 (beklenen 0)
+[FAIL] step 1: the sentinel script exits nonzero (attempt 2/3)
+       - FAILED | exit=3 (expected 0)
 $ plan-auditor run . 1
-[FAIL] adım 1: the sentinel script exits nonzero (deneme 3/3)
-       - KALDI | exit=3 (beklenen 0)
+[FAIL] step 1: the sentinel script exits nonzero (attempt 3/3)
+       - FAILED | exit=3 (expected 0)
 $ plan-auditor run . 1
-[ATLADI] adım 1: the sentinel script exits nonzero önceki gerçek başarısız deneme — 3 sınırı aşıldı.
+[SKIPPED] step 1: the sentinel script exits nonzero previous genuine failed attempts — 3 limit exceeded.
 ```
 
 Every invocation exits `1`. Nothing above is elided. The check is
