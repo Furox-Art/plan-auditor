@@ -57,9 +57,12 @@ The examples invoke the interpreter as `python`. On a system that only ships
 `python3`, activate a virtualenv that provides `python` or change the plan's `cmd`
 to `python3`.
 
-**Release status:** `2.4.2` is current on both registries. npm has no provenance
-attestation and returns `404` for one; PyPI publishes with a PEP 740 attestation.
-The full check, including which older versions were defective, is in
+**Release status:** `2.4.3` is current on both registries, and the two do **not** offer the
+same guarantee. PyPI publishes every artifact with a
+[PEP 740](https://peps.python.org/pep-0740/) provenance attestation. npm has **no**
+provenance attestation and its attestations endpoint returns `404` for one; npm's
+`dist.signatures` block is a registry transport signature, not build provenance. The full
+measurement, per channel, is in
 [docs/release-status.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/release-status.md).
 
 ## Quick start (verified, 5 minutes)
@@ -348,8 +351,11 @@ yourself with `python -m pip install mkdocs-material && mkdocs serve`.
 - It verifies that *declared, checkable* requirements were met. Domain meaning that
   cannot be a deterministic check is reviewed by a human, not guessed.
 - Progress output is Turkish-only; the JSON verdict is the stable interface.
-- The npm package needs Python on `PATH` and ships no Sigstore attestation, unlike
-  the PyPI release.
+- The npm package needs Python on `PATH` and carries **no** Sigstore build
+  attestation: the npm attestations endpoint returns `404` for `2.4.3`. Its
+  `dist.signatures` block is a registry transport signature and is **not** build
+  provenance, so verify the npm tarball against `dist.integrity` instead.
+  PyPI does carry a PEP 740 provenance attestation for every artifact.
 - No comparison against other tools has been measured, no telemetry is collected,
   and no download or usage figure is printed anywhere in this repository.
 - Maintained by one person, pre-1.0, with no external contributors yet. That means
