@@ -99,9 +99,7 @@ for path in sorted(WORKFLOWS.glob("*.yml")):
         # scope; only `contents` (and the other content scopes) can rewrite the
         # repository, so only those count here.
         content_scopes = ("contents", "issues", "pull-requests", "packages")
-        declares_write = any(
-            scope in perms and perms[scope] == "write" for scope in content_scopes
-        )
+        declares_write = any(scope in perms and perms[scope] == "write" for scope in content_scopes)
 
         # Per GitHub's workflow-syntax reference, a job-level `permissions` block
         # *replaces* the workflow-level one for that job rather than intersecting
