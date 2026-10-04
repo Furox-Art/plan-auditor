@@ -44,3 +44,8 @@ pack.json
 # mypy cache from the type ratchet job
 .mypy_cache/
 .ruff_cache/
+
+# Upstream commit lookups cached by .github/scripts/check_action_pins.py. The
+# cache exists so repeated local runs and a cold CI runner do not re-query the
+# API; it is machine-local state and must never be committed.
+.action-pin-cache/
