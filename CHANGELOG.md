@@ -4,6 +4,61 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+### Documentation
+
+- **README reduced from 362 to 248 lines with no surface lost.** The previous
+  release traded a line target for coverage and stopped at 356, on the reasoning
+  that the layer table, command tables and artifact list were the coverage gap.
+  That was right about the priority and wrong about the arithmetic: the reduction
+  had not been attempted. Detail now lives on the docs site and the README keeps a
+  scannable map plus links. Measured against the same 66-surface checklist derived
+  from the code, **0 surfaces are undocumented**: 37 still appear in the README and
+  29 moved to a named docs page.
+  - The L0-L14 layer table became a five-row band map. It still names all fifteen
+    layers, and the two facts that carry the design are now stated in the prose
+    rather than buried in a row: **L10 (`scripts/audit_check.py`) is the only
+    component that can mark a step `verified`** and **L13 (`gate.py`) is the only
+    one that emits a final `PASS`/`FAIL`/`UNKNOWN`**. Per-layer detail was already
+    in `docs/architecture.md`.
+  - The fourteen workspace artifacts moved to a new **`docs/workspace-artifacts.md`**,
+    which also records what is *not* written and why the files are separated
+    (append-only evidence, host-owned input separate from agent-owned state, and a
+    stale verdict being detectable). The README still says the tool writes under
+    `.plan-auditor/` and links the page.
+  - The full command table was already in `docs/cli.md`; the README now names the
+    four entry points and the five check types, and `docs/cli.md` gained an explicit
+    `0`/`1`/`2`/`3` exit-code legend so the codes have one canonical home.
+  - `## Reference` was folded into `## Documentation` rather than kept as a second
+    index. The heading name is unchanged on purpose: a test splits the README on it.
+  - The `## Use it in CI` yaml block became one prose line pointing at
+    `docs/integrations.md`.
+  - The quick start keeps the structure `tests/test_readme_quickstart.py` requires:
+    exactly two JSON blocks, one console block, and the same four commands. Both
+    plan files and the transcript were compressed using the `...` elision the test
+    already tolerates. **The `request_sha256` changed** because the documented
+    `task` string was shortened, and it was re-derived by running the walkthrough,
+    not computed: `d39e577eb0577d8c0c81231fdd7fc559d1c6045ecc5e5bd3a00e7e8f2f49197b`.
+  - `docs/index.md` now links `workspace-artifacts.md` and `release-status.md`,
+    which it did not, so the docs home is a real index rather than a partial one.
+
+- **`docs/check_readme_size.py` guards against re-inflation.** It fails when
+  `README.md` exceeds a recorded line and word budget, **and** when any single
+  `## ` section exceeds its own budget, so one section cannot quietly absorb the
+  whole allowance. `docs/readme_size_baseline.json` holds the recorded budget
+  (248 lines, 1490 words) and `--update` re-records it, printing a warning when a
+  budget is raised rather than lowered. Verified by mutation: appending twelve
+  invented bullets to `Honest limits` exits 1 naming that section, and a four-line
+  prose expansion of `Documentation` exits 1 naming lines, words and that section.
+  **It is not wired into CI by this change** — adding the job means editing
+  `.github/workflows/`, which is outside this work's file ownership. Until it is
+  wired, the guard only runs when invoked by hand.
+
+- The `2.4.3` attestation facts were re-measured rather than assumed: the PyPI
+  per-file provenance endpoint returns `200` for both the wheel and the sdist, and
+  the npm attestations endpoint returns `404`. The README keeps the two-line
+  statement naming both channels, and `test_readme_states_the_npm_attestation_gap`
+  still passes against it.
+
 ### Fixed
 
 - **Supply-chain claims are now measured, scoped and separated by mechanism.** The three

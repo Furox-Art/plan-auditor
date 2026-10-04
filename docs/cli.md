@@ -13,6 +13,20 @@ usage: plan-auditor [-h]
 Plan Auditor - independent AI agent verification supervisor.
 ```
 
+## Exit codes
+
+One legend for every entry point. The npm launcher mirrors these and fails closed
+with a non-zero code if Python cannot be started at all.
+
+| Code | Meaning |
+|---|---|
+| `0` | **Proven.** Only `plan-auditor audit` treats `0` as "complete"; other commands use `0` to mean "this operation succeeded". |
+| `1` | **Failed.** A check did not pass, or a gate requirement was not met. |
+| `2` | **Blocked or refused.** Attempt budget exhausted, seal violated, tampered evidence, or a prerequisite step did not hold. |
+| `3` | **`UNKNOWN`.** The assessment could not be determined, so completion is withheld. An undetermined outcome is never treated as success. |
+
+The per-command tables below list the subset each command can actually return.
+
 `plan-auditor run` and `plan-auditor validate` are forwarded verbatim to the
 dependency-free deterministic core, `scripts/audit_check.py`, so you can call it
 directly with no installation at all:

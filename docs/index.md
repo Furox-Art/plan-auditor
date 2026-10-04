@@ -20,6 +20,8 @@ Nothing on this site requires an LLM, a GPU, or a network connection.
 | Isolate against a deliberately hostile agent | [Deployment isolation](deployment-isolation.md) |
 | Wire it into a host or CI | [Integrations](integrations.md) |
 | Run the shipped example end to end | `examples/fib/` in the repository |
+| Know what the tool writes into your repository | [Workspace artifacts](workspace-artifacts.md) |
+| Know what is published where, and what is attested | [Release status](release-status.md) |
 | Know what can actually be measured here | [What is measurable](benchmark.md) |
 | Contribute a check type or fix a doc | [Contributing guide](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md) |
 
