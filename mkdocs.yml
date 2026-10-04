@@ -39,6 +39,7 @@ nav:
       - Architecture: architecture.md
       - Dependency graph: dependency-graph.md
       - Formal planning: formal-planning.md
+      - Workspace artifacts: workspace-artifacts.md
   - Security:
       - Threat model: threat-model.md
       - Deployment isolation: deployment-isolation.md
