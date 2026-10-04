@@ -15,8 +15,10 @@ concurrency:
   group: pypi-release
   cancel-in-progress: false
 
-# Read-only by default. The publish job is the only place that needs more, and
-# it asks for exactly what it uses.
+# Read-only by default. Two jobs need more, and each asks for exactly what it
+# uses: `publish` needs `id-token` for the OIDC attestation, `github-release`
+# needs `contents` to write the tag and release. A job-level `permissions` block
+# replaces this one for that job, so neither grant widens the other.
 permissions:
   contents: read
 
@@ -76,6 +78,12 @@ jobs:
     name: publish to PyPI
     needs: [package-preflight, wheel-preflight]
     runs-on: ubuntu-latest
+    # Exported so `github-release` can honour the same decision. It cannot
+    # re-derive it: that job runs *after* this one has uploaded, so by then the
+    # version does exist on PyPI and a fresh existence check would read
+    # "already published" and skip the release it is supposed to create.
+    outputs:
+      skip: ${{ steps.gate.outputs.skip }}
     # Protects the `pypi` environment. Required reviewers are deliberately not
     # enabled: this is a single-maintainer repository, so a required reviewer
     # would block every release until a second person approves, which trades a
@@ -163,12 +171,40 @@ jobs:
 
           echo "::warning::PyPI upload succeeded, but public indexes have not propagated yet."
           exit 0
-      # The GitHub release was previously created unconditionally, so re-running
-      # this workflow for an already-published version rewrote the release body
-      # a second time. v2.4.1 carries a duplicated notes block for exactly that
-      # reason. The step is now gated on the same skip flag as the upload.
+
+  # Split out of the `publish` job so that the only job holding `contents: write`
+  # is the one that needs it. Runs 37075003605 and 37165300933 uploaded to PyPI
+  # successfully and then failed the release run on this step:
+  #
+  #   ##[error]Resource not accessible by integration
+  #     .../releases#generate-release-notes-content-for-a-release
+  #
+  # `softprops/action-gh-release` writes a tag and a release through the REST API,
+  # which needs `contents: write`. The publish job cannot have it: that job's only
+  # write scope is `id-token`, for the OIDC attestation, and widening it would
+  # hand write access to the job that uploads the supply-chain artifact. `needs:
+  # publish` keeps the ordering, so a release is never announced for a version
+  # that did not upload.
+  github-release:
+    name: create GitHub release
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Resolve package metadata
+        id: meta
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import pathlib, tomllib
+          data = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+          print(f"name={data['project']['name']}")
+          print(f"version={data['project']['version']}")
+          PY
       - name: Create GitHub release
-        if: steps.gate.outputs.skip != 'true'
+        if: needs.publish.outputs.skip != 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ steps.meta.outputs.version }}
