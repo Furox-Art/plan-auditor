@@ -134,9 +134,9 @@ $ plan-auditor plan verify .
   "outcome": "PASS"
 }
 $ plan-auditor run . 1
-[OK ] adım 1: README.md exists and is readable (deneme 1/3)
-       - geçti | README.md VAR
-       - geçti | exit=0 (beklenen 0)
+[OK ] step 1: README.md exists and is readable (attempt 1/3)
+       - passed | README.md EXISTS
+       - passed | exit=0 (expected 0)
 $ plan-auditor audit .
 ...
 {
@@ -158,7 +158,7 @@ progress lines and verdict table, and the gate's remaining fields including
 shows each command's full output.
 
 `audit` re-runs every check in a fresh subprocess, and only exit code `0` means the work is
-proven. Progress lines are Turkish because that is the tool's UI language; the JSON verdict
+proven. Progress lines are English human-readable output; the JSON verdict
 is the stable machine interface, so parse `"outcome"`.
 
 ## How it works
@@ -236,7 +236,6 @@ so the Markdown is known to build, but nothing serves it; build it with
   as the secrecy of the key.
 - It verifies that *declared, checkable* requirements were met. Domain meaning that
   cannot be a deterministic check is reviewed by a human, not guessed.
-- Progress output is Turkish-only; the JSON verdict is the stable interface.
 - The npm package needs Python on `PATH` and carries **no** Sigstore build
   attestation: the npm attestations endpoint returns `404` for `2.4.3`. Its
   `dist.signatures` block is a registry transport signature and is **not** build

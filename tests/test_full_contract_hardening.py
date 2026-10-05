@@ -319,7 +319,7 @@ def test_command_output_limit_fails_closed(tmp_path: Path) -> None:
         "max_output_bytes": 1024,
     }, str(tmp_path))
     assert not ok
-    assert "limiti" in detail
+    assert "output limit" in detail
 
 
 def test_internal_workspace_and_watchdog_probes_do_not_use_shell_true() -> None:

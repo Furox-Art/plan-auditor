@@ -1,6 +1,6 @@
 """Documentation transcripts must reproduce real tool output verbatim.
 
-The tool prints captured multi-line stderr as ``çıktı:`` followed by
+The tool prints captured multi-line stderr as ``output:`` followed by
 ``|``-joined continuation lines. A transcript that collapses that into one line
 is not what a reader will see, so these tests compare the documented blocks
 against output regenerated from a real failing run.
@@ -115,10 +115,10 @@ def _assert_attempt_transcript(observed: list[str]) -> None:
     """Every attempt and the refusal must be present, in order."""
     for attempt in (1, 2, 3):
         assert any(
-            f"{SENTINEL_TITLE} (deneme {attempt}/3)" in line for line in observed
+            f"{SENTINEL_TITLE} (attempt {attempt}/3)" in line for line in observed
         ), f"attempt {attempt} missing from {observed[-800:]}"
-    assert "       - KALDI | exit=3 (beklenen 0)" in observed, observed[-800:]
-    assert any("[ATLADI]" in line for line in observed), observed[-800:]
+    assert "       - FAILED | exit=3 (expected 0)" in observed, observed[-800:]
+    assert any("[SKIPPED]" in line for line in observed), observed[-800:]
 
 
 # The published npm bin is `bin/plan-auditor.js`; `index.js` is `main`. Either may
@@ -158,7 +158,7 @@ def test_failing_transcript_check_fixtures_are_real(tmp_path: Path) -> None:
     # The sentinel check writes no stderr, so nothing version-specific may leak in.
     joined = "\n".join(observed)
     assert "Traceback" not in joined, observed[-800:]
-    assert "çıktı:" not in joined, observed[-800:]
+    assert "output:" not in joined, observed[-800:]
 
 
 def _assert_verbatim(document: Path, tmp_path: Path, *, require_failure_block: bool = True) -> None:
@@ -169,7 +169,7 @@ def _assert_verbatim(document: Path, tmp_path: Path, *, require_failure_block: b
         documented.extend(_output_lines(block))
     # Only compare the failure blocks, identified by their distinctive markers.
     failure_blocks = [
-        block for block in blocks if any("[FAIL]" in line or "[ATLADI]" in line for line in block)
+        block for block in blocks if any("[FAIL]" in line or "[SKIPPED]" in line for line in block)
     ]
     if require_failure_block:
         assert failure_blocks, f"{document.name} must show a real failing run"
@@ -209,11 +209,11 @@ def test_cli_failure_transcript_is_verbatim(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("document", [README, BENCHMARK, QUICKSTART, CLI_DOC])
 def test_no_collapsed_output_lines(document: Path) -> None:
-    """A ``çıktı:`` line must never swallow the traceback that follows it."""
+    """An ``output:`` line must never swallow the traceback that follows it."""
     offenders = [
         line
         for line in document.read_text(encoding="utf-8").splitlines()
-        if line.lstrip().startswith("çıktı:")
+        if line.lstrip().startswith("output:")
         and ("Traceback" not in line)
         and not re.search(r"Error: \[Errno \d+\]", line)
     ]
@@ -247,7 +247,7 @@ def test_failure_blocks_state_their_scope(document: Path) -> None:
     """A failure transcript must either be complete or say exactly what it omits."""
     text = document.read_text(encoding="utf-8")
     for block in _console_blocks(text):
-        if not any("[FAIL]" in line or "[ATLADI]" in line for line in block):
+        if not any("[FAIL]" in line or "[SKIPPED]" in line for line in block):
             continue
         elides = any(line.strip() == "..." for line in block)
         start = text.find("\n".join(block))
@@ -305,7 +305,7 @@ def test_benchmark_transcript_matches_the_real_fib_failure(tmp_path: Path) -> No
         quoted = [
             line
             for line in block
-            if line.lstrip().startswith("çıktı:") or line.strip().startswith("| ")
+            if line.lstrip().startswith("output:") or line.strip().startswith("| ")
         ]
         assert not quoted, (
             "benchmark.md must not quote the traceback body inside a transcript; "

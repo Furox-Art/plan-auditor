@@ -221,7 +221,7 @@ with a non-zero code if Python cannot be started at all.
 - Every command you document must exist. `tests/test_docs_metadata.py` parses
   fenced code blocks and checks the subcommand against the real argument parser.
 - Every transcript must be copied from a real run, and any elision must say what
-  is elided. A `çıktı:` line whose interior depends on your Python version must be
+  is elided. An `output:` line whose interior depends on your Python version must be
   scoped, not quoted.
 - Never add a download count, a star count, a user count or a trust badge. Link to
   the package page instead; the tests reject a copied number.

@@ -1,4 +1,4 @@
-"""audit_check.py birim test süiti — pytest ile çalışır: python -m pytest tests/ -q"""
+"""audit_check.py unit test suite — run with: python -m pytest tests/ -q"""
 import json
 import os
 import sys
@@ -16,7 +16,7 @@ def make_plan(tmp_path, plan):
     return tmp_path
 
 
-def valid_plan(task="görev", **step_over):
+def valid_plan(task="task", **step_over):
     step = {"id": 1, "title": "t",
             "verify": [{"type": "run", "cmd": "python -c \"print(1)\"", "expect_exit": 0}],
             "status": "pending"}
@@ -48,14 +48,14 @@ def test_validate_rejects_non_behavioral_only():
     p = valid_plan(verify=[{"type": "file_exists", "path": "x.py"},
                            {"type": "regex", "path": "x.py", "pattern": "def"}])
     errs = ac.validate_plan(p)
-    assert any("DAVRANIŞSAL" in e for e in errs)
+    assert any("BEHAVIORAL" in e for e in errs)
 
 
 def test_validate_rejects_duplicate_ids():
     plan = valid_plan()
     plan["steps"].append(dict(plan["steps"][0]))
     errs = ac.validate_plan(plan)
-    assert any("tekrarlı" in e for e in errs)
+    assert any("duplicate" in e for e in errs)
 
 
 def test_validate_rejects_run_without_cmd():
@@ -67,7 +67,7 @@ def test_validate_rejects_run_without_cmd():
 def test_validate_rejects_unknown_type():
     p = valid_plan(verify=[{"type": "mistik"}])
     errs = ac.validate_plan(p)
-    assert any("geçersiz kontrol" in e for e in errs)
+    assert any("invalid check" in e for e in errs)
 
 
 # -------------------------------------------------------------- norm_check
@@ -128,7 +128,7 @@ def test_run_check_output_regex(tmp_path):
         str(tmp_path))
     assert ok
     ok, _, _ = ac.run_check(
-        {"type": "run", "cmd": "python -c \"print('hayır')\"",
+        {"type": "run", "cmd": "python -c \"print('no')\"",
          "output_regex": r"TOTAL:\s+\d+"},
         str(tmp_path))
     assert not ok
@@ -161,7 +161,7 @@ def test_run_check_refuses_shell_execution(tmp_path):
         str(tmp_path),
     )
     assert ok is False
-    assert "kaldırıldı" in detail
+    assert "was removed" in detail
     assert not marker.exists(), "redirection must never be interpreted"
 
 
@@ -183,7 +183,7 @@ def test_validate_accepts_structured_argv_and_rejects_shell_argv_mix():
     assert ac.validate_plan(plan) == []
     plan["steps"][0]["verify"][0]["shell"] = True
     errs = ac.validate_plan(plan)
-    assert any("shell" in err and "kaldırıldı" in err for err in errs), errs
+    assert any("shell" in err and "was removed" in err for err in errs), errs
 
 
 # ----------------------------------------------------------- evidence chain
@@ -201,7 +201,7 @@ def test_chain_ok_and_tamper_detected(tmp_path):
     with open(log, encoding="utf-8") as f:
         lines = f.readlines()
     rec = json.loads(lines[0])
-    rec["status"] = "verified"  # başarısız kaydı geçmişe çevirme girişimi
+    rec["status"] = "verified"  # attempt to flip a failed record to history
     lines[0] = ac.canonical(rec) + "\n"
     with open(log, "w", encoding="utf-8") as f:
         f.writelines(lines)
@@ -263,7 +263,7 @@ def test_attempt_cap_blocks_fourth_run(tmp_path):
     plan = ac.load_plan(base)
     ok = ac.audit_steps(base, plan, ids=[1], mode="run")  # 4. deneme: reddedilmeli
     assert not ok
-    assert plan["steps"][0]["status"] == "pending"  # hiç çalıştırılmadı
+    assert plan["steps"][0]["status"] == "pending"  # never executed
 
 
 def test_attempt_cap_respects_force(tmp_path):
@@ -286,7 +286,7 @@ def test_attempts_are_scoped_per_plan(tmp_path):
     for i in range(3):
         ac.append_evidence(base, {"ts": "t%d" % i, "mode": "run", "plan": "yan",
                                   "step": 1, "status": "failed", "results": []})
-    # varsayılan plan için attempt = 1 ("yan" planın kayıtları sayılmaz)
+    # attempt = 1 for the default plan (records of the "other" plan do not count)
     assert ac.count_failed_attempts(base, 1, plan="default") == 0
     assert ac.count_failed_attempts(base, 1, plan="yan") == 3
 
@@ -302,7 +302,7 @@ def test_evidence_rotation(tmp_path):
     archive = pg / "archive"
     assert list(archive.glob("evidence-*.jsonl"))
     ok, n, problem = ac.verify_chain(base)
-    assert ok and n == 1  # taze zincir GENESIS'ten başlar
+    assert ok and n == 1  # a fresh chain starts at GENESIS
 
 
 def test_snapshot_and_rollback_roundtrip(tmp_path):
@@ -317,7 +317,7 @@ def test_snapshot_and_rollback_roundtrip(tmp_path):
     ac.restore_snapshot(base, zpath)
     assert (tmp_path / "kod.txt").read_text(encoding="utf-8") == "v1"
     ok, n, problem = ac.verify_chain(base)
-    assert ok and n == 2  # snapshot + rollback kaydı tek zincirde
+    assert ok and n == 2  # snapshot + rollback records stay in one chain
 
 
 # ----------------------------------------------- audit observational purity
