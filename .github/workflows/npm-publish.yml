@@ -107,8 +107,11 @@ jobs:
       # Decide the publish mode once, up front, and fail closed here rather than
       # discovering a missing credential at upload time.
       #
-      # A push to main carries no inputs, so use_token_fallback is empty and the
-      # workflow resolves to "oidc". Dispatching with the checkbox forces "token".
+      # Manual runs keep the explicit checkbox. Automatic release pushes choose
+      # the already-proven NPM_TOKEN path when the secret exists; if the token is
+      # later removed after Trusted Publishing is configured, they use OIDC.
+      # The choice is made before either publish command runs, never as a
+      # post-failure fallback.
       - name: Select the publish mode and validate its credential
         id: mode
         shell: bash
@@ -118,7 +121,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$USE_TOKEN_FALLBACK" = "true" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "$USE_TOKEN_FALLBACK" = "true" ]; then
+              mode="token"
+            else
+              mode="oidc"
+            fi
+          elif [ -n "$NODE_AUTH_TOKEN" ]; then
             mode="token"
           else
             mode="oidc"
