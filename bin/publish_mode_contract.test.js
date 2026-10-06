@@ -150,20 +150,26 @@ check('the token mode fails closed when NPM_TOKEN is absent', () => {
   );
 });
 
-check('the token path is opt-in, never an automatic fallback', () => {
-  // A publish step keyed on `steps.trusted_publish.outcome != 'success'` would
-  // silently downgrade to an unattested upload whenever trusted publishing
-  // failed for any reason. That is the behaviour this asserts against.
+check('automatic credential selection happens before publish, never after failure', () => {
+  // Automatic main-push releases may choose the already-proven token path when
+  // NPM_TOKEN exists, but they must choose it before either publish command
+  // runs. A publish step keyed on a failed OIDC outcome would be a silent
+  // post-failure downgrade and is still forbidden.
   if (/steps\.trusted_publish\.outcome/.test(text)) {
     throw new Error(
       'a publish step still keys on trusted_publish.outcome, which re-enables ' +
-        'the automatic token fallback',
+        'a post-failure token fallback',
     );
   }
   assert_match(
     text,
-    /use_token_fallback was requested/,
-    'the token path does not state that it requires the explicit opt-in',
+    /github\.event_name[^\n]*workflow_dispatch/,
+    'the mode selector does not distinguish manual dispatch from automatic push',
+  );
+  assert_match(
+    text,
+    /elif \[ -n "\$NODE_AUTH_TOKEN" \]; then[\s\S]*mode="token"[\s\S]*else[\s\S]*mode="oidc"/,
+    'automatic pushes must select token when NPM_TOKEN exists and OIDC otherwise',
   );
 });
 
