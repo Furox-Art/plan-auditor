@@ -107,8 +107,8 @@ jobs:
       # Decide the publish mode once, up front, and fail closed here rather than
       # discovering a missing credential at upload time.
       #
-      # A push to main carries no inputs, so use_token_fallback is empty and the
-      # workflow resolves to "oidc". Dispatching with the checkbox forces "token".
+      # Automatic version-trigger pushes use the verified repository token path.
+      # Manual dispatches keep the explicit OIDC/token choice for recovery/testing.
       - name: Select the publish mode and validate its credential
         id: mode
         shell: bash
@@ -118,10 +118,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$USE_TOKEN_FALLBACK" = "true" ]; then
-            mode="token"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "$USE_TOKEN_FALLBACK" = "true" ]; then
+              mode="token"
+            else
+              mode="oidc"
+            fi
           else
-            mode="oidc"
+            mode="token"
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "selected publish mode: $mode"
@@ -134,6 +138,7 @@ jobs:
             fi
             echo "using the NPM_TOKEN secret; this path publishes WITHOUT --provenance"
             echo "because a registry token cannot mint an attestation"
+            echo "automatic version-trigger releases use this verified token path"
           else
             echo "using OIDC trusted publishing with --provenance"
             echo "if this fails with E404, no trusted publisher is registered on npmjs.com"
