@@ -150,20 +150,24 @@ check('the token mode fails closed when NPM_TOKEN is absent', () => {
   );
 });
 
-check('the token path is opt-in, never an automatic fallback', () => {
-  // A publish step keyed on `steps.trusted_publish.outcome != 'success'` would
-  // silently downgrade to an unattested upload whenever trusted publishing
-  // failed for any reason. That is the behaviour this asserts against.
+check('automatic version-trigger pushes use the verified token path', () => {
+  // Automatic publishing is intentional, not a runtime fallback from a failed
+  // trusted-publishing attempt. Manual dispatches still preserve the explicit
+  // OIDC/token choice.
   if (/steps\.trusted_publish\.outcome/.test(text)) {
     throw new Error(
-      'a publish step still keys on trusted_publish.outcome, which re-enables ' +
-        'the automatic token fallback',
+      'a publish step keys on trusted_publish.outcome; automatic token mode must be selected before publish',
     );
   }
   assert_match(
     text,
+    /github\.event_name[\s\S]*workflow_dispatch[\s\S]*else[\s\S]*mode="token"/,
+    'automatic push releases do not select token mode',
+  );
+  assert_match(
+    text,
     /use_token_fallback was requested/,
-    'the token path does not state that it requires the explicit opt-in',
+    'manual token mode must still fail closed with an actionable credential error',
   );
 });
 
