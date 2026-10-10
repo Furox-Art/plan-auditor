@@ -36,13 +36,16 @@ def _positive_id(raw: str | None, name: str) -> int:
 
 def _root_owned_private_control(root: Path) -> None:
     workspace = root.resolve(strict=True)
-    st = workspace.stat()
-    if st.st_uid != 0 or not stat.S_ISDIR(st.st_mode):
-        raise CheckIsolationError("isolated checks require a root-owned workspace directory")
-    if st.st_mode & 0o022 and not st.st_mode & stat.S_ISVTX:
-        raise CheckIsolationError(
-            "writable workspace root requires the sticky bit to prevent control-state replacement"
-        )
+    # The agent must not be able to rename the workspace itself through a
+    # writable ancestor: private permissions on .plan-auditor alone are not enough.
+    for current in (workspace, *workspace.parents):
+        st = current.stat()
+        if st.st_uid != 0 or not stat.S_ISDIR(st.st_mode):
+            raise CheckIsolationError("workspace and ancestors must be root-owned directories")
+        if st.st_mode & 0o022 and not st.st_mode & stat.S_ISVTX:
+            raise CheckIsolationError(
+                "writable workspace/ancestor directories require root ownership and the sticky bit"
+            )
     control = workspace / ".plan-auditor"
     try:
         control_stat = control.lstat()
