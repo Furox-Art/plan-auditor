@@ -1,6 +1,6 @@
 {
   "name": "plan-auditor",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "description": "Thin Node launcher for the plan-auditor deterministic verification CLI for AI coding agents (requires Python 3.10+ on PATH)",
   "main": "index.js",
   "bin": {
