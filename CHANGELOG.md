@@ -4,6 +4,25 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+## 2.4.5 — Opt-in Linux privilege-separated check execution
+
+### Security
+
+- Add `PLAN_AUDITOR_CHECK_ISOLATION=required` with explicit non-root
+  `PLAN_AUDITOR_CHECK_UID` / `PLAN_AUDITOR_CHECK_GID`: root-run Linux
+  supervisors execute project-controlled checks under the named UID/GID with
+  supplementary groups dropped, while the trusted process retains HMAC signing.
+- Require root-owned protected control state, trusted workspace ancestry,
+  root-owned private HMAC key material and non-writable key directories.
+  Missing/invalid isolation configuration fails closed.
+- Restrict the child environment to a small, documented allowlist, excluding
+  HMAC credentials, unrelated API tokens, `HOME`, `PYTHONPATH` and SSH sockets.
+- Require real root-run Linux CI regression tests proving a child cannot read
+  either a root-owned `0600` key file or `.plan-auditor` control state.
+- Document required host configuration. This is a Linux UID permission boundary,
+  **not** a cross-platform container/VM, network or kernel sandbox; default
+  same-user mode continues to have its documented limits.
+
 ## 2.4.4 — HMAC check subprocess boundary
 
 ### Security
