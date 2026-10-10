@@ -26,7 +26,7 @@ def test_partial_configuration_refuses_to_run(tmp_path, monkeypatch):
         [sys.executable, "-c", "print('must not execute')"], str(tmp_path), 5, 2048
     )
     assert rc is None and state == "start"
-    assert "requires PLAN_AUDITOR_CHECK_ISOLATION=required" in reason
+    assert "require PLAN_AUDITOR_CHECK_ISOLATION=required" in reason
 
 
 @pytest.mark.parametrize("uid,gid", [("0", "65534"), ("65534", "0"), ("bad", "65534"), ("", "65534")])
