@@ -147,9 +147,16 @@ As of the 2.4.4 source hardening, behavioral-check subprocesses no longer inheri
 `PLAN_AUDITOR_HMAC_KEY` or `PLAN_AUDITOR_HMAC_KEY_FILE` from the verifier.
 This reduces inadvertent environment-based credential exposure, but **does not
 sandbox checks**. Project-controlled checks running as the supervisor's OS user
-can still read any external key file that user can read. A hostile-agent security
-boundary needs an independently sandboxed or lower-privilege check executor;
-see [deployment isolation](docs/deployment-isolation.md).
+can still read any external key file that user can read.
+
+Version 2.4.5 adds an **opt-in Linux-only privilege boundary**. A trusted root-run
+supervisor can require each behavioral check to execute as a separate, non-root
+UID/GID with no supplementary groups; the child cannot read a root-only HMAC key
+or protected control state. Unsafe or incomplete configuration refuses execution.
+This is not automatic in normal mode and is not a container, seccomp or network
+sandbox. Never grant the check user access to the supervisor's key or installed
+trusted program. Setup instructions and limitations:
+[deployment isolation](docs/deployment-isolation.md).
 
 `plan-auditor integrity init` and `plan-auditor integrity status` manage a
 keyed authentication of evidence, seals and the agent registry. Detection is only

@@ -30,6 +30,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - type checkers see the single package import
+    from scripts.check_isolation import check_launch_options
     from scripts.contract import PlanTrustError
     from scripts.exec_trust import require_plan_trust
 else:
@@ -37,9 +38,11 @@ else:
     # importable unprefixed. The runtime fallback is required; the TYPE_CHECKING
     # branch keeps static analysis from seeing the names bound twice.
     try:
+        from scripts.check_isolation import check_launch_options
         from scripts.contract import PlanTrustError
         from scripts.exec_trust import require_plan_trust
     except ImportError:
+        from check_isolation import check_launch_options
         from contract import PlanTrustError
         from exec_trust import require_plan_trust
 
@@ -678,25 +681,20 @@ def _kill_process_tree(proc):
 
 def _bounded_command(command, base, timeout, max_output):
     """Execute ``command`` (an argv list) with no shell and bounded resources."""
-    # Behavioral checks execute potentially untrusted project code. Do not pass
-    # the supervisor's authenticated-integrity credentials to these children.
-    # This is defense in depth, not an OS boundary: another process running as
-    # the same user may still read an externally stored key file.
-    child_env = os.environ.copy()
-    child_env.pop("PLAN_AUDITOR_HMAC_KEY", None)
-    child_env.pop("PLAN_AUDITOR_HMAC_KEY_FILE", None)
     kwargs = {
         "cwd": base,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.STDOUT,
         "shell": False,
-        "env": child_env,
     }
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
     try:
+        # Optional Linux root-run UID/GID drop. Even with no isolation enabled,
+        # never forward the HMAC key or key-file locator to behavioral checks.
+        kwargs.update(check_launch_options(base))
         proc = subprocess.Popen(command, **kwargs)
     except (OSError, ValueError) as exc:
         return None, "start", str(exc), False

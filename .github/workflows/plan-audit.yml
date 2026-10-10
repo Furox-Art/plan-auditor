@@ -37,6 +37,13 @@ jobs:
         run: python scripts/audit_check.py validate .
       - name: Unit test gate (explicit diagnostic)
         run: python -m pytest tests/ -q
+      # Privilege separation must be exercised against the Linux kernel; mocks
+      # cannot prove that an unprivileged subprocess cannot read a root-only key.
+      - name: Root-only Linux identity isolation regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n "$(command -v python)" -m pytest tests/test_linux_check_os_isolation.py -q
       # The source set, branch mode and the 65% floor all live in
       # [tool.coverage.run]/[tool.coverage.report] in pyproject.toml, so the
       # workflow cannot drift away from what a local run enforces. Measured at
