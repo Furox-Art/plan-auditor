@@ -23,9 +23,9 @@ For that threat model, run the verifier under a different OS/container identity:
    checks inherit that user's file permissions is NOT sufficient isolation.
 4. The supervisor receives read access to product state plus the narrowly scoped
    writes required for `.plan-auditor` evidence/seals/registry.
-4. Host request activation is performed by the trusted/user side, not by the
+5. Host request activation is performed by the trusted/user side, not by the
    untrusted agent identity.
-5. The final audit runs after cooperating agent processes are quiescent. For a
+6. The final audit runs after cooperating agent processes are quiescent. For a
    hostile agent, the OS/container boundary—not `audit.freeze.lock`—prevents
    concurrent mutation of trusted control state.
 
