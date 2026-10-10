@@ -40,8 +40,11 @@ must not be able to open it. Start the supervisor service with:
 PLAN_AUDITOR_HMAC_KEY_FILE=/var/lib/plan-auditor/keys/project.key
 ```
 
-The key file should not be inside the workspace. Use normal filesystem ACLs,
-service sandboxing or a container mount policy so `pa-agent` cannot read it.
+The key file should not be inside the workspace. Use filesystem ACLs, service
+sandboxing or container mounts so neither `pa-agent` nor `pa-check` can read
+it. The stock CLI runs behavioral checks as its own subprocesses, so this
+three-principal topology requires an external isolated execution arrangement;
+it is not automatically created by `plan-auditor audit`.
 
 ## Container/VM boundary
 
