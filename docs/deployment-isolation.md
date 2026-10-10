@@ -11,11 +11,17 @@ files and may be able to read same-user key material.
 For that threat model, run the verifier under a different OS/container identity:
 
 1. **Supervisor identity** owns the external HMAC key and Plan Auditor control
-   state. The agent identity must not be able to read the key.
+   state. Neither the implementing agent nor the code executing behavioral checks
+   may read the key or trusted control state.
 2. **Agent identity** gets only the repository/product write permissions needed
    for implementation. It must not be able to modify the supervisor executable,
    key file, service configuration or host approval source.
-3. The supervisor receives read access to product state plus the narrowly scoped
+3. **Check-execution identity/container** runs project-controlled verification code
+   with neither the supervisor's OS identity nor any key-file access. The trusted
+   supervisor checks the results and authenticates evidence *after* that code
+   finishes. Simply running the verifier as another user but letting its child
+   checks inherit that user's file permissions is NOT sufficient isolation.
+4. The supervisor receives read access to product state plus the narrowly scoped
    writes required for `.plan-auditor` evidence/seals/registry.
 4. Host request activation is performed by the trusted/user side, not by the
    untrusted agent identity.
