@@ -118,3 +118,33 @@ def test_insecure_external_key_file_is_rejected(monkeypatch):
         monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key))
         with pytest.raises(CheckIsolationError, match="0600"):
             check_launch_options(root)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or not hasattr(os, "geteuid") or os.geteuid() != 0,
+                    reason="real Linux ownership checks need root")
+def test_insecure_workspace_can_not_replace_trusted_control_state(monkeypatch):
+    import pwd
+
+    check_user = pwd.getpwnam("nobody")
+    with tempfile.TemporaryDirectory(prefix="pa-os-check-", dir="/tmp") as folder:
+        workspace = Path(folder)
+        workspace.chmod(0o777)  # world writable without sticky bit
+        (workspace / ".plan-auditor").mkdir(mode=0o700)
+        _request_isolation(monkeypatch, str(check_user.pw_uid), str(check_user.pw_gid))
+        with pytest.raises(CheckIsolationError, match="sticky bit"):
+            check_launch_options(workspace)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or not hasattr(os, "geteuid") or os.geteuid() != 0,
+                    reason="real Linux ownership checks need root")
+def test_insecure_control_directory_is_rejected(monkeypatch):
+    import pwd
+
+    check_user = pwd.getpwnam("nobody")
+    with tempfile.TemporaryDirectory(prefix="pa-os-check-", dir="/tmp") as folder:
+        workspace = Path(folder)
+        workspace.chmod(0o1777)
+        (workspace / ".plan-auditor").mkdir(mode=0o755)
+        _request_isolation(monkeypatch, str(check_user.pw_uid), str(check_user.pw_gid))
+        with pytest.raises(CheckIsolationError, match="private"):
+            check_launch_options(workspace)
