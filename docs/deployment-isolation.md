@@ -31,9 +31,10 @@ For that threat model, run the verifier under a different OS/container identity:
 
 ## Linux example boundary
 
-A typical layout uses two users, for example `pa-agent` and `pa-supervisor`.
-Keep the HMAC key in a file readable only by `pa-supervisor` and start the
-supervisor service with:
+A privileged hostile-agent deployment needs three distinct roles, for example
+`pa-agent`, `pa-check`, and `pa-supervisor`. Keep the HMAC key in a file
+readable only by `pa-supervisor`; the externally isolated `pa-check` worker
+must not be able to open it. Start the supervisor service with:
 
 ```text
 PLAN_AUDITOR_HMAC_KEY_FILE=/var/lib/plan-auditor/keys/project.key
