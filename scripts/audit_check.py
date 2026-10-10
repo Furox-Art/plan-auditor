@@ -678,11 +678,19 @@ def _kill_process_tree(proc):
 
 def _bounded_command(command, base, timeout, max_output):
     """Execute ``command`` (an argv list) with no shell and bounded resources."""
+    # Behavioral checks execute potentially untrusted project code. Do not pass
+    # the supervisor's authenticated-integrity credentials to these children.
+    # This is defense in depth, not an OS boundary: another process running as
+    # the same user may still read an externally stored key file.
+    child_env = os.environ.copy()
+    child_env.pop("PLAN_AUDITOR_HMAC_KEY", None)
+    child_env.pop("PLAN_AUDITOR_HMAC_KEY_FILE", None)
     kwargs = {
         "cwd": base,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.STDOUT,
         "shell": False,
+        "env": child_env,
     }
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
