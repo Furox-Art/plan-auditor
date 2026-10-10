@@ -137,7 +137,18 @@ separate container/VM, give the untrusted agent write access only to the intende
 workspace/product surface, and expose the HMAC key only to the supervisor identity.
 **Also isolate code execution:** product-controlled behavioral checks must execute
 under a separate, keyless OS/container identity, not merely as child processes of
-that privileged supervisor. The default CLI does not enforce this OS boundary.
+that privileged supervisor. On Linux, an opt-in root-run mode
+(`PLAN_AUDITOR_CHECK_ISOLATION=required` with distinct non-root
+`PLAN_AUDITOR_CHECK_UID` and `PLAN_AUDITOR_CHECK_GID`) drops the subprocess
+UID/GID and supplementary groups before running checks. The trusted supervisor
+retains the HMAC key; the check cannot read its root-only key file or root-private
+control state. The mode validates ownership and permissions and fails closed if
+it cannot establish the boundary.
+
+By default, or on Windows/macOS, the CLI still makes **no OS-isolation guarantee**.
+UID/GID separation is not a full kernel sandbox: trusted installation paths,
+host-owned configuration, capability/sudo restrictions, and optionally stronger
+container/VM/network isolation remain the deployment operator's responsibility.
 
 ## Fail-closed terminology
 
