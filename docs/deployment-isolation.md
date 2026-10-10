@@ -11,30 +11,40 @@ files and may be able to read same-user key material.
 For that threat model, run the verifier under a different OS/container identity:
 
 1. **Supervisor identity** owns the external HMAC key and Plan Auditor control
-   state. The agent identity must not be able to read the key.
+   state. Neither the implementing agent nor the code executing behavioral checks
+   may read the key or trusted control state.
 2. **Agent identity** gets only the repository/product write permissions needed
    for implementation. It must not be able to modify the supervisor executable,
    key file, service configuration or host approval source.
-3. The supervisor receives read access to product state plus the narrowly scoped
+3. **Check-execution identity/container** runs project-controlled verification code
+   with neither the supervisor's OS identity nor any key-file access. The trusted
+   supervisor checks the results and authenticates evidence *after* that code
+   finishes. Simply running the verifier as another user but letting its child
+   checks inherit that user's file permissions is NOT sufficient isolation.
+4. The supervisor receives read access to product state plus the narrowly scoped
    writes required for `.plan-auditor` evidence/seals/registry.
-4. Host request activation is performed by the trusted/user side, not by the
+5. Host request activation is performed by the trusted/user side, not by the
    untrusted agent identity.
-5. The final audit runs after cooperating agent processes are quiescent. For a
+6. The final audit runs after cooperating agent processes are quiescent. For a
    hostile agent, the OS/container boundary—not `audit.freeze.lock`—prevents
    concurrent mutation of trusted control state.
 
 ## Linux example boundary
 
-A typical layout uses two users, for example `pa-agent` and `pa-supervisor`.
-Keep the HMAC key in a file readable only by `pa-supervisor` and start the
-supervisor service with:
+A privileged hostile-agent deployment needs three distinct roles, for example
+`pa-agent`, `pa-check`, and `pa-supervisor`. Keep the HMAC key in a file
+readable only by `pa-supervisor`; the externally isolated `pa-check` worker
+must not be able to open it. Start the supervisor service with:
 
 ```text
 PLAN_AUDITOR_HMAC_KEY_FILE=/var/lib/plan-auditor/keys/project.key
 ```
 
-The key file should not be inside the workspace. Use normal filesystem ACLs,
-service sandboxing or a container mount policy so `pa-agent` cannot read it.
+The key file should not be inside the workspace. Use filesystem ACLs, service
+sandboxing or container mounts so neither `pa-agent` nor `pa-check` can read
+it. The stock CLI runs behavioral checks as its own subprocesses, so this
+three-principal topology requires an external isolated execution arrangement;
+it is not automatically created by `plan-auditor audit`.
 
 ## Container/VM boundary
 

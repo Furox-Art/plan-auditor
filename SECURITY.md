@@ -143,6 +143,14 @@ maintainer will arrange an encrypted channel.
 
 ## External integrity keys
 
+As of the 2.4.4 source hardening, behavioral-check subprocesses no longer inherit
+`PLAN_AUDITOR_HMAC_KEY` or `PLAN_AUDITOR_HMAC_KEY_FILE` from the verifier.
+This reduces inadvertent environment-based credential exposure, but **does not
+sandbox checks**. Project-controlled checks running as the supervisor's OS user
+can still read any external key file that user can read. A hostile-agent security
+boundary needs an independently sandboxed or lower-privilege check executor;
+see [deployment isolation](docs/deployment-isolation.md).
+
 `plan-auditor integrity init` and `plan-auditor integrity status` manage a
 keyed authentication of evidence, seals and the agent registry. Detection is only
 as strong as the secrecy of that key; keeping it outside the workspace is the

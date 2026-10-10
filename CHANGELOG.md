@@ -4,6 +4,21 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+## 2.4.4 — HMAC check subprocess boundary
+
+### Security
+
+- Do not inherit `PLAN_AUDITOR_HMAC_KEY` or `PLAN_AUDITOR_HMAC_KEY_FILE`
+  into project-controlled behavioral-check subprocesses. The supervisor
+  retains these credentials to authenticate the resulting audit evidence.
+- Add regression tests for both credential variables, benign environment
+  preservation, parent environment preservation, and the public `run_check`
+  path.
+- Clarify that environment sanitisation is defense in depth, **not** OS
+  sandboxing: an untrusted child running as the supervisor's user can still
+  open any HMAC key file that user can read. Deliberately hostile agents need
+  a separately isolated, keyless check-execution identity/container.
+
 ### Documentation
 
 - **README reduced from 362 to 248 lines with no surface lost.** The previous

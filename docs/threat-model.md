@@ -124,10 +124,20 @@ obtain the key**. A same-user process that can read the environment/key file can
 compute valid HMACs and can ignore cooperative freeze files. No Python lock can
 create a security boundary against a process with the same OS credentials.
 
+Behavioral checks strip `PLAN_AUDITOR_HMAC_KEY` and
+`PLAN_AUDITOR_HMAC_KEY_FILE` from their subprocess environment. This prevents
+accidental propagation of those two credentials, but is only defense in depth:
+a subprocess running with the supervisor's OS identity can still read an external
+key file accessible to that identity if it discovers the path. Other secrets in
+the process environment are not automatically stripped.
+
 When deliberate same-user interference is in scope, the root control is deployment
 isolation: run the deterministic supervisor under a distinct OS identity or in a
 separate container/VM, give the untrusted agent write access only to the intended
 workspace/product surface, and expose the HMAC key only to the supervisor identity.
+**Also isolate code execution:** product-controlled behavioral checks must execute
+under a separate, keyless OS/container identity, not merely as child processes of
+that privileged supervisor. The default CLI does not enforce this OS boundary.
 
 ## Fail-closed terminology
 
