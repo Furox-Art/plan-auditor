@@ -40,11 +40,55 @@ must not be able to open it. Start the supervisor service with:
 PLAN_AUDITOR_HMAC_KEY_FILE=/var/lib/plan-auditor/keys/project.key
 ```
 
-The key file should not be inside the workspace. Use filesystem ACLs, service
-sandboxing or container mounts so neither `pa-agent` nor `pa-check` can read
-it. The stock CLI runs behavioral checks as its own subprocesses, so this
-three-principal topology requires an external isolated execution arrangement;
-it is not automatically created by `plan-auditor audit`.
+The key file must be outside the workspace and be private to the trusted
+supervisor. Since 2.4.5, the stock CLI offers an **opt-in Linux privilege drop**
+for each behavioral check (not a container sandbox). The supervisor must run as
+root; the untrusted check executes as a dedicated, unprivileged OS user.
+
+A minimal trusted-host layout is:
+
+```bash
+# Run once as a trusted administrator. The workspace and all ancestors must
+# be root-owned. A writable workspace directory must have the sticky bit.
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin pa-check
+sudo install -d -o root -g root -m 1777 /srv/pa-workspace
+sudo install -d -o root -g root -m 0700 /srv/pa-workspace/.plan-auditor
+sudo install -d -o root -g root -m 0700 /var/lib/plan-auditor/keys
+# Provision a strong, random project.key through a trusted mechanism,
+# owned by root, mode 0600. Never commit or print the key.
+```
+
+The parent directories of the key file must be root-owned and not writable
+by group/other. Place the trusted Plan Auditor installation and Python entry
+point **outside the agent-writable workspace**, also owned by root. Configure
+a host-owned service or root-run invocation:
+
+```bash
+sudo env \
+  PLAN_AUDITOR_HMAC_KEY_FILE=/var/lib/plan-auditor/keys/project.key \
+  PLAN_AUDITOR_CHECK_ISOLATION=required \
+  PLAN_AUDITOR_CHECK_UID="$(id -u pa-check)" \
+  PLAN_AUDITOR_CHECK_GID="$(id -g pa-check)" \
+  /usr/local/bin/plan-auditor audit /srv/pa-workspace
+```
+
+The path `/usr/local/bin/plan-auditor` is illustrative; it must point to a
+trusted root-managed installation. The host must separately activate and seal
+its authoritative plan and retain ownership of `.plan-auditor`; the agent must
+not control the supervisor service's environment. The check identity must not
+be root and must not have access to the HMAC file or control-state directory.
+
+This mode rejects unsupported platforms, non-root supervisors, invalid IDs,
+world/group-readable key files, insecure key parents, and writable workspace
+ancestors without root ownership and sticky-bit protection. A failure stops the
+check with a nonzero result; it never silently falls back to same-user execution.
+Ordinary installations without these variables retain the documented default,
+which **does not protect against a deliberately malicious same-user process**.
+
+This is a Linux user-permissions boundary, **not** a namespace, seccomp, resource
+quota, or network sandbox. Host operators may additionally put the untrusted
+check identity in a separately restricted container/VM and must not grant it
+sensitive groups, writable privileged paths, ambient capabilities or sudo rights.
 
 ## Container/VM boundary
 
