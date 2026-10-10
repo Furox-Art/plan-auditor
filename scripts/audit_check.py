@@ -29,12 +29,8 @@ import zipfile
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-try:
-    from scripts.check_isolation import check_launch_options
-except ImportError:  # direct scripts/audit_check.py entry point
-    from check_isolation import check_launch_options
-
 if TYPE_CHECKING:  # pragma: no cover - type checkers see the single package import
+    from scripts.check_isolation import check_launch_options
     from scripts.contract import PlanTrustError
     from scripts.exec_trust import require_plan_trust
 else:
@@ -42,9 +38,11 @@ else:
     # importable unprefixed. The runtime fallback is required; the TYPE_CHECKING
     # branch keeps static analysis from seeing the names bound twice.
     try:
+        from scripts.check_isolation import check_launch_options
         from scripts.contract import PlanTrustError
         from scripts.exec_trust import require_plan_trust
     except ImportError:
+        from check_isolation import check_launch_options
         from contract import PlanTrustError
         from exec_trust import require_plan_trust
 
