@@ -123,7 +123,7 @@ plan-auditor run . 1
 # is only tamper-evident — anyone with write access can rebuild it — so the
 # gate never treats it as proof. Generate the key OUTSIDE the workspace and
 # point the environment at it:
-python -c "import os, pathlib; d = pathlib.Path.home()/'.plan-auditor'; d.mkdir(exist_ok=True); (d/'plan-auditor-hmac.key').write_bytes(os.urandom(32))"
+python -c "import os, pathlib; d = pathlib.Path.home()/'.plan-auditor'; d.mkdir(exist_ok=True); (d/'plan-auditor-hmac.key').write_bytes(b'plan-auditor: ' + os.urandom(48))"
 export PLAN_AUDITOR_HMAC_KEY_FILE="$HOME/.plan-auditor/plan-auditor-hmac.key"
 plan-auditor integrity init .
 plan-auditor audit .

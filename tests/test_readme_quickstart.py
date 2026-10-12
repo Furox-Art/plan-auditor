@@ -102,10 +102,16 @@ def _install_hmac_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     The key lives next to the (throwaway) workspace but outside it, which is
     what the README instructs. Without it `integrity init` and the final
-    `audit` would run keyless, which by design can no longer pass.
+    `audit` would run keyless, which by design can no longer pass. Any direct
+    `PLAN_AUDITOR_HMAC_KEY` setting left by an earlier test is dropped so the
+    file form is the only configuration in effect.
     """
     key_file = tmp_path / "quickstart-hmac.key"
-    key_file.write_bytes(os.urandom(32))
+    # Fixed printable key: load_key strips whitespace, so any leading or
+    # trailing whitespace byte from os.urandom could drop it below the 32
+    # bytes the loader requires and the failure would look nondeterministic.
+    key_file.write_bytes(b"plan-auditor-quickstart-test-key-material-0123456789abcdef")
+    monkeypatch.delenv("PLAN_AUDITOR_HMAC_KEY", raising=False)
     monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key_file))
 
 
