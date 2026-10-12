@@ -105,12 +105,14 @@ jobs:
         # tamper-evident only and can be rebuilt by anyone with write access,
         # so the gate refuses it. The CI key is a fixed printable value at a
         # path in RUNNER_TEMP — outside the workspace by construction — so it
-        # can never be read from, or written into, the repository.
+        # can never be read from, or written into, the repository. It is
+        # exported inline because GITHUB_ENV only reaches later steps.
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/pa-hmac"
           printf 'plan-auditor-ci-dogfood-key-material-0123456789abcdef' > "$RUNNER_TEMP/pa-hmac/key"
           echo "PLAN_AUDITOR_HMAC_KEY_FILE=$RUNNER_TEMP/pa-hmac/key" >> "$GITHUB_ENV"
+          export PLAN_AUDITOR_HMAC_KEY_FILE="$RUNNER_TEMP/pa-hmac/key"
           plan-auditor integrity init .
       - name: Integrated independent audit (dogfood final gate)
         run: plan-auditor audit .
@@ -154,12 +156,14 @@ jobs:
         shell: bash
         # Same reasoning as the audit job: a keyless chain cannot complete
         # the gate, so CI authenticates its workspace before auditing it. The
-        # key lives in RUNNER_TEMP, never inside the workspace.
+        # key lives in RUNNER_TEMP, never inside the workspace. It is exported
+        # inline because GITHUB_ENV only reaches later steps.
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/pa-hmac"
           printf 'plan-auditor-ci-dogfood-key-material-0123456789abcdef' > "$RUNNER_TEMP/pa-hmac/key"
           echo "PLAN_AUDITOR_HMAC_KEY_FILE=$RUNNER_TEMP/pa-hmac/key" >> "$GITHUB_ENV"
+          export PLAN_AUDITOR_HMAC_KEY_FILE="$RUNNER_TEMP/pa-hmac/key"
           plan-auditor integrity init .
           plan-auditor audit .
       - name: Start real background supervisor
