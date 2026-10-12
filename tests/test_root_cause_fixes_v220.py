@@ -355,7 +355,8 @@ def _legacy_v3_single_step_seal(root: Path, plan: dict) -> None:
         plan_id="legacy",
         sealed_at="2026-09-05T00:00:00+00:00",
         plan_hash="",
-        criteria_count=len(contracted["verify"]),
+        criteria_count=len(contracted["verify"])
+        + sum(len(output.get("verify", [])) for output in contracted["outputs"]),
         steps=[contracted],
         task=plan["task"],
         requirements=plan["requirements"],

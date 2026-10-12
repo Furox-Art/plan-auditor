@@ -69,14 +69,26 @@ def _write_plan(root: Path, status="pending", *, named: str | None = None):
     activate_for_plan(root, plan)
 
 
-def _prepare_real_pass(root: Path):
+def _prepare_real_pass(root: Path, *, authenticated: bool = False):
+    """Drive the real trust flow; ``authenticated=True`` upgrades state to HMAC.
+
+    Order matters: when a key is active the marker is written before any
+    HMAC-backed state exists (a configured key without an initialised marker
+    is a configuration error, not a downgrade), so ``initialize_integrity``
+    runs first, then the request contract, the seal and the evidence are all
+    created and authenticated under the same key. The caller owns the key
+    environment for the whole sequence.
+    """
+    if authenticated:
+        initialize_integrity(root)
     _write_plan(root)
-    # Trust chain in order: the marker must exist before any HMAC-backed seal or
-    # evidence record is written, because a configured key without an init
-    # marker is a configuration error rather than a silent downgrade.
-    initialize_integrity(root)
     assert cli_main(["plan", "verify", str(root)]) == 0
-    assert cli_main(["audit", str(root)]) == 0
+    if authenticated:
+        assert cli_main(["audit", str(root)]) == 0
+    else:
+        # Without a key the audit itself must not report completion either:
+        # fail-closed, not silently passing. The hook gate then refuses too.
+        assert cli_main(["audit", str(root)]) in (1, 2)
 
 
 def test_hook_pass_only_with_authenticated_audit_and_seal():
@@ -86,7 +98,7 @@ def test_hook_pass_only_with_authenticated_audit_and_seal():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         with _hmac_key_for(root):
-            _prepare_real_pass(root)
+            _prepare_real_pass(root, authenticated=True)
             result = _run_hook(d)
         assert result.returncode == 0
         assert "PASS" in result.stdout
@@ -98,7 +110,7 @@ def test_hook_refuses_pass_on_keyless_evidence():
     # must not treat it as proof. The failure names the missing key.
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
-        _prepare_real_pass(root)
+        _prepare_real_pass(root, authenticated=False)
         result = _run_hook(d, fmt="json")
         data = json.loads(result.stdout)
         assert result.returncode != 0
@@ -114,7 +126,7 @@ def test_hook_refuses_pass_when_evidence_chain_is_rebuilt():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         with _hmac_key_for(root):
-            _prepare_real_pass(root)
+            _prepare_real_pass(root, authenticated=True)
         path = root / ".plan-auditor" / "evidence.jsonl"
         records = []
         previous = "GENESIS"
@@ -186,7 +198,7 @@ def test_hook_json_format_reports_authenticated_pass():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         with _hmac_key_for(root):
-            _prepare_real_pass(root)
+            _prepare_real_pass(root, authenticated=True)
             result = _run_hook(d, fmt="json")
         data = json.loads(result.stdout)
         assert data["outcome"] == "PASS"

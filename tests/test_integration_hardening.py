@@ -97,15 +97,23 @@ def test_integrated_gate_requires_seal(tmp_path: Path):
     assert report["seal"]["ok"] is False
 
 
-def test_integrated_gate_passes_with_seal_and_fresh_audit(tmp_path: Path):
+def test_integrated_gate_passes_with_seal_and_fresh_audit(tmp_path: Path, monkeypatch) -> None:
     plan = _write_plan(tmp_path)
     _seal(tmp_path, plan)
+    # Completion requires HMAC-authenticated evidence; a keyless chain is
+    # tamper-evident only and must fail the gate.
+    key_file = tmp_path.parent / "integration-hmac.key"
+    key_file.write_bytes(b"plan-auditor-test-key-material-" * 2)
+    monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key_file))
+    from supervisor.integrity import initialize_integrity
+    initialize_integrity(tmp_path)
     assert core.audit_steps(str(tmp_path), plan, mode="audit") is True
     report = evaluate_workspace(str(tmp_path), profile="standard")
     assert report["outcome"] == "PASS"
     assert report["fresh_audit"]["valid"] is True
     assert report["seal"]["ok"] is True
     assert report["coverage"]["valid"] is True
+    assert report["evidence"]["authenticated"] is True
 
 
 def test_rotation_creates_cross_archive_anchor(tmp_path: Path, monkeypatch):

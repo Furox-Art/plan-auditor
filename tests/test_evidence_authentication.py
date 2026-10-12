@@ -13,12 +13,10 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts import audit_check as core
-from scripts.integrity import UNSIGNED_AUTH, IntegrityKeyError
+from scripts.integrity import UNSIGNED_AUTH
 from supervisor.integrity import initialize_integrity
 
 
@@ -113,10 +111,12 @@ def test_modified_unsigned_auth_descriptor_is_rejected(tmp_path: Path, monkeypat
 
 
 def test_misconfigured_key_state_reports_a_usable_problem(tmp_path: Path, monkeypatch):
+    """Two env forms at once is a configuration error, never a downgrade."""
     workspace = _workspace_without_key(tmp_path, monkeypatch)
     _append_unsigned_record(workspace)
     # Both env forms set at once is a configuration error, never a downgrade.
     monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY", "k" * 64)
     monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", "/dev/null")
-    with pytest.raises((IntegrityKeyError, OSError)):
-        core.evidence_is_authenticated(str(workspace))
+    authenticated, problem = core.evidence_is_authenticated(str(workspace))
+    assert authenticated is False
+    assert "PLAN_AUDITOR_HMAC_KEY" in problem

@@ -341,8 +341,7 @@ def _evaluate_plan(
         monotonic = MonotonicCheck(False, [seal_problem or "plan is not sealed"], [])
     elif seal.format_version < MINIMUM_TRUSTED_SEAL_FORMAT:
         monotonic = MonotonicCheck(False, [
-            "legacy seal requires explicit reseal to full-contract format v%d"
-            % MINIMUM_TRUSTED_SEAL_FORMAT
+            f"legacy seal requires explicit reseal to full-contract format v{MINIMUM_TRUSTED_SEAL_FORMAT}"
         ], [])
     else:
         monotonic = check_monotonic(seal.as_plan(), plan)

@@ -50,7 +50,6 @@ try:
     from scripts.integrity import (
         EVIDENCE_HEAD_DOMAIN,
         EVIDENCE_RECORD_DOMAIN,
-        UNSIGNED_AUTH,
         IntegrityKeyError,
         make_auth,
         runtime_key,
@@ -60,13 +59,11 @@ except ImportError:
     from integrity import (
         EVIDENCE_HEAD_DOMAIN,
         EVIDENCE_RECORD_DOMAIN,
-        UNSIGNED_AUTH,
         IntegrityKeyError,
         make_auth,
         runtime_key,
         verify_auth,
     )
-
 try:
     from scripts.plan_graph import (
         PlanGraphError,
@@ -90,6 +87,9 @@ PG_DIR = ".plan-auditor"
 EVIDENCE_HEAD = "evidence.head.json"
 CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
 MAX_ATTEMPTS = 3
+#: ``auth.alg`` descriptor for records written without a configured HMAC key.
+#: Kept local to avoid widening the dual-import redefinition surface.
+UNSIGNED_ALG = "none"
 ROTATE_BYTES = 2_000_000
 SNAPSHOT_DIR = "snapshots"
 MAX_OUTPUT_BYTES = 2_000_000
@@ -964,7 +964,7 @@ def _write_evidence_record(path, rec, prev=None):
         # Written explicitly rather than left absent so every record states its
         # own trust class: a record with no auth at all cannot be audited for
         # "was this produced without a key, or was the field stripped?".
-        rec["auth"] = dict(UNSIGNED_AUTH)
+        rec["auth"] = {"alg": UNSIGNED_ALG}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(canonical(rec) + "\n")
@@ -1110,7 +1110,7 @@ def verify_chain(base):
             if key is not None:
                 if not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec), auth):
                     return False, count, "line %s: HMAC verification failed" % line_no
-            elif isinstance(auth, dict) and auth.get("alg") == UNSIGNED_AUTH["alg"]:
+            elif isinstance(auth, dict) and auth.get("alg") == UNSIGNED_ALG:
                 # Deliberately unsigned record. The hash chain still binds the
                 # record, but the chain is rebuildable by anyone with write
                 # access to the workspace, so it is tamper-evidence only —
@@ -1170,7 +1170,7 @@ def evidence_is_authenticated(base):
             except json.JSONDecodeError:
                 return False, f"active evidence line {line_no} is not JSON"
             auth = rec.get("auth") if isinstance(rec, dict) else None
-            if isinstance(auth, dict) and auth.get("alg") == UNSIGNED_AUTH["alg"]:
+            if isinstance(auth, dict) and auth.get("alg") == UNSIGNED_ALG:
                 unsigned += 1
             elif auth is None:
                 unsigned += 1
