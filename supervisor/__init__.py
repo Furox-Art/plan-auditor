@@ -1,5 +1,5 @@
 """Plan Auditor — AI Agent Verification Supervisor."""
-__version__ = "2.4.5"
+__version__ = "2.4.6"
 
 from .adversarial import run_adversarial_review
 from .agents import Agent, MultiAgentRegistry

@@ -4,6 +4,12 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+## 2.4.6 — Release alignment
+
+- Publishes the 2.4.5 tree to PyPI and npm. The 2.4.5 commit landed after
+  the 2.4.5 PyPI upload, so both registries were one commit behind main.
+  No behavioural change beyond 2.4.5 itself.
+
 ## 2.4.5 — Opt-in Linux privilege-separated check execution
 
 ### Security
