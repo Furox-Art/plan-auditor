@@ -44,8 +44,14 @@ contains the runtime files and the skill assets, via
    `run`, `pytest`, or `exec` check.
 2. **Requirements are host-owned.** The request contract is sealed before work
    starts; the agent cannot rewrite what you asked for.
-3. **Evidence is append-only and hash-chained.** `plan-auditor evidence verify`
-   re-checks the chain, including rotated archives.
+3. **Evidence is append-only and hash-chained, and evidence that claims
+   completion must be HMAC-authenticated.** `plan-auditor evidence verify`
+   re-checks the chain, including rotated archives. A chain without a
+   configured HMAC key is tamper-evidence only — it can be rebuilt identically
+   by anyone with write access — so the gate refuses to treat it as proof.
+   Set `PLAN_AUDITOR_HMAC_KEY` (or `PLAN_AUDITOR_HMAC_KEY_FILE`, outside the
+   workspace) and run `plan-auditor integrity init .` before the audit you
+   intend to claim.
 4. **Sealed criteria only tighten.** Post-approval, criteria may be added but
    never removed or weakened.
 5. **Unprovable is a failure, not a pass.** Unknown resolves to `FAIL` or
@@ -68,7 +74,11 @@ profile/mode/policy fingerprint. `plan verify` creates it; later audits detect a
 attempt to weaken it.
 
 **Evidence** — An append-only JSONL log where every record carries the SHA-256 of
-the previous one. Tampering with a past record breaks the chain.
+the previous one. Tampering with a past record breaks the chain. Without a
+configured HMAC key every record carries `"auth": {"alg": "none"}`, the chain
+still verifies, and it is still not authentication: the completion gate
+requires an authenticated chain because a keyless one is rebuildable by
+anyone with write access to the workspace.
 
 **Fresh full audit** — `plan-auditor audit` re-runs every check in a new
 subprocess while the workspace is frozen, and fails if the workspace changed

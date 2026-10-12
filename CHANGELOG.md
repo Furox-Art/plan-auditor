@@ -4,6 +4,61 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## Unreleased
 
+## 2.5.0 — Completion gate requires authenticated evidence
+
+### Security
+
+- **C1 — keyless evidence could pass the completion gate.** The hash chain
+  proves records were not *edited* after writing, but without an external HMAC
+  key it can be rebuilt identically by anyone with write access to the
+  workspace. The hook gate treated a rebuilt chain exactly like a genuine one.
+  `scripts/audit_check.py` now separates the two claims: `verify_chain` reports
+  chain integrity, the new `evidence_is_authenticated` reports whether records
+  are attributable to a key holder, and `deterministic_passed` includes that
+  verdict. Every record written without a key carries an explicit
+  `"auth": {"alg": "none"}` descriptor; absence of authentication is reported,
+  never assumed.
+- **H1 — a plain `plan verify` re-sealed plans under an activated request
+  contract.** `--reseal` was refused after activation, but re-verifying an
+  already-sealed workspace with a changed plan still rewrote the seal. Sealing
+  under an activation now requires a new host-approved request generation, for
+  `--reseal` and plain re-verify alike.
+- **H2 — the orchestrator threshold drifted from the contract.** The workspace
+  gate hard-coded `format_version < 3` while every other gate enforced
+  `MINIMUM_TRUSTED_SEAL_FORMAT` (4); both now read the shared constant.
+
+### Changed (behaviour)
+
+- In a keyless workspace the hook no longer reports PASS: it exits non-zero
+  and names the missing `PLAN_AUDITOR_HMAC_KEY` / `PLAN_AUDITOR_HMAC_KEY_FILE`
+  configuration plus `plan-auditor integrity init` as the recovery step.
+  Configure a key before the first audit you intend to claim. This is a
+  deliberate fail-closed behaviour change; the five rules in `docs/index.md`
+  now state it as a rule.
+- `plan verify`'s output for each plan gains the evidence authentication
+  verdict (`plans.<key>.evidence.authenticated` /
+  `.authentication_problem`), and the workspace report gains
+  `evidence.authenticated`.
+
+### Compatibility
+
+- Hash-chain format, seal format, and request-contract format are unchanged.
+  Workspaces sealed without a key keep verifying as tamper-evident state; they
+  simply no longer satisfy the completion gate until a key is configured and
+  `plan-auditor integrity init .` upgrades the existing state.
+
+### Tests
+
+- `tests/test_evidence_authentication.py`: unsigned records carry `alg: none`,
+  a keyless chain is reported as unauthenticated while still chain-valid, an
+  HMAC-backed chain is reported as authenticated, a configured key without a
+  marker fails closed, and an invented auth descriptor is rejected.
+- `tests/test_hooks.py`: PASS requires the authenticated flow; two new gate
+  tests replay the exact bypass (full chain rewrite, `auth: none`) and confirm
+  the hook refuses.
+- Regressions for H1 (re-seal after activation is rejected) and H2
+  (legacy seal rejected at the shared threshold).
+
 ## 2.4.6 — Release alignment
 
 - Publishes the 2.4.5 tree to PyPI and npm. The 2.4.5 commit landed after

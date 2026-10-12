@@ -334,6 +334,7 @@ def _policy_errors(root: Path, cfg) -> list[str]:
 
 def cmd_plan_verify(args: argparse.Namespace) -> int:
     from scripts import audit_check as core
+    from scripts.contract import plan_hash
     from .config import load_config
     from .contracts import environment_contract
     from .plans import load_plan_ref, seal_path
@@ -424,6 +425,25 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
                     "status": "rejected",
                     "violations": monotonic.violations + env_check.violations,
                     "improvements": monotonic.improvements,
+                }
+                outputs[ref.key] = output
+                final_rc = max(final_rc, 2)
+                continue
+            # A host-owned request contract owns these criteria. Re-sealing here
+            # would silently re-apply a *different* seal to the same activation,
+            # so the --reseal refusal above is extended to plain re-verify: even
+            # an improvement-only re-seal must go through a new request
+            # generation, never a local rewrite.
+            if request_status.activated and existing.plan_hash != plan_hash(plan):
+                output["seal"] = {
+                    "status": "rejected",
+                    "violations": [
+                        "plan changed after the request activation; the activated "
+                        "request contract owns these criteria. Create a new "
+                        "host-approved request generation instead of re-sealing"
+                    ],
+                    "sealed_plan_hash": existing.plan_hash,
+                    "current_plan_hash": plan_hash(plan),
                 }
                 outputs[ref.key] = output
                 final_rc = max(final_rc, 2)

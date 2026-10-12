@@ -28,7 +28,14 @@ implementing agent's claims carry no weight — only sealed command output does.
 - Every step is a machine-checkable requirement, not a prose bullet.
 - Every step needs at least one **behavioral** check (`run`, `pytest`, `exec`). A
   file-existence check can never verify a step on its own.
-- Output is appended to a SHA-256 hash-chained, tamper-evident log.
+- Output is appended to a SHA-256 hash-chained log, and completion claims
+  require that chain to be **HMAC-authenticated**. A hash chain alone is only
+  tamper-evident — anyone with write access to the workspace can rebuild an
+  identical one — so configure `PLAN_AUDITOR_HMAC_KEY` (or
+  `PLAN_AUDITOR_HMAC_KEY_FILE` pointing outside the workspace) and run
+  `plan-auditor integrity init .` before the audit you intend to claim. Records
+  written without a key carry `"auth": {"alg": "none"}` and never pass the
+  completion gate.
 - The plan's verification contract is **sealed** on approval and can only be
   strengthened afterwards, never weakened.
 - A failed check fails closed: `audit` exits non-zero until every check really passes.
