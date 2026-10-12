@@ -7,6 +7,17 @@ carry a different version than ``supervisor.__version__``, than the npm
 three different numbers for one artifact and ``pip`` cannot reason about which
 is authoritative.
 
+Two families are checked, because they are two different facts:
+
+* the **shipped tree** family below, which must be exactly identical, and
+* the **published version** family — the release number the documents call
+  current on PyPI and npm, held by ``docs/check_attestation_claims.py``. That
+  one lags the tree on purpose while a release is in flight, so it is checked
+  against the changelog instead of against the tree: it must name a real
+  release heading and must never be *newer* than the tree. Registering it in the
+  equality family would either force a version to be pushed before it is built
+  or push the guard's pin out of agreement with the documents it checks.
+
 This script only reads files. It never rewrites a version, because a silent
 rewrite would hide which source of truth drifted.
 """
@@ -75,6 +86,75 @@ def _changelog_latest() -> str:
     return max(releases, key=key)
 
 
+def _changelog_releases() -> list[str]:
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    return CHANGELOG_RELEASE.findall(text)
+
+
+def _attestation_guard_pin() -> str:
+    """The release number ``docs/check_attestation_claims.py`` calls current.
+
+    Read as text, not imported: ``docs/`` is not an importable package, and a
+    regex on a literal assignment is the same contract this script already uses
+    for ``SKILL.md`` and ``CITATION.cff``.
+    """
+    text = (ROOT / "docs" / "check_attestation_claims.py").read_text(encoding="utf-8")
+    match = re.search(r'^CURRENT_VERSION = "([^"]+)"', text, re.MULTILINE)
+    if match is None:
+        raise SystemExit(
+            "docs/check_attestation_claims.py does not define a literal "
+            "CURRENT_VERSION assignment; this check needs a statically readable value."
+        )
+    return match.group(1)
+
+
+def published_version_family(tree_version: str) -> int:
+    """Check the published-version family. Returns a process exit code.
+
+    The guard's pin is the version its rules call current on the registries, so
+    the invariants are that it names a real release and that it never claims a
+    version ahead of what this tree ships. The documents' *agreement* with the
+    pin is the guard's own job, run separately in CI.
+    """
+    pin = _attestation_guard_pin()
+    releases = _changelog_releases()
+    print("=== published-version family ===")
+    print(f"  {'docs/check_attestation_claims.py (CURRENT_VERSION)':40s} {pin}")
+    print(f"  {'shipped tree version':40s} {tree_version}")
+
+    problems: list[str] = []
+    if not SEMVER.match(pin):
+        problems.append(f"not a plain semantic version: {pin!r}")
+    if pin not in releases:
+        problems.append(
+            f"CURRENT_VERSION is {pin}, which is not a '## vX.Y.Z' release heading "
+            "in CHANGELOG.md; the guard must pin a release that actually exists"
+        )
+    if SEMVER.match(pin) and SEMVER.match(tree_version):
+
+        def key(version: str) -> tuple[int, ...]:
+            return tuple(int(part) for part in version.split("."))
+
+        if key(pin) > key(tree_version):
+            problems.append(
+                f"CURRENT_VERSION is {pin}, newer than the shipped tree version "
+                f"{tree_version}; the documents cannot call an unreleased version current"
+            )
+    if problems:
+        print("\nPUBLISHED-VERSION DRIFT: " + "; ".join(problems))
+        print(
+            "Either release the version, or re-point the guard at the newest published "
+            "release and update the documents it checks with it. This check never "
+            "rewrites a version for you."
+        )
+        return 1
+    if pin == tree_version:
+        print(f"\npin {pin} equals the shipped tree version")
+    else:
+        print(f"\npin {pin} is a released version at or behind {tree_version}")
+    return 0
+
+
 def main() -> int:
     sources = {
         "pyproject.toml": _pyproject_version(),
@@ -104,7 +184,7 @@ def main() -> int:
         return 1
 
     print(f"\nall sources agree on {unique[0]}")
-    return 0
+    return published_version_family(unique[0])
 
 
 if __name__ == "__main__":

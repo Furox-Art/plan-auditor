@@ -73,6 +73,15 @@ jobs:
           python-version: "3.12"
       - name: Require one version across pyproject, runtime, npm, skill, citation and changelog
         run: python .github/scripts/check_version_lockstep.py
+      # The attestation guard is the only check that reads the prose of the
+      # documents that state current facts, so a version or provenance claim that
+      # drifts there is invisible to every other job. It runs offline by default;
+      # --online re-measures both registries and is deliberately not part of a
+      # push run, because a registry outage would then fail unrelated work.
+      - name: Guard supply-chain attestation claims — negative control
+        run: python docs/check_attestation_claims.py --self-test
+      - name: Guard supply-chain attestation claims (fail on drift)
+        run: python docs/check_attestation_claims.py
 
   workflows:
     name: workflow-syntax
