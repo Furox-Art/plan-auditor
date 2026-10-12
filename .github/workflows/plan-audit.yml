@@ -99,6 +99,19 @@ jobs:
         run: python -m pytest examples/fib/test_fib.py -q
       - name: Verify and seal plan
         run: plan-auditor plan verify .
+      - name: Upgrade integrity to HMAC-authenticated (CI key)
+        shell: bash
+        # Completion requires authenticated evidence: a keyless chain is
+        # tamper-evident only and can be rebuilt by anyone with write access,
+        # so the gate refuses it. The CI key is a fixed printable value at a
+        # path in RUNNER_TEMP — outside the workspace by construction — so it
+        # can never be read from, or written into, the repository.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pa-hmac"
+          printf 'plan-auditor-ci-dogfood-key-material-0123456789abcdef' > "$RUNNER_TEMP/pa-hmac/key"
+          echo "PLAN_AUDITOR_HMAC_KEY_FILE=$RUNNER_TEMP/pa-hmac/key" >> "$GITHUB_ENV"
+          plan-auditor integrity init .
       - name: Integrated independent audit (dogfood final gate)
         run: plan-auditor audit .
       - name: Installed CLI health smoke test
@@ -136,8 +149,18 @@ jobs:
       - name: Activate immutable host request contract
         run: plan-auditor request init . --file .plan-auditor/request-source.json
       - name: Prepare sealed and audited workspace
+        run: plan-auditor plan verify .
+      - name: Upgrade integrity to HMAC-authenticated (CI key)
+        shell: bash
+        # Same reasoning as the audit job: a keyless chain cannot complete
+        # the gate, so CI authenticates its workspace before auditing it. The
+        # key lives in RUNNER_TEMP, never inside the workspace.
         run: |
-          plan-auditor plan verify .
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pa-hmac"
+          printf 'plan-auditor-ci-dogfood-key-material-0123456789abcdef' > "$RUNNER_TEMP/pa-hmac/key"
+          echo "PLAN_AUDITOR_HMAC_KEY_FILE=$RUNNER_TEMP/pa-hmac/key" >> "$GITHUB_ENV"
+          plan-auditor integrity init .
           plan-auditor audit .
       - name: Start real background supervisor
         run: plan-auditor supervisor start --profile standard --mode serial .
