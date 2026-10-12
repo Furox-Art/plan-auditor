@@ -66,13 +66,18 @@ def test_only_named_plan_is_not_treated_as_no_plan(tmp_path: Path) -> None:
     assert set(report["plans"]) == {"backend"}
 
 
-def test_named_pending_plan_blocks_global_pass(tmp_path: Path) -> None:
+def test_named_pending_plan_blocks_global_pass(tmp_path: Path, monkeypatch) -> None:
     default = _plan(marker="default.txt")
     named = _plan(task="named plan", marker="named.txt")
     _write_plan(tmp_path, default)
     _write_plan(tmp_path, named, "backend")
     assert cli_main(["plan", "verify", str(tmp_path)]) == 0
     assert core.audit_steps(str(tmp_path), default, mode="audit") is True
+    key_file = tmp_path.parent / "hardening-hmac.key"
+    key_file.write_bytes(b"plan-auditor-test-key-material-" * 2)
+    monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key_file))
+    from supervisor.integrity import initialize_integrity
+    initialize_integrity(tmp_path)
     report = evaluate_workspace(str(tmp_path))
     assert report["plans"]["default"]["outcome"] == "PASS"
     assert report["plans"]["backend"]["outcome"] == "FAIL"

@@ -133,6 +133,11 @@ def verify_jsonl_chain(
                         key, EVIDENCE_RECORD_DOMAIN, _auth_payload(rec), auth
                     ):
                         return False, count - 1, f"line {line_no}: HMAC authentication failed"
+                elif isinstance(auth, dict) and auth.get("alg") == "none":
+                    # Deliberately unsigned record. The chain still binds the
+                    # record, but it is not authentication — the gate judges
+                    # that through the authenticated flag, not the chain check.
+                    pass
                 elif auth is not None and key is None:
                     return False, count - 1, f"line {line_no}: authenticated record requires HMAC key"
                 elif auth is not None and key is not None and not verify_auth(

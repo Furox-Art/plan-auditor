@@ -28,7 +28,14 @@ implementing agent's claims carry no weight — only sealed command output does.
 - Every step is a machine-checkable requirement, not a prose bullet.
 - Every step needs at least one **behavioral** check (`run`, `pytest`, `exec`). A
   file-existence check can never verify a step on its own.
-- Output is appended to a SHA-256 hash-chained, tamper-evident log.
+- Output is appended to a SHA-256 hash-chained log, and completion claims
+  require that chain to be **HMAC-authenticated**. A hash chain alone is only
+  tamper-evident — anyone with write access to the workspace can rebuild an
+  identical one — so configure `PLAN_AUDITOR_HMAC_KEY` (or
+  `PLAN_AUDITOR_HMAC_KEY_FILE` pointing outside the workspace) and run
+  `plan-auditor integrity init .` before the audit you intend to claim. Records
+  written without a key carry `"auth": {"alg": "none"}` and never pass the
+  completion gate.
 - The plan's verification contract is **sealed** on approval and can only be
   strengthened afterwards, never weakened.
 - A failed check fails closed: `audit` exits non-zero until every check really passes.
@@ -111,6 +118,14 @@ statement of what you asked for, sealed on activation so the agent cannot restat
 plan-auditor request init . --file request-source.json
 plan-auditor plan verify .
 plan-auditor run . 1
+
+# Before claiming completion, authenticate the evidence chain. A keyless chain
+# is only tamper-evident — anyone with write access can rebuild it — so the
+# gate never treats it as proof. Generate the key OUTSIDE the workspace and
+# point the environment at it:
+python -c "import os, pathlib; d = pathlib.Path.home()/'.plan-auditor'; d.mkdir(exist_ok=True); (d/'plan-auditor-hmac.key').write_bytes(b'plan-auditor: ' + os.urandom(48))"
+export PLAN_AUDITOR_HMAC_KEY_FILE="$HOME/.plan-auditor/plan-auditor-hmac.key"
+plan-auditor integrity init .
 plan-auditor audit .
 ```
 
@@ -137,8 +152,12 @@ $ plan-auditor run . 1
 [OK ] step 1: README.md exists and is readable (attempt 1/3)
        - passed | README.md EXISTS
        - passed | exit=0 (expected 0)
+$ plan-auditor integrity init .
+{
+  "authenticated": true,
+  ...
+}
 $ plan-auditor audit .
-...
 {
   "outcome": "PASS",
   "plans": {

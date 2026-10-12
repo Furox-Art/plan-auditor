@@ -64,7 +64,6 @@ except ImportError:
         runtime_key,
         verify_auth,
     )
-
 try:
     from scripts.plan_graph import (
         PlanGraphError,
@@ -88,6 +87,9 @@ PG_DIR = ".plan-auditor"
 EVIDENCE_HEAD = "evidence.head.json"
 CHECK_TYPES = {"run", "exec", "file_exists", "regex", "pytest"}
 MAX_ATTEMPTS = 3
+#: ``auth.alg`` descriptor for records written without a configured HMAC key.
+#: Kept local to avoid widening the dual-import redefinition surface.
+UNSIGNED_ALG = "none"
 ROTATE_BYTES = 2_000_000
 SNAPSHOT_DIR = "snapshots"
 MAX_OUTPUT_BYTES = 2_000_000
@@ -958,6 +960,11 @@ def _write_evidence_record(path, rec, prev=None):
     rec["hash"] = hashlib.sha256(canonical(_evidence_hash_payload(rec)).encode("utf-8")).hexdigest()
     if key is not None:
         rec["auth"] = make_auth(key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec))
+    else:
+        # Written explicitly rather than left absent so every record states its
+        # own trust class: a record with no auth at all cannot be audited for
+        # "was this produced without a key, or was the field stripped?".
+        rec["auth"] = {"alg": UNSIGNED_ALG}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(canonical(rec) + "\n")
@@ -1103,7 +1110,19 @@ def verify_chain(base):
             if key is not None:
                 if not verify_auth(key, EVIDENCE_RECORD_DOMAIN, _evidence_auth_payload(rec), auth):
                     return False, count, "line %s: HMAC verification failed" % line_no
-            elif auth is not None:
+            elif isinstance(auth, dict) and auth.get("alg") == UNSIGNED_ALG:
+                # Deliberately unsigned record. The hash chain still binds the
+                # record, but the chain is rebuildable by anyone with write
+                # access to the workspace, so it is tamper-evidence only —
+                # NOT authentication. The completion gate gets that verdict
+                # from evidence_is_authenticated, not from this function.
+                pass
+            elif auth is None:
+                # Records written before unsigned records carried an explicit
+                # descriptor are treated as unsigned under the same rule:
+                # absence of authentication is reported, never assumed.
+                pass
+            else:
                 return False, count, "line %s: authenticated evidence requires an HMAC key" % line_no
             prev = actual
             count += 1
@@ -1114,6 +1133,60 @@ def verify_chain(base):
     elif os.path.isfile(_evidence_head_path(base)):
         return False, count, "authenticated evidence head requires HMAC key"
     return True, count, ""
+
+
+def evidence_is_authenticated(base):
+    """Report whether the active evidence chain is HMAC-authenticated.
+
+    A hash chain proves only that the records have not been edited since they
+    were written. Without an external HMAC key it can be rebuilt identically,
+    so it is tamper-evidence, not proof of authorship. This function separates
+    the two questions the gate depends on: ``verify_chain`` reports chain
+    integrity; this reports whether the records are attributable to a key
+    holder. Any state that is not an authenticated key-backed chain — a key
+    resolution failure, unsigned records, records predating the explicit
+    descriptor, or a chain that cannot exist yet — fails closed, with a reason
+    the operator can act on.
+    """
+    try:
+        key = runtime_key(base)
+    except IntegrityKeyError as exc:
+        return False, f"integrity configuration is not usable: {exc}"
+    if key is not None:
+        return True, ""
+    path = evidence_path(base)
+    if not os.path.isfile(path):
+        return False, ("no active evidence chain exists, so there is nothing to "
+                       "authenticate; the completion gate cannot treat a "
+                       "keyless chain as proof of completion")
+    unsigned = 0
+    with open(path, encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                return False, f"active evidence line {line_no} is not JSON"
+            auth = rec.get("auth") if isinstance(rec, dict) else None
+            if isinstance(auth, dict) and auth.get("alg") == UNSIGNED_ALG:
+                unsigned += 1
+            elif auth is None:
+                unsigned += 1
+            else:
+                return False, (
+                    f"active evidence line {line_no} carries an unrecognised auth "
+                    "descriptor; a key was configured or the record was tampered "
+                    "with after being written"
+                )
+    if unsigned == 0:
+        return False, "active evidence chain contains no records to authenticate"
+    return False, (
+        f"{unsigned} active evidence record(s) are unsigned because no "
+        f"{'PLAN_AUDITOR_HMAC_KEY'} or PLAN_AUDITOR_HMAC_KEY_FILE is configured; "
+        "a keyless chain is tamper-evident only and cannot gate completion"
+    )
 
 
 # ---------------------------------------------------------------- snapshot / rollback

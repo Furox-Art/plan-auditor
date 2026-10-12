@@ -96,20 +96,41 @@ def _argv(command: str, workspace: Path) -> list[str]:
     return resolved
 
 
+def _install_hmac_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure the workspace-external HMAC key the quick start documents.
+
+    The key lives next to the (throwaway) workspace but outside it, which is
+    what the README instructs. Without it `integrity init` and the final
+    `audit` would run keyless, which by design can no longer pass. Any direct
+    `PLAN_AUDITOR_HMAC_KEY` setting left by an earlier test is dropped so the
+    file form is the only configuration in effect.
+    """
+    key_file = tmp_path / "quickstart-hmac.key"
+    # Fixed printable key: load_key strips whitespace, so any leading or
+    # trailing whitespace byte from os.urandom could drop it below the 32
+    # bytes the loader requires and the failure would look nondeterministic.
+    key_file.write_bytes(b"plan-auditor-quickstart-test-key-material-0123456789abcdef")
+    monkeypatch.delenv("PLAN_AUDITOR_HMAC_KEY", raising=False)
+    monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key_file))
+
+
 def test_readme_quickstart_commands_really_run_and_pass(
-    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture
+    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    workspace = _workspace(tmp_path, quickstart)
     commands: list[str] = quickstart["commands"]
     assert commands == [
         "plan-auditor request init . --file request-source.json",
         "plan-auditor plan verify .",
         "plan-auditor run . 1",
+        "plan-auditor integrity init .",
         "plan-auditor audit .",
     ], "quick start command list changed; keep it in sync with the transcript"
 
+    workspace = _workspace(tmp_path, quickstart)
     observed: list[str] = []
     for command in commands:
+        if command.startswith("plan-auditor integrity init"):
+            _install_hmac_key(tmp_path, monkeypatch)
         code = main(_argv(command, workspace))
         observed.append(capfd.readouterr().out)
     captured = _mask("".join(observed))
@@ -171,13 +192,13 @@ def _chunks_by_command(text: str) -> dict[str, str]:
 
 
 def test_readme_quickstart_hashes_are_not_normalised_away(
-    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture
+    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every hash in the transcript must be the one the CLI actually printed.
 
-    ``_mask`` exists so that the line-level comparison above is not defeated by a
-    re-ordered evidence chain, but it also means that comparison alone cannot see a
-    *wrong* hash: substituting any 64-hex string passes. That was verified by
+    ``_mask`` exists so that the line-level comparison above is not defeated by
+    a re-ordered evidence chain, but it also means that comparison alone cannot see
+    a *wrong* hash: substituting any 64-hex string passes. That was verified by
     mutation -- replacing ``request_sha256`` with ``dead0...`` left the whole suite
     green, because the check is a subset test over masked text.
 
@@ -187,6 +208,8 @@ def test_readme_quickstart_hashes_are_not_normalised_away(
     workspace = _workspace(tmp_path, quickstart)
     observed: list[str] = []
     for command in quickstart["commands"]:
+        if command.startswith("plan-auditor integrity init"):
+            _install_hmac_key(tmp_path, monkeypatch)
         main(_argv(command, workspace))
         observed.append(capfd.readouterr().out)
     verbatim = "".join(observed).replace("\r\n", "\n")
@@ -203,7 +226,7 @@ def test_readme_quickstart_hashes_are_not_normalised_away(
 
 
 def test_readme_quickstart_json_keys_match_the_real_output(
-    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture
+    tmp_path: Path, quickstart: dict, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A JSON block that elides nothing must document every key the tool emits.
 
@@ -216,6 +239,8 @@ def test_readme_quickstart_json_keys_match_the_real_output(
     workspace = _workspace(tmp_path, quickstart)
     observed: list[str] = []
     for command in quickstart["commands"]:
+        if command.startswith("plan-auditor integrity init"):
+            _install_hmac_key(tmp_path, monkeypatch)
         main(_argv(command, workspace))
         observed.append(capfd.readouterr().out)
 

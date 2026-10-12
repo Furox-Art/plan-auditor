@@ -78,6 +78,33 @@ def test_reseal_is_disabled_after_activation(tmp_path: Path):
     assert cli_main(["plan", "verify", str(tmp_path), "--reseal"]) == 2
 
 
+def test_reverify_after_plan_edit_under_active_request_is_not_a_local_reseal(tmp_path: Path):
+    """The red line does not reopen just because --reseal was not passed.
+
+    ``--reseal`` is refused after activation, but a plain ``plan verify`` on an
+    already-sealed workspace used to still rewrite the seal. Editing the plan
+    (hash changes, request alignment intact) and re-verifying must not produce
+    a new seal for the same activation — the host owns those criteria.
+    """
+    from scripts.contract import plan_hash
+    from supervisor.plans import seal_path
+    from supervisor.sealing import load_seal
+
+    initialize_request(tmp_path, _request(_req("REQ-1", "behavior")))
+    plan = _plan([{"id": "REQ-1", "description": "behavior", "priority": "must"}])
+    _write(tmp_path, plan)
+    assert cli_main(["plan", "verify", str(tmp_path)]) == 0
+
+    plan["steps"][0]["title"] = "edited-after-activation"
+    _write(tmp_path, plan)
+    assert cli_main(["plan", "verify", str(tmp_path)]) == 2
+
+    seal = load_seal(str(seal_path(tmp_path, "default")))
+    assert seal is not None
+    # The seal on disk still reflects the plan that was actually approved.
+    assert seal.plan_hash != plan_hash(plan)
+
+
 def test_multistep_plan_requires_explicit_dependencies(tmp_path: Path):
     plan = {
         "task": "two steps",

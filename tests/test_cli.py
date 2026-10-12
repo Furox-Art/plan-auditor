@@ -52,9 +52,16 @@ def test_cli_plan_verify_seals_full_contract(tmp_path: Path) -> None:
     assert seal["environment"]["profile"] == "standard"
 
 
-def test_cli_audit_runs_fresh_core_and_passes(tmp_path: Path) -> None:
+def test_cli_audit_runs_fresh_core_and_passes(tmp_path: Path, monkeypatch) -> None:
     _write_plan(tmp_path)
     assert main(["plan", "verify", str(tmp_path)]) == 0
+    # A keyless evidence chain is tamper-evident only and can no longer pass
+    # the completion gate, so authenticate the workspace before the audit.
+    key_file = tmp_path.parent / "cli-hmac.key"
+    key_file.write_bytes(b"plan-auditor-test-key-material-" * 2)
+    monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key_file))
+    from supervisor.integrity import initialize_integrity
+    initialize_integrity(tmp_path)
     assert main(["audit", str(tmp_path)]) == 0
     plan = json.loads((tmp_path / ".plan-auditor" / "plan.json").read_text(encoding="utf-8"))
     assert plan["steps"][0]["status"] == "verified"

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from scripts import audit_check as core
+from scripts.contract import MINIMUM_TRUSTED_SEAL_FORMAT
 from scripts.plan_graph import (
     PlanGraphError,
     effective_dependencies,
@@ -307,6 +308,8 @@ def _evaluate_plan(
     evidence_valid: bool,
     evidence_count: int,
     evidence_problem: str,
+    evidence_authenticated: bool,
+    evidence_authentication_problem: str,
     archive_result: Dict[str, Any],
     registry: MultiAgentRegistry,
     registry_ok: bool,
@@ -336,8 +339,10 @@ def _evaluate_plan(
     environment_check: Optional[MonotonicCheck] = None
     if seal is None:
         monotonic = MonotonicCheck(False, [seal_problem or "plan is not sealed"], [])
-    elif seal.format_version < 3:
-        monotonic = MonotonicCheck(False, ["legacy seal requires explicit reseal to full-contract format v3"], [])
+    elif seal.format_version < MINIMUM_TRUSTED_SEAL_FORMAT:
+        monotonic = MonotonicCheck(False, [
+            f"legacy seal requires explicit reseal to full-contract format v{MINIMUM_TRUSTED_SEAL_FORMAT}"
+        ], [])
     else:
         monotonic = check_monotonic(seal.as_plan(), plan)
         environment_check = check_environment(seal, env)
@@ -372,8 +377,13 @@ def _evaluate_plan(
         "policy_errors": list(policy_errors),
     }
 
+    # A tamper-evident chain is not proof. Without an external HMAC key anyone
+    # with write access to the workspace can rebuild the chain identically, so
+    # the gate refuses PASS on unauthenticated evidence instead of treating it
+    # as a completed audit.
     deterministic_passed = (
-        plan_ok and proof.valid and evidence_valid and seal_ok and cfg.valid and not policy_errors
+        plan_ok and proof.valid and evidence_valid and evidence_authenticated
+        and seal_ok and cfg.valid and not policy_errors
     )
     gate = CompletionGate(engine)
     report = gate.evaluate(
@@ -383,6 +393,10 @@ def _evaluate_plan(
         seal_check=seal_check,
         adversarial_findings=adversarial.findings,
     )
+    if not evidence_authenticated:
+        problem = f"evidence is not authenticated: {evidence_authentication_problem}"
+        if problem not in report.notes:
+            report.notes.append(problem)
 
     goals = GoalModel(
         beliefs=Beliefs(
@@ -426,6 +440,8 @@ def _evaluate_plan(
             "active_chain_valid": evidence_valid,
             "active_records": evidence_count,
             "active_problem": evidence_problem,
+            "authenticated": evidence_authenticated,
+            "authentication_problem": evidence_authentication_problem,
             "archive": archive_result,
         },
         "fresh_audit": proof.as_dict(),
@@ -515,6 +531,9 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
     active_ok, evidence_count, evidence_problem = core.verify_chain(str(root))
     archive_result = verify_anchor_chain(str(root / ".plan-auditor" / "archive"))
     evidence_valid = active_ok and archive_result.get("anchored") is True
+    evidence_authenticated, evidence_authentication_problem = core.evidence_is_authenticated(
+        str(root)
+    )
 
     registry = MultiAgentRegistry(str(root), owner_timeout=cfg.owner_timeout_sec)
     released = registry.release_stale_ownership()
@@ -535,7 +554,9 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
     for ref in refs:
         plans[ref.key] = _evaluate_plan(
             root, ref, cfg, workspace_state, logs,
-            evidence_valid, evidence_count, evidence_problem, archive_result,
+            evidence_valid, evidence_count, evidence_problem,
+            evidence_authenticated, evidence_authentication_problem,
+            archive_result,
             registry, registry_ok, conflicts, policy_rules, policy_errors,
         )
 
@@ -573,6 +594,8 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
             "active_chain_valid": active_ok,
             "active_records": evidence_count,
             "active_problem": evidence_problem,
+            "authenticated": evidence_authenticated,
+            "authentication_problem": evidence_authentication_problem,
             "archive": archive_result,
         },
     }

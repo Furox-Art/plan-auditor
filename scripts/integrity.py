@@ -21,6 +21,15 @@ ENV_KEY_FILE = "PLAN_AUDITOR_HMAC_KEY_FILE"
 MARKER_NAME = "integrity.json"
 MIN_KEY_BYTES = 32
 
+#: Auth descriptor written on every record produced without a configured HMAC
+#: key. It is deliberately explicit: a chain built without it is still
+#: tamper-evident, but it is NOT authenticated — anyone with write access to the
+#: workspace can rebuild it identically — so the completion gate refuses to
+#: treat it as proof. Records without this descriptor predate the feature and
+#: are treated as unsigned by the same rule: absence of authentication is
+#: reported, never assumed.
+UNSIGNED_AUTH = {"alg": "none"}
+
 EVIDENCE_RECORD_DOMAIN = "plan-auditor:evidence-record:v1"
 EVIDENCE_HEAD_DOMAIN = "plan-auditor:evidence-head:v1"
 REGISTRY_RECORD_DOMAIN = "plan-auditor:registry-record:v1"

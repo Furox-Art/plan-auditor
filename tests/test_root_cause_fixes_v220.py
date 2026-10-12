@@ -334,3 +334,80 @@ def test_genuine_v3_raw_dependency_hash_has_safe_v4_migration_path(tmp_path: Pat
     assert migrated is not None
     assert migrated.format_version == 4
     assert migrated.environment == env
+
+
+def _legacy_v3_single_step_seal(root: Path, plan: dict) -> None:
+    """Write a raw v3 seal exactly as released v2.1.0 emitted it."""
+    pg = root / ".plan-auditor"
+    cfg = load_config(str(root))
+    env = environment_contract(root, cfg)
+    env.pop("request_sha256", None)
+    contracted = {
+        "id": plan["steps"][0].get("id"),
+        "title": plan["steps"][0].get("title"),
+        "depends_on": plan["steps"][0].get("depends_on"),
+        "requires_outputs": plan["steps"][0].get("requires_outputs", []),
+        "outputs": plan["steps"][0].get("outputs", []),
+        "covers": plan["steps"][0].get("covers", []),
+        "verify": plan["steps"][0].get("verify", []),
+    }
+    seal = Seal(
+        plan_id="legacy",
+        sealed_at="2026-09-05T00:00:00+00:00",
+        plan_hash="",
+        criteria_count=len(contracted["verify"])
+        + sum(len(output.get("verify", [])) for output in contracted["outputs"]),
+        steps=[contracted],
+        task=plan["task"],
+        requirements=plan["requirements"],
+        required_tools=[],
+        environment=env,
+        format_version=3,
+    )
+    seal.plan_hash = legacy_v3_plan_hash(seal.as_plan())
+    pg.mkdir(parents=True, exist_ok=True)
+    save_seal(seal, str(pg / "seal.json"))
+
+
+def test_workspace_gate_rejects_legacy_seal_below_the_shared_threshold(tmp_path: Path) -> None:
+    """The orchestrator must reject seals at the contract's threshold, not its own.
+
+    It hard-coded ``format_version < 3`` while the pre-execution gate and the
+    CLI used ``MINIMUM_TRUSTED_SEAL_FORMAT`` (4). A v3 seal could therefore fail
+    closed in one path and validate in the other, and any future threshold bump
+    would leave the workspace gate silently behind.
+    """
+    from supervisor.orchestrator import evaluate_workspace
+
+    root = tmp_path
+    plan = _plan()
+    (root / "result.txt").write_text("ok", encoding="utf-8")
+    pg = root / ".plan-auditor"
+    pg.mkdir(parents=True)
+    (pg / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    initialize_request(
+        root,
+        {
+            "format_version": 1,
+            "task": "produce verified result",
+            "requirements": [
+                {
+                    "id": "REQ-1",
+                    "description": "produce result",
+                    "priority": "must",
+                    "acceptance_checks": plan["steps"][0]["verify"],
+                }
+            ],
+        },
+    )
+    _legacy_v3_single_step_seal(root, plan)
+
+    report = evaluate_workspace(str(root))
+    seal_result = report["plans"]["default"]["seal"]
+    assert seal_result["present"] is True
+    assert seal_result["ok"] is False
+    assert report["outcome"] != "PASS"
+    assert any(
+        "full-contract format v4" in violation
+        for violation in seal_result.get("violations", [])
+    )
