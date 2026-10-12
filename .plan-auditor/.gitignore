@@ -1,0 +1,15 @@
+# Generated plan-auditor state. Everything under this directory is machine
+# output: evidence chains, seals, the agent registry, monitor checkpoints and
+# daemon state. Ignoring it by default means a new runtime file is protected
+# from an accidental commit the moment the tool writes it, instead of only
+# after somebody notices it and adds a line to the repository .gitignore.
+#
+# Hand-authored input is re-included below. ``plan.json`` (and any named plan
+# under ``plans/``) is what you write; ``request-source.json`` is the host
+# request the workspace was activated from; ``.gitignore`` is this file.
+*
+!.gitignore
+!plan.json
+!request-source.json
+!plans/
+!/plans/**
