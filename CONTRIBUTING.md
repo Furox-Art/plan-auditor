@@ -60,7 +60,7 @@ Other suites worth running before you open a pull request:
 | `python -m pytest tests/ -q --cov --cov-report=term-missing` | The same coverage command CI runs, with the per-module table. |
 | `npm test` | The Node launcher and `bin` entry point parse. |
 | `npm run test:contract` | The launcher keeps the caller's working directory, propagates exit codes and fails closed. |
-| `npm run test:tarball` | The packed tarball has no `__pycache__`, venv, build output or `*.test.js`, and does carry what the launcher needs. |
+| `npm run test:all` | Runs the launcher, publishing-mode, lifecycle and packed-tarball/installed-launcher gate checks. |
 | `python -m mkdocs build --strict` | The documentation site still builds with no warnings. |
 
 Do not pass `--cov=supervisor --cov=scripts`. `pytest-cov` reads `branch`,
@@ -263,7 +263,7 @@ record is in the "The two published `2.4.1` builds" section of
    twine check --strict dist/*
    python .github/scripts/check_dist_assets.py
    npm pack --dry-run
-   npm run test:tarball
+   npm run test:all
    ```
 
 3. Move the `Unreleased` section of the changelog under the new version heading.
@@ -271,7 +271,8 @@ record is in the "The two published `2.4.1` builds" section of
    runs the suite, smoke-tests the wheel on Linux, Windows and macOS, checks the
    distributions, and **skips publishing if the version already exists on PyPI** —
    so an unchanged version number will silently not publish. Publishing uses OIDC
-   trusted publishing only; there is no long-lived token in repository secrets.
+   trusted publishing on the verified 2.6.0 release; the workflow also contains
+   an explicit token fallback, so future releases must inspect the selected mode.
    Creating the GitHub release is gated on the same version-existence check, so a
    re-run cannot append a second copy of the notes.
 5. npm: the publish workflow triggers on any change to `package.json`,
