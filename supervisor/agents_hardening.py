@@ -13,7 +13,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import List, Set
+from typing import Any, List, Set
 
 from . import agents as _agents
 from .agents import Agent, Conflict, MultiAgentRegistry, RegistryIntegrityError
@@ -203,11 +203,38 @@ def _copy_agent(agent: Agent) -> Agent:
     return Agent.from_dict(agent.to_dict())
 
 
-def install_agent_hardening() -> None:
-    if getattr(MultiAgentRegistry, "_canonical_path_hardening_installed", False):
-        return
+HARDENED_METHODS = (
+    "verify_registry_chain",
+    "register",
+    "unregister",
+    "heartbeat",
+    "update_ownership",
+    "active_agents",
+    "stale_agents",
+    "release_stale_ownership",
+    "check_conflicts",
+    "claim_files",
+    "write_lock",
+    "is_lock_stale",
+)
 
-    original_write_lock = MultiAgentRegistry.write_lock
+
+def install_agent_hardening(target: Any = None) -> dict[str, object]:
+    """Attach the registry hardeners to ``target`` and report what was attached.
+
+    ``target`` is a parameter rather than an implicit module-level singleton so a
+    caller that already holds a registry class hardens *that* one, and a test can
+    assert what the patch adds on a throwaway class without mutating the shared
+    class every other test runs against. It defaults to ``MultiAgentRegistry``
+    and returns the same state ``agent_hardening_state`` reports, so the one call
+    site that must patch the real class cannot pretend it succeeded.
+    """
+    if target is None:
+        target = MultiAgentRegistry
+    if getattr(target, "_canonical_path_hardening_installed", False):
+        return agent_hardening_state(target)
+
+    original_write_lock = target.write_lock
 
     def verify_registry_chain(self: MultiAgentRegistry) -> bool:
         with self._write_lock():
@@ -367,16 +394,40 @@ def install_agent_hardening() -> None:
         pid = data.get("pid")
         return not (isinstance(pid, int) and not isinstance(pid, bool) and _safe_pid_alive(pid))
 
-    MultiAgentRegistry.verify_registry_chain = verify_registry_chain
-    MultiAgentRegistry.register = register
-    MultiAgentRegistry.unregister = unregister
-    MultiAgentRegistry.heartbeat = heartbeat
-    MultiAgentRegistry.update_ownership = update_ownership
-    MultiAgentRegistry.active_agents = active_agents
-    MultiAgentRegistry.stale_agents = stale_agents
-    MultiAgentRegistry.release_stale_ownership = release_stale_ownership
-    MultiAgentRegistry.check_conflicts = check_conflicts
-    MultiAgentRegistry.claim_files = claim_files
-    MultiAgentRegistry.write_lock = write_lock
-    MultiAgentRegistry.is_lock_stale = is_lock_stale
-    MultiAgentRegistry._canonical_path_hardening_installed = True
+    for name, wrapper in (
+        ("verify_registry_chain", verify_registry_chain),
+        ("register", register),
+        ("unregister", unregister),
+        ("heartbeat", heartbeat),
+        ("update_ownership", update_ownership),
+        ("active_agents", active_agents),
+        ("stale_agents", stale_agents),
+        ("release_stale_ownership", release_stale_ownership),
+        ("check_conflicts", check_conflicts),
+        ("claim_files", claim_files),
+        ("write_lock", write_lock),
+        ("is_lock_stale", is_lock_stale),
+    ):
+        setattr(target, name, wrapper)
+    target._canonical_path_hardening_installed = True
+    return agent_hardening_state(target)
+
+
+def agent_hardening_state(target: Any = None) -> dict[str, object]:
+    """Report what the registry hardeners have attached, and to which class.
+
+    The install is an import-time side effect of ``supervisor/__init__.py``, so a
+    refactor that moved it, duplicated it, or pointed it at a second registry
+    class would otherwise be invisible until ``verify_registry_chain`` silently
+    stopped existing and the integrity registry chain was bypassed.
+    """
+    if target is None:
+        target = MultiAgentRegistry
+    return {
+        "target": f"{getattr(target, '__module__', '?')}.{getattr(target, '__qualname__', '?')}",
+        "installed": bool(getattr(target, "_canonical_path_hardening_installed", False)),
+        **{
+            name: callable(getattr(target, name, None)) and name in HARDENED_METHODS
+            for name in HARDENED_METHODS
+        },
+    }
