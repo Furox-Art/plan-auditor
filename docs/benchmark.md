@@ -29,7 +29,7 @@ number ever changes, the command changes too — that is the point.
 | Docs build cleanly | `python -m mkdocs build --strict` | `mkdocs-material` | same | the `docs (mkdocs --strict)` required CI check |
 | Docs and package metadata are consistent | `python -m pytest tests/test_docs_metadata.py tests/test_readme_quickstart.py tests/test_doc_transcripts.py -q` | `pytest` | same | the same CI run |
 | Wheel and sdist carry the skill assets | `python .github/scripts/check_dist_assets.py` | none (standard library) | same | the `build (wheel + sdist)` required CI check |
-| npm launcher behaviour and tarball | `npm test`, `npm run test:contract`, `npm run test:tarball` | the version of Node you run them with | same | the `npm-launcher` required CI check |
+| npm launcher behaviour and tarball | `npm test`, `npm run test:contract`, `npm run test:all` | the version of Node you run them with | same | the npm publish preflight / build CI checks |
 | Published package contents | `python -m build`, `twine check --strict dist/*`, `npm pack --dry-run` | `build`, `twine`, `npm` | the tag you check out | the `build` and `publish` jobs |
 
 Note that the coverage command no longer names the source directories. `pytest-cov`
@@ -214,7 +214,7 @@ python .github/scripts/check_dist_assets.py
 python -m mkdocs build --strict
 npm test
 npm run test:contract
-npm run test:tarball
+npm run test:all
 plan-auditor request init . --file .plan-auditor/request-source.json
 plan-auditor plan verify .
 plan-auditor audit .
