@@ -28,7 +28,10 @@ import json
 import re
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # Python 3.10 keeps CI green without tomli
+    tomllib = None
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -37,8 +40,18 @@ CHANGELOG_RELEASE = re.compile(r"^##\s+v?(\d+\.\d+\.\d+)\b", re.MULTILINE)
 
 
 def _pyproject_version() -> str:
-    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    return str(data["project"]["version"])
+    if tomllib is not None:
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        return str(data["project"]["version"])
+    # 3.10 fallback: the only value needed is [project] version.
+    in_project = False
+    for line in (ROOT / "pyproject.toml").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_project = stripped == "[project]"
+        elif in_project and stripped.startswith("version"):
+            return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+    raise SystemExit("could not read [project] version from pyproject.toml")
 
 
 def _package_json_version() -> str:
