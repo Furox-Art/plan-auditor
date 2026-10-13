@@ -207,12 +207,8 @@ The skill is `SKILL.md` plus `scripts/`, `references/` and `hooks/`, either from
 checkout or from a `pip` install, which ships them under `plan_auditor_skill/`. Copy
 them into your host's skills directory Ã¢â‚¬â€ `~/.claude/`, `~/.commandcode/`,
 `~/.config/opencode/` or `~/.codex/`, each with a `skills/plan-auditor/` subdirectory.
-`hooks/gate_hook.py` is the primary hook gate, and the gate logic itself has no
-per-host branches: hosts point at one of the two documented entry points
-(`hooks/gate_hook.py`, or `scripts/stop_gate.py` for Claude Code, which reads
-project state from the host's environment and delegates to the same
-`evaluate_workspace`). Wire each host's blocking stop or lifecycle hook to one
-of them.
+`hooks/gate_hook.py` is the primary hook gate; `scripts/stop_gate.py` (Claude Code) is a second
+entry point that delegates to the same `evaluate_workspace`. Wire each host's blocking hook to one.
 Per-host paths and CI wiring:
 [docs/integrations.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md).
 
