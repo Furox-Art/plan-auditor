@@ -14,6 +14,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from .agents import MultiAgentRegistry, RegistryIntegrityError
 from .agents_hardening import _safe_pid_alive
@@ -67,9 +68,18 @@ def _remove_dead_owner_lock(path: Path, observed: dict) -> bool:
         return False
 
 
-def install_registry_lock_hardening() -> None:
-    if getattr(MultiAgentRegistry, "_pid_aware_write_lock_installed", False):
-        return
+def install_registry_lock_hardening(target: Any = None) -> dict[str, object]:
+    """Attach the PID-aware lock to ``target`` and report what was attached.
+
+    ``target`` is a parameter rather than an implicit module-level singleton so a
+    caller that already holds a registry class hardens *that* one, and a test can
+    assert what the patch adds on a throwaway class without mutating the shared
+    class every other test runs against. It defaults to ``MultiAgentRegistry``.
+    """
+    if target is None:
+        target = MultiAgentRegistry
+    if getattr(target, "_pid_aware_write_lock_installed", False):
+        return registry_lock_hardening_state(target)
 
     @contextmanager
     def _write_lock(self: MultiAgentRegistry):
@@ -140,5 +150,26 @@ def install_registry_lock_hardening() -> None:
                     "agent registry write lock identity changed while held"
                 )
 
-    MultiAgentRegistry._write_lock = _write_lock
-    MultiAgentRegistry._pid_aware_write_lock_installed = True
+    target._write_lock = _write_lock
+    target._pid_aware_write_lock_installed = True
+    return registry_lock_hardening_state(target)
+
+
+#: The attributes the lock hardener adds to its target.
+LOCK_HARDENED_METHODS = ("_write_lock",)
+
+
+def registry_lock_hardening_state(target: Any = None) -> dict[str, object]:
+    """Report what the lock hardener has attached, and to which class.
+
+    The install is an import-time side effect of ``supervisor/__init__.py``, so a
+    refactor that moved it or pointed it at a second registry class would
+    otherwise be invisible until cross-process lock liveness stopped working.
+    """
+    if target is None:
+        target = MultiAgentRegistry
+    return {
+        "target": f"{getattr(target, '__module__', '?')}.{getattr(target, '__qualname__', '?')}",
+        "installed": bool(getattr(target, "_pid_aware_write_lock_installed", False)),
+        **{name: callable(getattr(target, name, None)) for name in LOCK_HARDENED_METHODS},
+    }

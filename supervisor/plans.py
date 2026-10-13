@@ -11,9 +11,25 @@ from .control_plane import ControlPlanePathError, confined_workspace_path
 
 PLAN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
+#: The plan is the input being verified, so it is untrusted. Without a byte bound
+#: a host that passes a plan through to this tool can make it allocate the whole
+#: file before a single validation rule runs, which turns a plan-size check into
+#: an out-of-memory denial of service instead of a verdict. 2 MiB is far above
+#: any plan a real task needs and far below what breaks the process.
+MAX_PLAN_BYTES = 2_000_000
+
 
 class PlanNameError(ValueError):
     pass
+
+
+class PlanSizeError(PlanNameError):
+    """Raised when a plan file exceeds the byte bound.
+
+    A ``ValueError`` subclass, matching ``PlanNameError``: call sites already
+    treat both as "this plan is unusable input", and the difference is only which
+    rule rejected it.
+    """
 
 
 @dataclass(frozen=True)
@@ -97,6 +113,16 @@ def iter_plan_refs(root: str | Path) -> Iterator[PlanRef]:
 def load_plan_ref(ref: PlanRef) -> dict[str, Any]:
     if ref.path.is_symlink() or not ref.path.is_file():
         raise ValueError(f"plan path is not a safe regular file: {ref.path}")
+    # Bound the read itself. Checking the size before reading is what keeps a
+    # hostile plan from being loaded into memory at all; checking afterwards
+    # would only bound the verdict, not the allocation.
+    size = ref.path.stat().st_size
+    if size > MAX_PLAN_BYTES:
+        raise PlanSizeError(
+            f"plan {ref.key!r} is {size} bytes, over the {MAX_PLAN_BYTES}-byte "
+            "bound; shrink the plan or split it into named plans "
+            f"({ref.path})"
+        )
     value = json.loads(ref.path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"plan root must be an object: {ref.path}")

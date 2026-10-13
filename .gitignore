@@ -29,6 +29,17 @@ node_modules/
 .plan-auditor/gate-warning.json
 .plan-auditor/agents/
 
+# plan-auditor runtime state. The fine-grained rule is the nested
+# .plan-auditor/.gitignore, which ignores everything under that directory and
+# re-includes only hand-authored input (plan.json, request-source.json, named
+# plans). The entries above stay for workspaces that predate the nested rule,
+# and the two below close the gaps it now covers, so a runtime file added by a
+# new feature is ignored by default rather than only after it has been
+# committed once. Both are documented as tool-written in
+# docs/workspace-artifacts.md.
+.plan-auditor/facts.json
+.plan-auditor/supervisor.json
+
 # coverage.py data file produced by the branch-coverage gate in
 # .github/workflows/plan-audit.yml
 .coverage

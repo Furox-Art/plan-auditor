@@ -15,7 +15,15 @@ asking another LLM to judge the first LLM.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping
+from typing import Any, Callable, Dict, List, Mapping
+
+#: Recompiles a generated contract from its plan sources and returns the reasons
+#: it cannot be reproduced. Declared here so ``analyze_formal_semantics`` never
+#: has to import the module that implements it at module scope: the compiler
+#: already imports *this* module, so a top-level import in both directions would
+#: be an import cycle. Callers that already hold the compiler pass their own
+#: function in, and the plain path resolves it lazily at call time.
+ContractValidator = Callable[[Mapping[str, Any], Mapping[str, Any]], list[str]]
 
 FORMAL_KEY = "formal_planning"
 REQUIREMENT_FACT_PREFIX = "requirement-satisfied:"
@@ -92,7 +100,28 @@ def _anchors(plan: Mapping[str, Any]) -> List[Mapping[str, Any]]:
     return found
 
 
-def analyze_formal_semantics(plan: Mapping[str, Any]) -> FormalSemanticResult:
+def resolve_contract_validator() -> ContractValidator:
+    """Return the compiler's recompilation check, imported at call time.
+
+    ``supervisor.formal_compiler`` imports this module to analyse the semantic
+    layer of a contract it produced. Importing it back at module scope would
+    close an import cycle, so the single back-edge is resolved here, inside the
+    function, where the compiler module is by then fully initialised.
+
+    A failure is deliberately *not* swallowed: the old ``except ImportError``
+    reported every import problem as "could not be independently recompiled",
+    which is exactly how a circular-import breakage stays invisible until the
+    gate starts passing on unverified contracts.
+    """
+    from .formal_compiler import validate_generated_contract
+
+    return validate_generated_contract
+
+
+def analyze_formal_semantics(
+    plan: Mapping[str, Any],
+    contract_validator: ContractValidator | None = None,
+) -> FormalSemanticResult:
     anchors = _anchors(plan)
     if not anchors:
         return FormalSemanticResult()
@@ -138,11 +167,10 @@ def analyze_formal_semantics(plan: Mapping[str, Any]) -> FormalSemanticResult:
             result.errors.append(
                 "generated formal contract must contain exactly one formalization-source marker"
             )
+        validator = contract_validator or resolve_contract_validator()
         try:
-            from .formal_compiler import validate_generated_contract
-
-            result.errors.extend(validate_generated_contract(plan, contract))
-        except (ImportError, ValueError) as exc:
+            result.errors.extend(validator(plan, contract))
+        except ValueError as exc:
             result.errors.append(
                 f"generated formal contract could not be independently recompiled: {exc}"
             )

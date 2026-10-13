@@ -36,6 +36,21 @@ Rotated history and scratch state also appear under `.plan-auditor/`:
 `seals/` for migrated seals, `audit.freeze.lock` while a full audit holds the
 workspace frozen, and `*.tmp` during writes.
 
+The nested `.plan-auditor/.gitignore` excludes all of it by default and
+re-includes only what you wrote: `plan.json`, any `plans/<name>.json`, and
+`request-source.json`. That means a runtime file a new version starts writing is
+ignored from the moment it appears, rather than only after somebody notices it
+and adds a line to the repository `.gitignore`.
+
+## The plan is untrusted input
+
+A plan is read with a 2 MiB byte bound before it is parsed, on both the direct
+script path and the trusted one. The plan is what this tool verifies, and its
+commands must not run before a seal binds it, so how much of it is loaded into
+memory is part of the trust boundary: an unbounded read turns a plan-size check
+into an out-of-memory failure rather than a verdict. Split a plan that large into
+named plans under `.plan-auditor/plans/`.
+
 ## Why this matters for trust
 
 Three properties follow from the layout, and they are the reason the files are
@@ -59,8 +74,9 @@ separated rather than kept in one blob:
 
 ## Cleaning up
 
-`.gitignore` already excludes the generated state. To discard it entirely, stop
-the supervisor first if it is running, then remove the directory:
+`.gitignore` already excludes the generated state, including the nested
+`.plan-auditor/.gitignore`. To discard it entirely, stop the supervisor first if
+it is running, then remove the directory:
 
 ```bash
 plan-auditor supervisor stop .
