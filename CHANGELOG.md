@@ -2,6 +2,15 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## 2.6.0 — Audit hardening (medium/low findings)
+### Housekeeping — audit hardening
+
+- Closes the findings of the full-repository audit: patched the concrete
+  defects (correctness, fail-closed behaviour, platform independence),
+  wired every standalone guard into CI, removed dead or duplicated code
+  paths, and pinned every doc claim to a test so it cannot silently
+  drift again. Regression tests fail without the corresponding fix.
+
 ## Unreleased
 
 ## 2.5.0 — Completion gate requires authenticated evidence
