@@ -3,7 +3,7 @@ name: plan-auditor
 description: Invoke this skill by name as `plan-auditor` for non-trivial build/implement/fix work or whenever the user wants independent proof that an AI actually completed the requested work. It converts the task into explicit requirements and machine-verifiable steps, automatically compiles those structured requirements/dataflow into a sealed LLM-free STRIPS contract, proves every step with real command evidence, and blocks completion until every active plan has an intact contract and a fresh deterministic audit.
 argument-hint: "<task description>"
 metadata:
-  version: "2.6.0"
+  version: "2.6.1"
 ---
 
 # Plan Auditor — strict plan + independent verification
@@ -66,6 +66,7 @@ Manual domain-specific STRIPS contracts remain supported, but the auto-formalize
 9. **All active plans count.** A passing default plan never hides an unfinished named plan.
 10. **Full audit is the completion gate.** Do not claim completion until `plan-auditor audit <project>` exits 0.
 11. **Semantic judgment can only tighten.** If deterministic checks miss a real defect, add a stronger deterministic check and rerun; prose cannot convert failure into PASS.
+12. **Completion evidence must be HMAC-authenticated.** A hash chain alone is tamper-evident, not authenticated: anyone with write access can rebuild it. Configure `PLAN_AUDITOR_HMAC_KEY` (or `PLAN_AUDITOR_HMAC_KEY_FILE`, outside the workspace) and run `plan-auditor integrity init .` before the audit you intend to claim; a keyless workspace exits non-zero instead of passing.
 
 ## Workflow
 

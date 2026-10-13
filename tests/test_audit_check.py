@@ -344,3 +344,91 @@ def test_full_audit_rejects_verifier_workspace_mutation(tmp_path):
         for result in step_record["results"]
     )
 
+
+
+# ------------------------------------------- core audit enforces the HMAC gate
+#
+# H-1 pin: `plan-auditor audit .` is documented as a standalone entry point
+# (README quick start, docs/cli.md). For three releases it printed
+# "RESULT: audit PASSED" and exited 0 in a keyless workspace, while the
+# supervisor CLI refused. The two entry points must hold one rule: completion
+# claims require HMAC-authenticated evidence, not merely a valid hash chain.
+
+def _seal(tmp_path, plan):
+    from supervisor.config import load_config
+    from supervisor.contracts import environment_contract
+    from supervisor.sealing import save_seal, seal_plan
+    cfg = load_config(str(tmp_path))
+    env = environment_contract(tmp_path, cfg)
+    seal = seal_plan(plan, "test", "2026-10-13T00:00:00+00:00", environment=env)
+    save_seal(seal, str(tmp_path / ".plan-auditor" / "seal.json"))
+
+
+def test_cmd_audit_refuses_pass_without_authenticated_evidence(tmp_path, capsys, monkeypatch):
+    plan = valid_plan()
+    make_plan(tmp_path, plan)
+    _seal(tmp_path, plan)
+    monkeypatch.delenv("PLAN_AUDITOR_HMAC_KEY", raising=False)
+    monkeypatch.delenv("PLAN_AUDITOR_HMAC_KEY_FILE", raising=False)
+    import argparse
+    code = ac.cmd_audit(argparse.Namespace(dir=str(tmp_path), plan=None))
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "not authenticated" in out
+    assert "integrity init" in out
+
+
+def test_cmd_audit_passes_with_authenticated_evidence(tmp_path, capsys, monkeypatch):
+    plan = valid_plan()
+    make_plan(tmp_path, plan)
+    _seal(tmp_path, plan)
+    key_file = tmp_path.parent / "audit-check-hmac.key"
+    key_file.write_bytes(b"plan-auditor-test-key-material-" * 2)
+    monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key_file))
+    from supervisor.integrity import initialize_integrity
+    initialize_integrity(tmp_path)
+    import argparse
+    code = ac.cmd_audit(argparse.Namespace(dir=str(tmp_path), plan=None))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "RESULT: audit PASSED" in out
+
+def test_evidence_head_update_is_incremental(tmp_path, monkeypatch):
+    """H-4 pin: writing evidence must not re-scan the whole log per record.
+
+    The head checkpoint makes the append path O(1); a regression to full scans
+    would show up here as a full count on (almost) every append.
+    """
+    plan = valid_plan()
+    make_plan(tmp_path, plan)
+    _seal(tmp_path, plan)
+    key_file = tmp_path.parent / "head-inc-hmac.key"
+    key_file.write_bytes(b"plan-auditor-test-key-material-" * 2)
+    monkeypatch.setenv("PLAN_AUDITOR_HMAC_KEY_FILE", str(key_file))
+    from supervisor.integrity import initialize_integrity
+    initialize_integrity(tmp_path)
+
+    counts = {"n": 0}
+    original = ac._record_count
+
+    def counting(path):
+        counts["n"] += 1
+        return original(path)
+
+    monkeypatch.setattr(ac, "_record_count", counting)
+    for index in range(25):
+        ac._write_evidence_record(
+            ac.evidence_path(str(tmp_path)),
+            {
+                "ts": f"2026-10-13T00:00:{index:02d}+00:00",
+                "mode": "run",
+                "plan": "default",
+                "step": index + 1,
+                "results": [],
+                "status": "verified",
+            },
+        )
+    # Only the first append may fall back to a full scan (no checkpoint yet).
+    assert counts["n"] <= 1, f"evidence appends performed {counts['n']} full scans"
+    ok, count, problem = ac.verify_chain(str(tmp_path))
+    assert ok and count == 25 and not problem

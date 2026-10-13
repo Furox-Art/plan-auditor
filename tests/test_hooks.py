@@ -33,12 +33,15 @@ def _hmac_key_for(root: Path):
             os.environ["PLAN_AUDITOR_HMAC_KEY_FILE"] = previous
 
 
-def _run_hook(cwd, fmt="text", warn_file=None):
+def _run_hook(cwd, fmt="text", warn_file=None, env=None):
     hook = Path(__file__).resolve().parent.parent / "hooks" / "gate_hook.py"
     cmd = [sys.executable, str(hook), cwd, "--format", fmt]
     if warn_file:
         cmd += ["--warn-file", warn_file]
-    return subprocess.run(cmd, capture_output=True, text=True)
+    subprocess_env = os.environ.copy()
+    if env:
+        subprocess_env.update(env)
+    return subprocess.run(cmd, capture_output=True, text=True, env=subprocess_env)
 
 
 def _write_plan(root: Path, status="pending", *, named: str | None = None):
@@ -121,30 +124,40 @@ def test_hook_refuses_pass_on_keyless_evidence():
 
 def test_hook_refuses_pass_when_evidence_chain_is_rebuilt():
     # Direct replay of the reported bypass: rewrite every evidence record,
-    # recompute the hash chain, leave it perfectly re-verifiable, and drop the
-    # HMAC. A tamper-evident-only chain must not complete the gate.
+    # recompute the hash chain, leave it perfectly re-verifiable, and keep the
+    # key active — the tamper-evident chain looks valid AND the marker/head
+    # checkpoint still exists. A tamper-evident-only chain must not complete
+    # the gate, and this must hold with the key present, not only keyless.
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
-        with _hmac_key_for(root):
+        with _hmac_key_for(root) as key_file:
             _prepare_real_pass(root, authenticated=True)
-        path = root / ".plan-auditor" / "evidence.jsonl"
-        records = []
-        previous = "GENESIS"
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            rec = json.loads(line)
-            rec["prev"] = previous
-            payload = {k: v for k, v in rec.items() if k not in {"hash", "auth"}}
-            rec["hash"] = hashlib_sha256(payload)
-            rec["auth"] = {"alg": "none"}
-            previous = rec["hash"]
-            records.append(rec)
-        path.write_text(
-            "\n".join(json.dumps(r, sort_keys=True, separators=(",", ":")) for r in records) + "\n",
-            encoding="utf-8",
-        )
-        result = _run_hook(d, fmt="json")
+            head = root / ".plan-auditor" / "evidence.head.json"
+            assert head.is_file(), (
+                "the rebuild scenario requires a committed head checkpoint, "
+                "otherwise it degenerates into the keyless case"
+            )
+            path = root / ".plan-auditor" / "evidence.jsonl"
+            records = []
+            previous = "GENESIS"
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                rec["prev"] = previous
+                payload = {k: v for k, v in rec.items() if k not in {"hash", "auth"}}
+                rec["hash"] = hashlib_sha256(payload)
+                rec["auth"] = {"alg": "none"}
+                previous = rec["hash"]
+                records.append(rec)
+            path.write_text(
+                "\n".join(json.dumps(r, sort_keys=True, separators=(",", ":")) for r in records) + "\n",
+                encoding="utf-8",
+            )
+            assert all(rec["auth"] == {"alg": "none"} for rec in records)
+            result = _run_hook(
+                d, fmt="json", env={"PLAN_AUDITOR_HMAC_KEY_FILE": str(key_file)}
+            )
         data = json.loads(result.stdout)
         assert data["outcome"] != "PASS"
         assert result.returncode != 0

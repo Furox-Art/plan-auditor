@@ -76,7 +76,10 @@ def _int_value(data: Dict, key: str, default: int, minimum: int, maximum: int,
     if not minimum <= raw <= maximum:
         errors.append(f"{key} must be between {minimum} and {maximum}")
         return default
-    return raw
+    # narrowed to int by the isinstance gate above, but `Dict` is bare so the
+    # value reads as Any; the explicit conversion keeps that visible to mypy
+    # instead of silently returning an Any into typed callers.
+    return int(raw)
 
 
 def _safe_path(root: Path, relative: str, errors: List[str], label: str) -> Path | None:

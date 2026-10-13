@@ -115,3 +115,14 @@ jobs:
           # all it needs and all it gets.
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/scripts/check_action_pins.py
+      # Negative control for the permission check above: mutate release.yml the
+      # way the 37199866973-class bug did (an added permission) and require the
+      # checker to reject it. A gate whose negative control never runs is a gate
+      # that can silently drift to "always pass", so this runs on every PR.
+      - name: Verify the permission checker rejects a widened workflow
+        run: python .github/scripts/check_workflow_permissions_controls.py
+      # The README size baseline exists to stop a silent growth of the entry
+      # document. Unwired baselines drift by construction, so it is enforced
+      # here; the baseline file is regenerated deliberately, never by accident.
+      - name: Check README size against the committed baseline
+        run: python docs/check_readme_size.py

@@ -8,8 +8,8 @@ rather than by review.
 
 1. **The auditor never trusts the agent.** Any change that lets a language-model
    claim upgrade a failed or missing evidence into a pass is rejected by design.
-   A model's judgment may only *tighten* — add stricter checks, downgrade
-   `verified` — never loosen.
+   A model's judgment may only *tighten* â€” add stricter checks, downgrade
+   `verified` â€” never loosen.
 2. **Evidence is append-only.** The SHA-256 chain in `evidence.jsonl` is
    load-bearing. Pull requests that permit editing or reordering past records are
    declined.
@@ -60,7 +60,7 @@ Other suites worth running before you open a pull request:
 | `python -m pytest tests/ -q --cov --cov-report=term-missing` | The same coverage command CI runs, with the per-module table. |
 | `npm test` | The Node launcher and `bin` entry point parse. |
 | `npm run test:contract` | The launcher keeps the caller's working directory, propagates exit codes and fails closed. |
-| `npm run test:tarball` | The packed tarball has no `__pycache__`, venv, build output or `*.test.js`, and does carry what the launcher needs. |
+| `npm run test:gate` | The packed tarball has no `__pycache__`, venv, build output or `*.test.js`, and does carry what the launcher needs. |
 | `python -m mkdocs build --strict` | The documentation site still builds with no warnings. |
 
 Do not pass `--cov=supervisor --cov=scripts`. `pytest-cov` reads `branch`,
@@ -110,7 +110,7 @@ documentation does not repeat it.
 ### The documentation gate
 
 These tests keep the prose true, so most documentation changes need no
-explanation of why they are safe — the suite proves it:
+explanation of why they are safe â€” the suite proves it:
 
 | Test | Enforces |
 |---|---|
@@ -166,7 +166,7 @@ This is what the code actually does, in the order a real task goes through it.
    record carries the SHA-256 of the previous one. A step becomes `verified` only
    when its behavioural check really passed; three failed attempts exhaust the
    budget and the step is refused until you fix the cause or re-arm deliberately
-   with `run . <step-id> --force`. The cap is deliberate — it stops an agent from
+   with `run . <step-id> --force`. The cap is deliberate â€” it stops an agent from
    brute-forcing green.
 6. **The gate re-derives everything.** `plan-auditor audit .` fingerprints the
    workspace, re-runs every check in new shells while the workspace is frozen, and
@@ -263,20 +263,20 @@ record is in the "The two published `2.4.1` builds" section of
    twine check --strict dist/*
    python .github/scripts/check_dist_assets.py
    npm pack --dry-run
-   npm run test:tarball
+   npm run test:gate
    ```
 
 3. Move the `Unreleased` section of the changelog under the new version heading.
 4. PyPI: push a change to `.github/pypi-release-trigger`. The workflow builds,
    runs the suite, smoke-tests the wheel on Linux, Windows and macOS, checks the
-   distributions, and **skips publishing if the version already exists on PyPI** —
+   distributions, and **skips publishing if the version already exists on PyPI** â€”
    so an unchanged version number will silently not publish. Publishing uses OIDC
    trusted publishing only; there is no long-lived token in repository secrets.
    Creating the GitHub release is gated on the same version-existence check, so a
    re-run cannot append a second copy of the notes.
 5. npm: the publish workflow triggers on any change to `package.json`,
-   `index.js`, `bin/**` or the skill assets. It runs a `verify` job first — the
-   launcher tests and the packed-tarball check — and refuses to publish a version
+   `index.js`, `bin/**` or the skill assets. It runs a `verify` job first â€” the
+   launcher tests and the packed-tarball check â€” and refuses to publish a version
    already on the registry, so a no-op push is not a red or duplicate build.
 6. Confirm the tag, the PyPI artifact and the npm artifact are the same commit,
    and that the wheel you published actually contains `plan_auditor_skill/`.
