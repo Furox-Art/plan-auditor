@@ -478,3 +478,67 @@ def test_npm_tarball_ships_no_interpreter_or_build_artifacts() -> None:
         assert not any(rule.rstrip("/") == required for rule in rules), (
             f".npmignore must not exclude runtime directory {required!r}"
         )
+
+def test_docs_name_the_current_release() -> None:
+    """The release-status docs must name the version that is actually current.
+
+    This drifted before: README and SECURITY kept saying `2.4.3` was current for
+    three releases. The contract the docs make is "X is current on both
+    registries" / "X is the current release" / "the latest X.y line is tested",
+    so exactly those patterns are pinned here -- historical notes about
+    superseded releases stay free.
+    """
+    import supervisor
+
+    current = supervisor.__version__
+    current_line = ".".join(current.split(".")[:2])
+
+    readme = _read(README)
+    status = re.search(r"\*\*Release status:\*\* `([^`]+)`", readme)
+    assert status, "README must state the release status line"
+    assert status.group(1) == current, (
+        f"README release status says {status.group(1)}, package version is {current}"
+    )
+
+    security = _read(ROOT / "SECURITY.md")
+    # The docs site is in scope on purpose: README and SECURITY were pinned for
+    # two releases while docs/index.md and docs/release-status.md kept naming an
+    # older release as current, and the lockstep check could not see it because
+    # its pin trailed the tree. Historical notes ("2.4.0 was defective") stay
+    # free — only present-tense "is current" claims are pinned.
+    for doc in sorted(DOCS.rglob("*.md")) + [README, ROOT / "SECURITY.md"]:
+        text = _read(doc)
+        for match in re.finditer(r"`?(\d+\.\d+\.\d+)`? is (?:the )?current release", text):
+            assert match.group(1) == current, (
+                f"{doc} describes {match.group(1)} as the current release but the package is {current}"
+            )
+    matrix = re.search(r"Only the latest `(\d+\.\d+)\.x` is tested", security)
+    assert matrix, "SECURITY.md must state which release line is tested"
+    assert matrix.group(1) == current_line, (
+        f"SECURITY.md tests the {matrix.group(1)}.x line but the current release is {current}"
+    )
+
+
+def test_documented_npm_scripts_exist() -> None:
+    """Every `npm run <script>` the docs name must exist in package.json.
+
+    `docs/benchmark.md` documented `npm run test:tarball` for several releases
+    while package.json only ever defined `test:gate`: a reader following the
+    documented command gets `npm ERR! Missing script`.
+    """
+    scripts = set(json.loads(_read(PACKAGE_JSON))["scripts"])
+    documented: dict[str, set[str]] = {}
+    # CONTRIBUTING.md and SKILL.md are part of the scanned set: the benchmark.md
+    # case was caught only because it lived under docs/, and CONTRIBUTING.md then
+    # carried the same stale command uncaught for two releases.
+    documents = sorted(DOCS.rglob("*.md")) + [
+        README,
+        ROOT / "CONTRIBUTING.md",
+        ROOT / "CODE_OF_CONDUCT.md",
+        SKILL,
+    ]
+    for doc in documents:
+        for name in re.findall(r"npm run ([A-Za-z][\w:-]*)", _read(doc)):
+            documented.setdefault(name, set()).add(doc.name)
+    missing = {name: files for name, files in documented.items() if name not in scripts}
+    assert not missing, f"docs name npm scripts that package.json does not define: {sorted(missing)}"

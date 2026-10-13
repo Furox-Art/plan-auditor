@@ -1,4 +1,4 @@
-# What is measurable here — and what is not
+# What is measurable here â€” and what is not
 
 This page replaces a previous version of this file that contained comparative
 numbers which were never produced by any harness in this repository. Those
@@ -19,7 +19,7 @@ If you want to build that harness, [open an issue](https://github.com/Furox-Art/
 
 Nothing on this page is a hand-copied figure. Each quality claim below is tied to
 the exact command that produces it, so you can regenerate it and compare. If a
-number ever changes, the command changes too — that is the point.
+number ever changes, the command changes too â€” that is the point.
 
 | Claim | Command that produces it | Tool | Commit this text describes | Where the live value lives |
 |---|---|---|---|---|
@@ -29,7 +29,7 @@ number ever changes, the command changes too — that is the point.
 | Docs build cleanly | `python -m mkdocs build --strict` | `mkdocs-material` | same | the `docs (mkdocs --strict)` required CI check |
 | Docs and package metadata are consistent | `python -m pytest tests/test_docs_metadata.py tests/test_readme_quickstart.py tests/test_doc_transcripts.py -q` | `pytest` | same | the same CI run |
 | Wheel and sdist carry the skill assets | `python .github/scripts/check_dist_assets.py` | none (standard library) | same | the `build (wheel + sdist)` required CI check |
-| npm launcher behaviour and tarball | `npm test`, `npm run test:contract`, `npm run test:tarball` | the version of Node you run them with | same | the `npm-launcher` required CI check |
+| npm launcher behaviour and tarball | `npm test`, `npm run test:contract`, `npm run test:gate` | the version of Node you run them with | same | the `npm-launcher` required CI check |
 | Published package contents | `python -m build`, `twine check --strict dist/*`, `npm pack --dry-run` | `build`, `twine`, `npm` | the tag you check out | the `build` and `publish` jobs |
 
 Note that the coverage command no longer names the source directories. `pytest-cov`
@@ -59,7 +59,7 @@ counts the command prints tell you which run you are looking at.
 ## What is reproducible: the in-repo example
 
 `examples/fib/` is a complete, runnable plan. It is in the repository and in the
-**sdist**, but not in the wheel, so a `pip`-only install will not have it — use a
+**sdist**, but not in the wheel, so a `pip`-only install will not have it â€” use a
 checkout if you want to run this. (The wheel does ship the Agent Skill assets,
 namespaced under `plan_auditor_skill/`; `examples/` is deliberately not among
 them.)
@@ -123,8 +123,8 @@ $ plan-auditor run .
 
 **Scoped omission:** the single elided line is the tool's `output:` block, which
 carries the captured Python traceback as one physical output line joined with
-`" | "`. Its interior frames depend on your Python version — 3.11 and newer add
-the offending source line and a caret — so quoting it verbatim would be correct on
+`" | "`. Its interior frames depend on your Python version â€” 3.11 and newer add
+the offending source line and a caret â€” so quoting it verbatim would be correct on
 some interpreters and wrong on the rest. Every remaining line above is verbatim,
 the step fails with `exit=1`, and the invocation exits `1`.
 
@@ -149,7 +149,7 @@ The same scoped omission applies to the launcher's `output:` line; the launcher 
 code of `1` is reproduced by `tests/test_npm_launcher.py`, which also asserts that
 a passing `run` yields `0` and that an unstartable Python fails closed.
 
-Step 2 is not merely "unverified" — it is **blocked**, because its prerequisite
+Step 2 is not merely "unverified" â€” it is **blocked**, because its prerequisite
 output contract no longer holds. Restoring `fib.py` and re-running returns both
 steps to `VERIFIED`, and the evidence log records the failing and the passing
 attempts in one hash-chained sequence. `plan-auditor evidence verify .`
@@ -214,7 +214,7 @@ python .github/scripts/check_dist_assets.py
 python -m mkdocs build --strict
 npm test
 npm run test:contract
-npm run test:tarball
+npm run test:gate
 plan-auditor request init . --file .plan-auditor/request-source.json
 plan-auditor plan verify .
 plan-auditor audit .

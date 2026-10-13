@@ -2,7 +2,52 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## 2.6.1 — Second-round audit findings (post-2.6.0)
+
+### Security
+
+- The standalone core entry point (`python scripts/audit_check.py audit .`,
+  documented in README and docs/cli.md) accepted keyless evidence and printed
+  `RESULT: audit PASSED` with exit 0, while the supervisor CLI refused. The two
+  entry points now hold one rule: completion requires HMAC-authenticated
+  evidence, and the core fails closed with a message naming the missing key and
+  `plan-auditor integrity init .`.
+- The hook replay test now reproduces the actual reported bypass — key active,
+  head checkpoint present, chain rebuilt with `alg: none` — instead of
+  re-testing the keyless case. Regression tests for both core entry points
+  (`tests/test_audit_check.py`).
+
+### Performance
+
+- Evidence-head updates are incremental: appending a record no longer re-reads
+  the whole log to count and tail it (O(N^2) across a run, ~125k line reads on a
+  500-step plan). The committed checkpoint supplies count and tail in O(1); a
+  full scan runs only on the first append, rotation, and the explicit
+  verifier. `test_evidence_head_update_is_incremental` pins it.
+
+### CI
+
+- Two dead guards are now wired into `lint.yml`: the workflow-permission
+  negative control and the README size baseline. Both ran for several releases
+  without a caller, which is exactly how a gate drifts to "always pass"; the
+  README budget was raised deliberately 248 -> 266 lines and is recorded as
+  such in this entry.
+- `check_attestation_claims.py`'s version pin is part of the release process
+  now (it named `2.4.3` while the tree was at `2.6.0`, and no check could see
+  the drift).
+
+### Docs
+
+- Stale release references pinned to the current version: README release
+  status, SECURITY, docs/index.md, docs/release-status.md and CONTRIBUTING.md
+  (`npm run test:tarball` no longer exists; `test:gate` is the real script).
+- README now states the gate truth: `hooks/gate_hook.py` is the primary gate,
+  with `scripts/stop_gate.py` as the second documented entry point; the old
+  claim of "no per-host adapter files" contradicted stop_gate.py.
+- SKILL.md rule 12 records the HMAC requirement for completion evidence.
+
 ## 2.6.0 — Audit hardening (medium/low findings)
+
 ### Housekeeping — audit hardening
 
 - Closes the findings of the full-repository audit: patched the concrete

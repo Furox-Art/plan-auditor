@@ -27,7 +27,7 @@ import threading
 import time
 import zipfile
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - type checkers see the single package import
     from scripts.check_isolation import check_launch_options
@@ -909,6 +909,34 @@ def _evidence_head_path(base):
     return os.path.join(base, PG_DIR, EVIDENCE_HEAD)
 
 
+def _load_evidence_head(base: str) -> dict[str, Any] | None:
+    """The last committed head checkpoint, or None when there is none.
+
+    O(1) in the size of the evidence log: the checkpoint is a small JSON file
+    by design, which is what makes the append path incremental.
+    """
+    path = _evidence_head_path(base)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    # isinstance already narrowed this to dict; a cast here would be both
+    # redundant and bare (type-arg), so the narrowed value is returned.
+    return value
+
+
+def _current_archive_tail(base: str) -> str | None:
+    head = _load_evidence_head(base)
+    if head is not None and "archive_tail" in head:
+        tail = head["archive_tail"]
+        return tail if isinstance(tail, str) else None
+    tail = _latest_archive_tail(base)
+    return tail if isinstance(tail, str) else None
+
+
 def _expected_evidence_head(base, key):
     active = evidence_path(base)
     archives = _archive_paths(base)
@@ -921,8 +949,22 @@ def _expected_evidence_head(base, key):
     }
 
 
-def _write_evidence_head(base, key):
-    payload = _expected_evidence_head(base, key)
+def _write_evidence_head(base, key, new_count: int | None = None, new_tail: str | None = None) -> None:
+    # The append path passes the two values it already knows (the record it
+    # just wrote), which keeps every append O(1) instead of O(N): with a full
+    # scan per write, an N-record chain costs N^2 line reads. Rotation and the
+    # explicit verifier still take the full-scan path because the archive tail
+    # genuinely changed there.
+    if new_count is not None and new_tail is not None:
+        payload = {
+            "format_version": 2,
+            "key_id": key.key_id,
+            "active_count": new_count,
+            "active_tail": new_tail,
+            "archive_tail": _current_archive_tail(base),
+        }
+    else:
+        payload = _expected_evidence_head(base, key)
     value = dict(payload)
     value["auth"] = make_auth(key, EVIDENCE_HEAD_DOMAIN, payload)
     path = _evidence_head_path(base)
@@ -957,11 +999,21 @@ def _verify_evidence_head(base, key):
 def _write_evidence_record(path, rec, prev=None):
     base = _base_from_evidence_path(path)
     key = runtime_key(base)
+    is_active = os.path.realpath(path) == os.path.realpath(evidence_path(base))
+    # The committed head checkpoint is an O(1) source for the chain tail and
+    # count. Without it (a fresh workspace, or state written before the
+    # checkpoint existed) the fallback scans the log — correct, just slow.
+    head = _load_evidence_head(base) if (is_active and prev is None) else None
     if prev is not None:
         previous = prev
+    elif head is not None and isinstance(head.get("active_count"), int):
+        if head["active_count"] > 0:
+            previous = head.get("active_tail") or "GENESIS"
+        else:
+            previous = _current_archive_tail(base) or "GENESIS"
     elif os.path.isfile(path) and _record_count(path):
         previous = _last_record_hash(path)
-    elif os.path.realpath(path) == os.path.realpath(evidence_path(base)):
+    elif is_active:
         previous = _latest_archive_tail(base) or "GENESIS"
     else:
         previous = "GENESIS"
@@ -980,8 +1032,17 @@ def _write_evidence_record(path, rec, prev=None):
         handle.write(canonical(rec) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
-    if key is not None and os.path.realpath(path) == os.path.realpath(evidence_path(base)):
-        _write_evidence_head(base, key)
+    if key is not None and is_active:
+        # Incremental head update: the writer already knows the new tail hash,
+        # and the checkpoint read at entry supplies the count without
+        # re-reading the log. A full scan runs only when no checkpoint was
+        # readable (first append or pre-checkpoint state).
+        previous_count = head.get("active_count") if head is not None else None
+        if isinstance(previous_count, int) and previous_count >= 0:
+            new_count = previous_count + 1
+        else:
+            new_count = _record_count(path)
+        _write_evidence_head(base, key, new_count=new_count, new_tail=rec["hash"])
     return rec["hash"]
 
 
@@ -1906,6 +1967,17 @@ def cmd_audit(args):
     if not all_ok:
         print("\nRESULT: audit FAILED — the task is not counted as done.")
         return 1
+    # The completion gate is authenticated-evidence only (2.5.0). The core
+    # `audit` entry point is documented as usable without the supervisor CLI
+    # (README, docs/cli.md), so it must enforce the same rule here: a keyless
+    # chain is tamper-evident but rebuildable, and must never print PASS.
+    authenticated, problem = evidence_is_authenticated(args.dir)
+    if not authenticated:
+        print(f"\nRESULT: audit FAILED — evidence is not authenticated: {problem}")
+        print("Completion requires an authenticated chain: configure "
+              "PLAN_AUDITOR_HMAC_KEY (or PLAN_AUDITOR_HMAC_KEY_FILE) and run "
+              "'plan-auditor integrity init .'.")
+        return 2
     print("\nRESULT: audit PASSED — every step is proven.")
     return 0
 
