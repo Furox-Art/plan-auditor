@@ -62,9 +62,10 @@ launcher for the same CLI and needs Python on `PATH`. The examples call the inte
 In CI, add `- uses: Furox-Art/plan-auditor@main` with `path: .` — see
 [integrations](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md).
 
-**Release status:** `2.4.3` is current on both registries. PyPI publishes every artifact
-with a PEP 740 provenance attestation; npm has **no** provenance attestation and its
-attestations endpoint returns `404` for one. Measured per channel in
+**Release status (verified 2026-10-13):** `2.6.0` is published on both PyPI and npm. The
+PyPI wheel has a PEP 740 provenance attestation; npm `2.6.0` has **no** build
+attestation (its attestation endpoint returns `404`). Check the live registries for
+subsequent releases. Measured per channel in
 [docs/release-status.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/release-status.md).
 
 ## Quick start (verified, 5 minutes)
@@ -256,7 +257,7 @@ so the Markdown is known to build, but nothing serves it; build it with
 - It verifies that *declared, checkable* requirements were met. Domain meaning that
   cannot be a deterministic check is reviewed by a human, not guessed.
 - The npm package needs Python on `PATH` and carries **no** Sigstore build
-  attestation: the npm attestations endpoint returns `404` for `2.4.3`. Its
+  attestation: the npm attestations endpoint returns `404` for `2.6.0`. Its
   `dist.signatures` block is a registry transport signature and is **not** build
   provenance, so verify the npm tarball against `dist.integrity` instead.
   PyPI does carry a PEP 740 provenance attestation for every artifact.
