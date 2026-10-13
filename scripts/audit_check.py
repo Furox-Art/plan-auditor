@@ -82,6 +82,7 @@ except ImportError:
         topological_order,
         validate_output_links,
     )
+from supervisor.plans import MAX_PLAN_BYTES
 
 PG_DIR = ".plan-auditor"
 EVIDENCE_HEAD = "evidence.head.json"
@@ -295,6 +296,15 @@ def load_plan(base, name=None):
     if not os.path.isfile(path):
         where = path if not name else "%s (--plan %s)" % (path, name)
         sys.exit("HATA: plan yok: %s" % where)
+    # The plan is untrusted input, so it is bounded before it is parsed. See
+    # ``supervisor.plans.MAX_PLAN_BYTES``: the same bound the trusted read path
+    # uses, so both paths accept the same plans instead of disagreeing.
+    size = os.path.getsize(path)
+    if size > MAX_PLAN_BYTES:
+        sys.exit(
+            f"HATA: plan cok buyuk: {path} ({size} bayt, sinir {MAX_PLAN_BYTES} bayt); "
+            "plani kucultun veya adlandirilmis planlara bolun"
+        )
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 
