@@ -1060,8 +1060,16 @@ def _all_evidence_paths(base):
     return _archive_paths(base) + ([evidence_path(base)] if os.path.isfile(evidence_path(base)) else [])
 
 
-def count_failed_attempts(base, step_id, plan="default", mode="run"):
-    count = 0
+def failed_attempt_counts(base, mode="run"):
+    """Return {(plan, step): failed attempt count} in one pass over the evidence.
+
+    ``audit_steps`` needs this number for every step it is about to run. Reading
+    it one step at a time re-read the entire log once per step, which is quadratic
+    in the number of steps once the log holds one record per step: a 50-step plan
+    against a rotated history parsed the log fifty times. The numbers are the same
+    either way, so they are computed once here.
+    """
+    counts: dict[tuple[str, int], int] = {}
     for path in _all_evidence_paths(base):
         try:
             handle = open(path, encoding="utf-8")
@@ -1075,14 +1083,25 @@ def count_failed_attempts(base, step_id, plan="default", mode="run"):
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if (
-                    rec.get("mode") == mode
-                    and rec.get("step") == step_id
-                    and rec.get("plan", "default") == plan
-                    and rec.get("status") == "failed"
-                ):
-                    count += 1
-    return count
+                if not isinstance(rec, dict) or rec.get("mode") != mode:
+                    continue
+                if rec.get("status") != "failed":
+                    continue
+                step = rec.get("step")
+                plan = rec.get("plan", "default")
+                # A record whose step or plan is not a usable key cannot be
+                # counted against any real step; it is skipped rather than
+                # refusing the run.
+                if isinstance(step, bool) or not isinstance(step, int) or not isinstance(plan, str):
+                    continue
+                key = (plan, step)
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def count_failed_attempts(base, step_id, plan="default", mode="run"):
+    """Genuine failed attempts for one step. Reads the aggregate, one pass total."""
+    return failed_attempt_counts(base, mode=mode).get((plan, step_id), 0)
 
 
 def verify_chain(base):
@@ -1665,6 +1684,10 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
     all_ok = True
     passed_this_run = {}
     audit_baseline = workspace_fingerprint(base) if mode == "audit" else None
+    # One pass over the evidence log answers the attempt limit for every step;
+    # each step visits this loop exactly once, so a per-step re-read would only
+    # re-read the same file. See ``failed_attempt_counts``.
+    failed_attempts = failed_attempt_counts(base, mode=mode) if mode == "run" else {}
 
     for step in target:
         sid = step["id"]
@@ -1708,7 +1731,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
 
         attempt = 1
         if mode == "run":
-            attempt = count_failed_attempts(base, sid, plan=key) + 1
+            attempt = failed_attempts.get((key, sid), 0) + 1
             if attempt > max_attempts and not force:
                 print("[SKIPPED] step %s: %s previous genuine failed attempts — %s limit exceeded." % (
                     sid, step.get("title", ""), max_attempts,
