@@ -5,9 +5,9 @@ attested on each registry. Everything here was measured against the live registr
 rather than against this repository, and it is the page to re-read before trusting a
 version number.
 
-The short version, kept in the README as well: **`2.4.3` is the current release on
-both PyPI and npm**, and the quick start in the README describes the published
-packages rather than only a checkout.
+Verified on 2026-10-13: **`2.6.0` is published on both PyPI and npm**. Both
+registry version pages and the per-file PyPI provenance endpoint were checked.
+For newer releases, re-check registry metadata; this is a dated measurement.
 
 If this page and a registry ever disagree, the registry is right and this page is
 stale.
@@ -16,10 +16,10 @@ stale.
 
 | Surface | Version | Published | Notes |
 |---|---|---|---|
-| npm (`latest`) | `2.4.3` | 2026-10-04 | Byte-identical to `npm pack` of the `main` tip (`45fd5ee`): `shasum` `f220d14e987008d7177c7ac2a19da4da63ee082c` and integrity `sha512-XYRobvGvmzBlv/VfLDD96W08XP0OPzeVXs2qMVDFnRzb8kgbWuu3IW1Q3MbEiF2Q67JKyW0ikFgn8zXYSVvBLg==` both reproduce from a clean checkout. 63 files, 617 609 bytes unpacked. |
-| PyPI | `2.4.3` | 2026-10-04 | Carries a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation on both files. Wheel SHA-256 `c4fdfddd9c12001d1fb76c3d48962a0cc3de07427bbcc6422a8bf04ad1b77c47`, sdist SHA-256 `29ae465bfc008687cd6ae5ad01fe49f154276441fedcbc120ed803fc446ce2fb`. |
+| npm (`2.6.0`) | `2.6.0` | 2026-10-13 | Registry reports `shasum` `4c5138778dd9f75216fa419532a8c207d404f088`, integrity `sha512-TAQgGaOot8eKkVNtq4QIZ1PILeEhMf+vP+6E6VGzUv/sMrvcu+r9i+rrfBv4ks4shX5Svm3u86AomgmXyKR2ig==`, 68 files and 690430 unpacked bytes. These values were read from the registry, **not** claimed to reproduce from a fresh local pack. |
+| PyPI | `2.6.0` | 2026-10-13 | Wheel SHA-256 `b8cd5653431f5d29429642df08071984656fc0aaa14f817e8bfe027b06579add`; sdist SHA-256 `0d95cbc01ab720e81bef740ce6f60ad815787ee6f24714c16d145b6e00acc2c9`. The **wheel** PEP 740 provenance endpoint returned `200`; the sdist's attestation was not checked separately during this audit. |
 
-## `2.4.0` and `2.4.1` were defective; `2.4.2` fixed them; `2.4.3` is current
+## Historical defective releases: `2.4.0` and `2.4.1`; fixes in `2.4.2`
 
 | Version | Defect |
 |---|---|
@@ -30,6 +30,18 @@ stale.
 
 npm versions are immutable, so `2.4.0` and `2.4.1` cannot be withdrawn. Pin
 `plan-auditor>=2.4.2` if you consume the npm package.
+
+
+### Historical verified artifact checks (2.4.3, 2026-10-04)
+
+These historical values are retained for comparing old installations, **not** as
+current-package values:
+
+- npm shasum: `f220d14e987008d7177c7ac2a19da4da63ee082c`; 63 files; 617609 unpacked bytes.
+- PyPI wheel SHA-256: `c4fdfddd9c12001d1fb76c3d48962a0cc3de07427bbcc6422a8bf04ad1b77c47`.
+- PyPI sdist SHA-256: `29ae465bfc008687cd6ae5ad01fe49f154276441fedcbc120ed803fc446ce2fb`.
+- The `2.4.3` PyPI wheel provenance endpoint returned `200` and the npm
+  attestation endpoint `404` when measured for that release.
 
 ## Supply chain: three mechanisms, not one
 
@@ -44,12 +56,12 @@ provenance.
 
 ## Per channel: what is true today
 
-Both rows were measured against `2.4.3`.
+Both rows were re-checked against `2.6.0` on 2026-10-13.
 
 | Channel | Build attestation? | Endpoint | Observed |
 |---|---|---|---|
-| PyPI | **yes** | `https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance` | `200`. in-toto v1 statement, predicate type `https://docs.pypi.org/attestations/publish/v1`, publisher `kind=GitHub`, `repository=Furox-Art/plan-auditor`, `workflow=release.yml`, `environment=pypi`. Subject `sha256` equals the digest PyPI serves. |
-| npm | **no** | `https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3` | `404`. No `provenance` field and no `dist.attestations` in the packument. `dist.signatures` **is** present, and is the transport signature described above. |
+| PyPI | **yes (wheel)** | `https://pypi.org/integrity/plan-auditor/2.6.0/plan_auditor-2.6.0-py3-none-any.whl/provenance` | `200`; endpoint returns an attestation bundle. The published wheel digest is listed above; this check establishes endpoint presence, not independent verification of the bundle's signature/subject. |
+| npm | **no** | `https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.6.0` | `404`. Registry version metadata contains transport `dist.signatures`, which are **not** build provenance; the publish job used token mode. |
 
 ### The URL shape matters when you re-check this
 
@@ -58,11 +70,11 @@ PyPI serves attestations **per file**. The path ends in `/<filename>/provenance`
 ```bash
 # 200 -- a real attestation
 curl -s -o /dev/null -w '%{http_code}\n' \
-  https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance
+  https://pypi.org/integrity/plan-auditor/2.6.0/plan_auditor-2.6.0-py3-none-any.whl/provenance
 
 # 404 -- NOT an endpoint. This means "no such URL", not "no attestation".
 curl -s -o /dev/null -w '%{http_code}\n' \
-  https://pypi.org/integrity/plan-auditor/2.4.3/
+  https://pypi.org/integrity/plan-auditor/2.6.0/
 ```
 
 Reading the second `404` as "PyPI has no attestation" is exactly the mistake this section
@@ -73,21 +85,21 @@ one.
 
 ```bash
 # PyPI: attestation, then the digest it must match
-curl -s https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance
-python -c "import json,urllib.request;d=json.load(urllib.request.urlopen('https://pypi.org/pypi/plan-auditor/2.4.3/json'));print(d['urls'][0]['digests']['sha256'])"
+curl -s https://pypi.org/integrity/plan-auditor/2.6.0/plan_auditor-2.6.0-py3-none-any.whl/provenance
+python -c "import json,urllib.request;d=json.load(urllib.request.urlopen('https://pypi.org/pypi/plan-auditor/2.6.0/json'));print(d['urls'][0]['digests']['sha256'])"
 
 # npm: no attestation; verify by digest, and treat that as integrity only
-curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3
-npm view plan-auditor@2.4.3 dist.integrity
-npm view plan-auditor@2.4.3 dist.signatures
+curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.6.0
+npm view plan-auditor@2.6.0 dist.integrity
+npm view plan-auditor@2.6.0 dist.signatures
 ```
 
 ## What would give npm provenance
 
-**Pending.** npm is weaker here for exactly one reason: this package has no trusted
-publisher registered on npmjs.com, so the workflow publishes in token mode, and a registry
-token cannot mint an attestation. Nothing in this repository needs to change; one record
-on npmjs.com does:
+**Pending as of the `2.6.0` release.** Its npm CI job published using token mode,
+which does not create build provenance. Configuring npm trusted publishing is an
+account/registry setting; the workflow already supports an OIDC path, but the
+registry-side configuration must be completed and independently verified:
 
 | Field | Value |
 |---|---|
@@ -115,6 +127,6 @@ Every version, hash and endpoint on this page is re-checkable:
 ```bash
 npm view plan-auditor version dist.integrity
 python -c "import json,urllib.request;print(json.load(urllib.request.urlopen('https://pypi.org/pypi/plan-auditor/json'))['info']['version'])"
-curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3
-curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance
+curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.6.0
+curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/integrity/plan-auditor/2.6.0/plan_auditor-2.6.0-py3-none-any.whl/provenance
 ```
