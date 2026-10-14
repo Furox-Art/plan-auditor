@@ -10,7 +10,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from scripts.integrity import (
     EVIDENCE_HEAD_DOMAIN,
@@ -356,6 +356,21 @@ def write_evidence_head(root: str | Path, key: KeyMaterial) -> Path:
     tmp.write_text(auth_canonical(value) + "\n", encoding="utf-8")
     os.replace(tmp, path)
     return path
+
+
+def load_evidence_head(root: str | Path) -> dict[str, Any] | None:
+    """The committed head checkpoint as a dict, or None when there is none.
+
+    Single reader for both layers: the L10 core writes the checkpoint
+    incrementally and reads it through this function, so the on-disk shape is
+    defined in exactly one place.
+    """
+    path = Path(root).resolve() / ".plan-auditor" / EVIDENCE_HEAD
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def verify_evidence_head(root: str | Path, key: KeyMaterial) -> Tuple[bool, str]:

@@ -382,19 +382,30 @@ def auditor_state_present(root: str | Path) -> bool:
         "plan.json",
         "seal.json",
         "evidence.jsonl",
+        "evidence.head.json",
         "integrity.json",
+        "supervisor-assessment.json",
+        "watchdog.jsonl",
     )
     for name in activating_files:
         path = pg / name
         if path.exists():
             return True
-    for dirname in ("plans", "seals"):
+    # Directory-level state carries activation too: deleting the top-level
+    # markers must not turn a used workspace back into "never activated" while
+    # rotated evidence, per-plan files or snapshots are still on disk.
+    for dirname, suffixes in (
+        ("plans", (".json",)),
+        ("seals", (".json",)),
+        ("archive", (".jsonl",)),
+        ("snapshots", (".zip",)),
+    ):
         directory = pg / dirname
         if directory.exists():
             if directory.is_symlink():
                 return True
             try:
-                if any(path.suffix.lower() == ".json" for path in directory.iterdir()):
+                if any(path.suffix.lower() in suffixes for path in directory.iterdir()):
                     return True
             except OSError:
                 return True

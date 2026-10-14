@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic Plan Auditor core.
+"""L10 — deterministic Plan Auditor core.
 
 The core never trusts an agent narrative. It executes concrete checks, keeps a
 cross-archive append-only evidence chain, limits retries across rotations,
@@ -19,6 +19,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -82,6 +83,8 @@ except ImportError:
         topological_order,
         validate_output_links,
     )
+from supervisor.evidence import load_evidence_head as supervisor_load_evidence_head
+from supervisor.evidence import verify_evidence_head as supervisor_verify_evidence_head
 from supervisor.plans import MAX_PLAN_BYTES
 
 PG_DIR = ".plan-auditor"
@@ -101,6 +104,12 @@ _PLAN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _FINGERPRINT_SKIP_DIRS = {".git", PG_DIR, "__pycache__", ".pytest_cache"}
 
 _VALID_RUNTIME_MODES = {"serial", "parallel-warn", "parallel-strict"}
+
+#: Rotation archives carry a monotonically increasing sequence so archive
+#: order survives a clock rollback; legacy stamp-only names still sort first
+#: ("evidence-" + digit < "evidence-seq"), so their order is preserved too.
+_ROTATION_SEQ_RE = re.compile(r"^evidence-seq(\d{8})-")
+_SEQ_MARKER = "-seq"
 
 
 def _strict_runtime_int(data, key, default, minimum, maximum):
@@ -831,8 +840,15 @@ def run_check(check, base, timeout=300):
             return False, str(exc), ""
         if not os.path.isfile(path):
             return False, "%s MISSING" % check["path"], ""
+        # The scan is bounded so a huge file cannot be pulled into memory whole.
+        # Truncation is surfaced in the detail so a "did not match" against a
+        # truncated prefix is never mistaken for a full scan.
+        limit = check.get("max_bytes", MAX_OUTPUT_BYTES)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not (1_024 <= limit <= 50_000_000):
+            return False, "max_bytes must be an int between 1024..50000000", ""
         with open(path, encoding="utf-8", errors="replace") as handle:
-            content = handle.read()
+            content = handle.read(limit)
+            truncated = handle.read(1) != ""
         pattern = check.get("pattern")
         if not isinstance(pattern, str) or not pattern:
             return False, "regex pattern must be a non-empty string", ""
@@ -840,7 +856,10 @@ def run_check(check, base, timeout=300):
             ok = re.search(pattern, content) is not None
         except re.error as exc:
             return False, "invalid regex: %s" % exc, ""
-        return ok, "pattern %s" % ("matched" if ok else "DID NOT MATCH"), ""
+        detail = "pattern %s" % ("matched" if ok else "DID NOT MATCH")
+        if truncated:
+            detail += f" (scan truncated at {limit} bytes)"
+        return ok, detail, ""
 
     return False, "unknown check type: %s" % kind, ""
 
@@ -850,21 +869,42 @@ def evidence_path(base):
 
 
 def _last_record_hash(path):
+    """The chain hash of the final record, read in a bounded backward window.
+
+    The tail is needed on a hot-ish path (append derivation and rotation), so
+    the whole log must not be slurped: the record is the last non-empty line,
+    and a window that doubles from 64 KiB until it holds that line is enough.
+    An unreadable, empty or unparsable tail reports GENESIS, matching the
+    semantics of the full-read implementation.
+    """
     if not os.path.isfile(path):
         return "GENESIS"
     try:
-        with open(path, encoding="utf-8") as handle:
-            lines = handle.readlines()
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            offset = handle.tell()
+            window = 65536
+            while True:
+                start = max(0, offset - window)
+                handle.seek(start)
+                chunk = handle.read(offset - start)
+                if start == 0 or chunk.count(b"\n") >= 2:
+                    break
+                window *= 2
     except OSError:
         return "GENESIS"
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-        try:
-            return json.loads(line).get("hash") or "GENESIS"
-        except json.JSONDecodeError:
-            return "GENESIS"
-    return "GENESIS"
+    # rstrip also drops trailing whitespace-only lines, so the last non-empty
+    # line is what remains after the final newline.
+    text = chunk.decode("utf-8", errors="replace").rstrip()
+    if not text:
+        return "GENESIS"
+    try:
+        value = json.loads(text.rsplit("\n", 1)[-1])
+    except json.JSONDecodeError:
+        return "GENESIS"
+    if not isinstance(value, dict):
+        return "GENESIS"
+    return value.get("hash") or "GENESIS"
 
 
 def _archive_paths(base):
@@ -876,6 +916,20 @@ def _archive_paths(base):
         for filename in sorted(os.listdir(directory))
         if filename.startswith("evidence-") and filename.endswith(".jsonl")
     ]
+
+
+def _next_rotation_sequence(base: str) -> int:
+    highest = 0
+    directory = os.path.join(base, PG_DIR, "archive")
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return 1
+    for name in names:
+        match = _ROTATION_SEQ_RE.match(name)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
 
 
 def _latest_archive_tail(base):
@@ -913,19 +967,10 @@ def _load_evidence_head(base: str) -> dict[str, Any] | None:
     """The last committed head checkpoint, or None when there is none.
 
     O(1) in the size of the evidence log: the checkpoint is a small JSON file
-    by design, which is what makes the append path incremental.
+    by design, which is what makes the append path incremental. Read through
+    the L11 implementation so the writer here and the reader cannot drift.
     """
-    path = _evidence_head_path(base)
-    try:
-        with open(path, encoding="utf-8") as handle:
-            value = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(value, dict):
-        return None
-    # isinstance already narrowed this to dict; a cast here would be both
-    # redundant and bare (type-arg), so the narrowed value is returned.
-    return value
+    return supervisor_load_evidence_head(base)
 
 
 def _current_archive_tail(base: str) -> str | None:
@@ -978,39 +1023,42 @@ def _write_evidence_head(base, key, new_count: int | None = None, new_tail: str 
 
 
 def _verify_evidence_head(base, key):
-    path = _evidence_head_path(base)
-    try:
-        with open(path, encoding="utf-8") as handle:
-            value = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return False, "evidence authenticated head missing or invalid"
-    if not isinstance(value, dict):
-        return False, "evidence authenticated head is not an object"
-    auth = value.get("auth")
-    payload = {k: v for k, v in value.items() if k != "auth"}
-    expected = _expected_evidence_head(base, key)
-    if payload != expected:
-        return False, "evidence authenticated head checkpoint mismatch"
-    if not verify_auth(key, EVIDENCE_HEAD_DOMAIN, payload, auth):
-        return False, "evidence authenticated head HMAC failed"
-    return True, ""
+    # Delegated to L11: the checkpoint is written here (incrementally) but
+    # read and verified by exactly one implementation, which is the
+    # security-critical direction of the two.
+    return supervisor_verify_evidence_head(base, key)
 
 
 def _write_evidence_record(path, rec, prev=None):
     base = _base_from_evidence_path(path)
     key = runtime_key(base)
     is_active = os.path.realpath(path) == os.path.realpath(evidence_path(base))
-    # The committed head checkpoint is an O(1) source for the chain tail and
-    # count. Without it (a fresh workspace, or state written before the
-    # checkpoint existed) the fallback scans the log — correct, just slow.
+    # The committed head checkpoint is the O(1) source for the chain tail and
+    # count, but it can lag the log by one record when a previous append was
+    # interrupted between the record fsync and the head replace. The bounded
+    # log-tail read below cross-checks the checkpoint: agreement keeps the
+    # append O(1), a one-record lag continues from the real tail and repairs
+    # the checkpoint, and anything else (a deleted, truncated or rewritten
+    # log) is deliberately not healed — the checkpoint tail is used instead,
+    # so verify_chain reports the break rather than the gap being papered
+    # over.
     head = _load_evidence_head(base) if (is_active and prev is None) else None
+    count: int | None = None
+    repair = False
     if prev is not None:
         previous = prev
-    elif head is not None and isinstance(head.get("active_count"), int):
-        if head["active_count"] > 0:
-            previous = head.get("active_tail") or "GENESIS"
+    elif head is not None and isinstance(head.get("active_count"), int) and head["active_count"] > 0:
+        tail = _last_record_hash(path)
+        if tail == (head.get("active_tail") or "GENESIS"):
+            previous = tail
+            count = head["active_count"]
         else:
-            previous = _current_archive_tail(base) or "GENESIS"
+            scan = _record_count(path)
+            if tail != "GENESIS" and scan == head["active_count"] + 1:
+                previous = tail
+            else:
+                previous = head.get("active_tail") or _current_archive_tail(base) or "GENESIS"
+            repair = True
     elif os.path.isfile(path) and _record_count(path):
         previous = _last_record_hash(path)
     elif is_active:
@@ -1035,15 +1083,63 @@ def _write_evidence_record(path, rec, prev=None):
     if key is not None and is_active:
         # Incremental head update: the writer already knows the new tail hash,
         # and the checkpoint read at entry supplies the count without
-        # re-reading the log. A full scan runs only when no checkpoint was
-        # readable (first append or pre-checkpoint state).
-        previous_count = head.get("active_count") if head is not None else None
-        if isinstance(previous_count, int) and previous_count >= 0:
-            new_count = previous_count + 1
+        # re-reading the log. A full scan runs when no checkpoint was readable
+        # (first append or pre-checkpoint state) and when the checkpoint and
+        # log disagreed at entry (the cached values cannot be trusted then).
+        if repair:
+            _write_evidence_head(base, key)
         else:
-            new_count = _record_count(path)
-        _write_evidence_head(base, key, new_count=new_count, new_tail=rec["hash"])
+            previous_count = count if count is not None else (
+                head.get("active_count") if head is not None else None
+            )
+            if isinstance(previous_count, int) and previous_count >= 0:
+                new_count = previous_count + 1
+            else:
+                new_count = _record_count(path)
+            _write_evidence_head(base, key, new_count=new_count, new_tail=rec["hash"])
     return rec["hash"]
+
+
+def _pid_is_alive(pid: object) -> bool:
+    """Best-effort liveness probe; only a provably dead PID reports dead.
+
+    ``os.kill(pid, 0)`` is the portable probe: POSIX raises ProcessLookupError
+    for a missing process, and CPython's Windows implementation maps it to an
+    OpenProcess existence check (ERROR_INVALID_PARAMETER, winerror 87, for a
+    PID that no longer exists; access-denied for one that is alive). Anything
+    unprovable counts as alive, because the caller only steals locks from
+    provably dead holders.
+    """
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError as exc:
+        return getattr(exc, "winerror", None) != 87
+    return True
+
+
+def _lock_holder_dead(lock_path: str) -> bool:
+    """Whether an existing lock file is provably abandoned.
+
+    Stale is not dead: a long-running or suspended writer must not be robbed.
+    A lock counts as abandoned only when it names this host (a PID from
+    another machine cannot be probed) and its PID no longer exists. An
+    unreadable lock — including the pre-host format written by older
+    versions — is treated as alive, so the caller times out fail-closed.
+    """
+    try:
+        with open(lock_path, encoding="utf-8") as handle:
+            info = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(info, dict):
+        return False
+    if info.get("host") != socket.gethostname():
+        return False
+    return not _pid_is_alive(info.get("pid"))
 
 
 @contextmanager
@@ -1056,7 +1152,8 @@ def _evidence_lock(base):
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             try:
-                os.write(fd, canonical({"pid": os.getpid(), "ts": time.time()}).encode("utf-8"))
+                record = {"pid": os.getpid(), "host": socket.gethostname(), "ts": time.time()}
+                os.write(fd, canonical(record).encode("utf-8"))
             finally:
                 os.close(fd)
             break
@@ -1066,11 +1163,15 @@ def _evidence_lock(base):
             # another thread holds the freshly created lock file open. Both mean
             # "someone else has the lock", so retry in either case.
             try:
-                if time.time() - os.stat(lock_path).st_mtime > EVIDENCE_LOCK_STALE:
-                    os.unlink(lock_path)
-                    continue
+                stale = time.time() - os.stat(lock_path).st_mtime > EVIDENCE_LOCK_STALE
             except OSError:
-                pass
+                stale = False
+            if stale and _lock_holder_dead(lock_path):
+                try:
+                    os.unlink(lock_path)
+                except OSError:
+                    pass
+                continue
             if time.monotonic() >= deadline:
                 raise RuntimeError("evidence write lock timeout")
             time.sleep(0.02)
@@ -1103,7 +1204,7 @@ def maybe_rotate(base):
     }
     _write_evidence_record(path, anchor)
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
-    name = "evidence-%s.jsonl" % stamp
+    name = f"evidence-seq{_next_rotation_sequence(base):08d}-{stamp}.jsonl"
     os.replace(path, os.path.join(archive_dir, name))
     key = runtime_key(base)
     if key is not None:
@@ -1385,6 +1486,24 @@ def snapshots_dir(base):
     return os.path.join(base, PG_DIR, SNAPSHOT_DIR)
 
 
+def _next_snapshot_sequence(base: str) -> int:
+    highest = 0
+    try:
+        names = os.listdir(snapshots_dir(base))
+    except OSError:
+        return 1
+    for name in names:
+        if not name.endswith(".zip"):
+            continue
+        marker = name.rfind(_SEQ_MARKER)
+        if marker < 0:
+            continue
+        digits = name[marker + len(_SEQ_MARKER):marker + len(_SEQ_MARKER) + 8]
+        if len(digits) == 8 and digits.isdigit():
+            highest = max(highest, int(digits))
+    return highest + 1
+
+
 def make_snapshot(base, plan, label="snapshot"):
     explicit = plan.get("snapshot") or []
     scope = "explicit" if explicit else "full-workspace"
@@ -1406,7 +1525,10 @@ def make_snapshot(base, plan, label="snapshot"):
 
     os.makedirs(snapshots_dir(base), exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
-    zpath = os.path.join(snapshots_dir(base), "%s-%s.zip" % (label, stamp))
+    zpath = os.path.join(
+        snapshots_dir(base),
+        f"{label}-seq{_next_snapshot_sequence(base):08d}-{stamp}.zip",
+    )
     manifest = {
         "format_version": 3,
         "scope": scope,
@@ -1675,7 +1797,7 @@ def _run_check_list(raw_checks, base):
             "check": check,
             "passed": ok,
             "detail": detail,
-            "output_tail": tail if not ok else "",
+            "output_tail": tail,
         })
     return ok_all, results
 

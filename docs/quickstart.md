@@ -98,6 +98,8 @@ Two rules are already visible here and they are not optional:
 - Every step needs at least one **behavioral** check. `file_exists` and `regex`
   can supplement, but a step made only of those is rejected with
   *"at least one BEHAVIORAL control (run/pytest/exec) is required"*.
+  (`exec` is an accepted alias for `run`: both execute an argv list — or a
+  `cmd` string split without a shell — and both reject `"shell": true`.)
 
 **2. Declare what you asked for.**
 
@@ -283,7 +285,8 @@ plan-auditor request init . --file "$PWD/request-source.json"
 ### `request init` reports `"invalid request contract: ... at least one BEHAVIORAL control"`
 
 Your `acceptance_checks` are all `file_exists`/`regex`. Add at least one `run`,
-`pytest`, or `exec` check per requirement.
+`pytest`, or `exec` check per requirement. (`exec` is an accepted alias for
+`run`.)
 
 ### `request init` reports `"requirement REQ-001 is missing from every active plan"`
 

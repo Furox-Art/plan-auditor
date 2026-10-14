@@ -154,6 +154,32 @@ PASS requires all plan steps to execute and all final goals to be true.
 
 Search is fail-closed. Exceeding the configured state bound produces UNKNOWN/REVISE rather than PASS.
 
+### Modeling limits
+
+The internal planner understands a deliberately small fragment: positive
+preconditions, and unconditional add/delete effects. Typed objects, numeric
+fluents, conditional effects and derived predicates are not modeled. A contract
+that needs them should not be stretched into this fragment — model it manually
+and review it (see below), because the planner would otherwise reason about a
+weaker contract than the one you believe you wrote.
+
+For the same reason, an ordering found by the planner proves that *some*
+execution order of the declared actions reaches the goals under the declared
+facts. It does not prove anything about effects you did not declare.
+
+### Bounds and exit codes
+
+The state-space bound defaults to 100000 states and can be changed per run:
+
+```bash
+plan-auditor-formal verify . --max-states 500000
+```
+
+The accepted range is 1..100000000. `plan-auditor-formal verify` exits 0 for
+PASS, 2 for FAIL/REJECT and 3 for UNKNOWN, so a search that hit the bound is
+never mistaken for a verified contract: exit 3 says "could not decide", not
+"the plan is wrong".
+
 ## Manual domain-specific models
 
 Manual STRIPS contracts are still supported when a project genuinely needs domain facts that cannot be derived from Plan Auditor's structured plan.
