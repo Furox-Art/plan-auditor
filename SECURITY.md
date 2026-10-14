@@ -8,9 +8,9 @@ explicitly out of scope.
 
 | Version | Supported | Notes |
 |---|---|---|
-| `>= 2.4.2` on npm | Yes | `2.6.1` is the current release. `2.4.0` shipped a syntax error in the `bin` launcher and `2.4.1` shipped a launcher that resolved a relative workspace path against the installed package directory. Both are defective and cannot be withdrawn, because npm versions are immutable. |
+| `>= 2.4.2` on npm | Yes | `2.6.2` is the current release. `2.4.0` shipped a syntax error in the `bin` launcher and `2.4.1` shipped a launcher that resolved a relative workspace path against the installed package directory. Both are defective and cannot be withdrawn, because npm versions are immutable. |
 | `2.4.0`, `2.4.1` on npm | No | Defective releases. Do not install them. |
-| `>= 2.4.2` on PyPI | Yes | `2.6.1` is the current release, published with a PEP 740 provenance attestation. |
+| `>= 2.4.2` on PyPI | Yes | `2.6.2` is the current release, published with a PEP 740 provenance attestation. |
 | `2.4.0`, `2.4.1` on PyPI | No | Superseded by `2.4.2`. |
 | `<= 2.3.0` | No | No fixes. Reproduce on `main` and open an issue if the problem still reproduces. |
 
