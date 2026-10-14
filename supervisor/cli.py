@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .exit_codes import ExitCode
+
 SUPERVISOR_START_TIMEOUT_SEC = 60.0
 
 
@@ -167,13 +169,13 @@ def cmd_supervisor_start(args: argparse.Namespace) -> int:
     root = _root(args.dir)
     if not root.is_dir():
         print(f"ERROR: directory not found: {root}", file=sys.stderr)
-        return 1
+        return ExitCode.VERIFICATION_FAILED
     _persist_supervisor_config(root, args.profile, args.mode)
     try:
         process = _spawn_daemon(root, args.profile, args.mode)
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        return ExitCode.VERIFICATION_FAILED
     deadline = time.time() + SUPERVISOR_START_TIMEOUT_SEC
     while time.time() < deadline:
         state = read_state(root)
@@ -183,12 +185,12 @@ def cmd_supervisor_start(args: argparse.Namespace) -> int:
             and process.poll() is None
         ):
             _json(state)
-            return 0
+            return ExitCode.VERIFICATION_PASSED
         if process.poll() is not None:
             break
         time.sleep(0.1)
     print(f"ERROR: supervisor failed to start; see {root / '.plan-auditor' / 'supervisor.log'}", file=sys.stderr)
-    return 1
+    return ExitCode.VERIFICATION_FAILED
 
 
 def cmd_supervisor_stop(args: argparse.Namespace) -> int:
@@ -197,7 +199,7 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> int:
     state = read_state(root)
     if not state or not pid_alive(state.get("pid")):
         _json({"state": "stopped", "workspace": str(root)})
-        return 0
+        return ExitCode.VERIFICATION_PASSED
     pid = int(state["pid"])
     marker = stop_path(root)
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -206,7 +208,7 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> int:
     while time.time() < deadline:
         if not pid_alive(pid):
             _json({"state": "stopped", "pid": pid, "workspace": str(root)})
-            return 0
+            return ExitCode.VERIFICATION_PASSED
         time.sleep(0.2)
     try:
         os.kill(pid, signal.SIGTERM)
@@ -215,9 +217,9 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> int:
     time.sleep(0.2)
     if pid_alive(pid):
         print(f"ERROR: supervisor pid {pid} did not stop", file=sys.stderr)
-        return 1
+        return ExitCode.VERIFICATION_FAILED
     _json({"state": "stopped", "pid": pid, "workspace": str(root)})
-    return 0
+    return ExitCode.VERIFICATION_PASSED
 
 
 def cmd_supervisor_status(args: argparse.Namespace) -> int:
@@ -227,7 +229,7 @@ def cmd_supervisor_status(args: argparse.Namespace) -> int:
     if not state:
         _json({"state": "stopped", "workspace": str(root), "running": False,
                "assessment": read_assessment(root)})
-        return 1
+        return ExitCode.VERIFICATION_FAILED
     running = state.get("state") == "running" and pid_alive(state.get("pid"))
     state = dict(state)
     state["running"] = running
@@ -261,7 +263,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     _json(payload)
     outcome = assessment.get("outcome")
     if outcome in {"PASS", "NO_PLAN"}:
-        return 0
+        return ExitCode.VERIFICATION_PASSED
     return 3 if outcome == "UNKNOWN" else 2
 
 
@@ -307,7 +309,7 @@ def cmd_request(args: argparse.Namespace) -> int:
             result = initialize_request_from_file(root, args.request_file)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             _json({"activated": False, "valid": False, "error": str(exc)})
-            return 2
+            return ExitCode.REQUEST_REFUSED
         _json(result.as_dict())
         return 0 if result.valid else 2
     status, alignment, errors = _request_gate(root)
@@ -349,22 +351,22 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
         refs = _selected_refs(root, args.plan)
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        return ExitCode.VERIFICATION_FAILED
     request_status, request_alignment, request_errors = _request_gate(root)
     if request_errors:
         _json({"outcome": "FAIL", "request_contract": request_status.as_dict(), "request_errors": request_errors})
-        return 2
+        return ExitCode.REQUEST_REFUSED
     if args.reseal:
         _json({
             "outcome": "FAIL",
             "reason": "automatic --reseal is disabled after request activation; create a new host-approved request generation instead",
         })
-        return 2
+        return ExitCode.REQUEST_REFUSED
     cfg = load_config(str(root))
     policy_errors = _policy_errors(root, cfg)
     if cfg.errors or policy_errors:
         _json({"outcome": "FAIL", "configuration_errors": cfg.errors, "policy_errors": policy_errors})
-        return 2
+        return ExitCode.REQUEST_REFUSED
     env = environment_contract(root, cfg)
     outputs: dict[str, Any] = {}
     final_rc = 0
@@ -479,12 +481,12 @@ def cmd_plan_inspect(args: argparse.Namespace) -> int:
         payload = {ref.key: load_plan_ref(ref) for ref in refs}
     except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        return ExitCode.VERIFICATION_FAILED
     if len(payload) == 1:
         _json(next(iter(payload.values())))
     else:
         _json(payload)
-    return 0
+    return ExitCode.VERIFICATION_PASSED
 
 
 def cmd_integrity(args: argparse.Namespace) -> int:
@@ -496,15 +498,15 @@ def cmd_integrity(args: argparse.Namespace) -> int:
         result = integrity_status(root)
         _json(result)
         if result.get("authenticated") or not result.get("configured"):
-            return 0
-        return 2
+            return ExitCode.VERIFICATION_PASSED
+        return ExitCode.REQUEST_REFUSED
     try:
         result = initialize_integrity(root)
     except (IntegrityKeyError, SealIntegrityError, OSError, ValueError, json.JSONDecodeError) as exc:
         _json({"authenticated": False, "error": str(exc)})
-        return 2
+        return ExitCode.REQUEST_REFUSED
     _json(result)
-    return 0
+    return ExitCode.VERIFICATION_PASSED
 
 
 def cmd_evidence_verify(args: argparse.Namespace) -> int:
@@ -537,16 +539,16 @@ def cmd_audit(args: argparse.Namespace) -> int:
         refs = _selected_refs(root, args.plan)
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        return ExitCode.VERIFICATION_FAILED
     request_status, request_alignment, request_errors = _request_gate(root)
     if request_errors:
         _json({"outcome": "FAIL", "request_contract": request_status.as_dict(), "request_errors": request_errors})
-        return 2
+        return ExitCode.REQUEST_REFUSED
     cfg = load_config(str(root))
     policy_errors = _policy_errors(root, cfg)
     if cfg.errors or policy_errors:
         _json({"outcome": "FAIL", "configuration_errors": cfg.errors, "policy_errors": policy_errors})
-        return 2
+        return ExitCode.REQUEST_REFUSED
     env = environment_contract(root, cfg)
 
     for ref in refs:
@@ -555,13 +557,13 @@ def cmd_audit(args: argparse.Namespace) -> int:
             seal = load_seal(str(seal_path(root, ref.name)))
         except (OSError, ValueError, json.JSONDecodeError, SealIntegrityError) as exc:
             _json({"outcome": "FAIL", "plan": ref.key, "reason": str(exc)})
-            return 2
+            return ExitCode.REQUEST_REFUSED
         if not seal:
             _json({"outcome": "FAIL", "plan": ref.key, "reason": "plan is not sealed; run plan verify first"})
-            return 2
+            return ExitCode.REQUEST_REFUSED
         if seal.format_version < 4:
             _json({"outcome": "FAIL", "plan": ref.key, "reason": "legacy seal requires explicit reseal"})
-            return 2
+            return ExitCode.REQUEST_REFUSED
         monotonic = check_monotonic(seal.as_plan(), plan)
         env_check = check_environment(seal, env)
         if not monotonic.ok or not env_check.ok:
@@ -570,7 +572,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
                 "reason": "sealed verification contract changed",
                 "violations": monotonic.violations + env_check.violations,
             })
-            return 2
+            return ExitCode.REQUEST_REFUSED
 
     registry = MultiAgentRegistry(str(root), owner_timeout=cfg.owner_timeout_sec)
     try:
@@ -589,7 +591,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
                 return 3 if assessment.get("outcome") == "UNKNOWN" else 2
     except AuditSessionError as exc:
         _json({"outcome": "FAIL", "reason": "final audit quiescence/integrity failure", "detail": str(exc)})
-        return 2
+        return ExitCode.REQUEST_REFUSED
 
     _json({
         "outcome": "PASS",
@@ -597,7 +599,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         "deterministic_core": "fresh audit PASS for every active plan under workspace-wide freeze",
         "gate": assessment.get("gate"),
     })
-    return 0
+    return ExitCode.VERIFICATION_PASSED
 
 
 def _iter_plan_files(root: Path) -> list[Path]:
@@ -621,7 +623,7 @@ def _task_summary(path: Path) -> dict[str, Any]:
 
 def cmd_task_list(args: argparse.Namespace) -> int:
     _json([_task_summary(path) for path in _iter_plan_files(_root(args.dir))])
-    return 0
+    return ExitCode.VERIFICATION_PASSED
 
 
 def cmd_task_inspect(args: argparse.Namespace) -> int:
@@ -631,12 +633,12 @@ def cmd_task_inspect(args: argparse.Namespace) -> int:
         if summary.get("task_id") == args.task_id or path.stem == args.task_id:
             try:
                 _json(json.loads(path.read_text(encoding="utf-8")))
-                return 0
+                return ExitCode.VERIFICATION_PASSED
             except (OSError, json.JSONDecodeError) as exc:
                 print(f"ERROR: {exc}", file=sys.stderr)
-                return 1
+                return ExitCode.VERIFICATION_FAILED
     print(f"ERROR: task not found: {args.task_id}", file=sys.stderr)
-    return 1
+    return ExitCode.VERIFICATION_FAILED
 
 
 def cmd_agents(args: argparse.Namespace) -> int:
@@ -656,11 +658,11 @@ def cmd_agents(args: argparse.Namespace) -> int:
         if args.action == "register":
             registry.register(Agent(args.agent_id, args.task_id, args.plan_id, pid=args.pid))
             _json({"registered": args.agent_id})
-            return 0
+            return ExitCode.VERIFICATION_PASSED
         if args.action == "heartbeat":
             registry.heartbeat(args.agent_id, action=args.action_text)
             _json({"heartbeat": args.agent_id})
-            return 0
+            return ExitCode.VERIFICATION_PASSED
         if args.action == "claim":
             ok, conflicts = registry.claim_files(args.agent_id, set(args.files), mode=cfg.mode)
             _json({"claimed": ok, "agent": args.agent_id,
@@ -669,11 +671,11 @@ def cmd_agents(args: argparse.Namespace) -> int:
         if args.action == "release":
             registry.unregister(args.agent_id)
             _json({"released": args.agent_id})
-            return 0
+            return ExitCode.VERIFICATION_PASSED
     except (RegistryIntegrityError, ValueError) as exc:
         _json({"error": str(exc), "registry_valid": False})
-        return 2
-    return 1
+        return ExitCode.REQUEST_REFUSED
+    return ExitCode.VERIFICATION_FAILED
 
 
 def _core_script() -> Path | None:
@@ -713,7 +715,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_audit(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
-    return 1
+    return ExitCode.VERIFICATION_FAILED
 
 
 def entrypoint() -> None:
