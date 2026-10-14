@@ -134,7 +134,7 @@ def _persist_supervisor_config(root: Path, profile: str, mode: str) -> None:
 
 
 def _spawn_daemon(root: Path, profile: str, mode: str) -> subprocess.Popen[bytes]:
-    from .daemon import read_state, pid_alive, state_path, stop_path
+    from .daemon import pid_alive, read_state, state_path, stop_path
     current = read_state(root)
     if current and current.get("state") == "running" and pid_alive(current.get("pid")):
         raise RuntimeError(f"supervisor already running with pid {current.get('pid')}")
@@ -268,7 +268,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _selected_refs(root: Path, name: str | None = None):
-    from .plans import all_plan_refs, plan_path, validate_plan_name, PlanRef
+    from .plans import PlanRef, all_plan_refs, plan_path, validate_plan_name
     if name:
         safe = validate_plan_name(name)
         path = plan_path(root, safe)
@@ -301,7 +301,7 @@ def _request_gate(root: Path):
 
 
 def cmd_request(args: argparse.Namespace) -> int:
-    from .request_contract import initialize_request_from_file, verify_request_contract
+    from .request_contract import initialize_request_from_file
 
     root = _root(args.dir)
     if args.action == "init":
@@ -337,13 +337,18 @@ def _policy_errors(root: Path, cfg) -> list[str]:
 def cmd_plan_verify(args: argparse.Namespace) -> int:
     from scripts import audit_check as core
     from scripts.contract import plan_hash
+
     from .config import load_config
     from .contracts import environment_contract
-    from .plans import load_plan_ref, seal_path
     from .plan_verifier import verify_plan
+    from .plans import load_plan_ref, seal_path
     from .sealing import (
-        SealIntegrityError, check_environment, check_monotonic,
-        load_seal, save_seal, seal_plan,
+        SealIntegrityError,
+        check_environment,
+        check_monotonic,
+        load_seal,
+        save_seal,
+        seal_plan,
     )
 
     root = _root(args.dir)
@@ -491,6 +496,7 @@ def cmd_plan_inspect(args: argparse.Namespace) -> int:
 
 def cmd_integrity(args: argparse.Namespace) -> int:
     from scripts.integrity import IntegrityKeyError
+
     from .integrity import initialize_integrity, integrity_status
     from .sealing import SealIntegrityError
     root = _root(args.dir)
@@ -511,6 +517,7 @@ def cmd_integrity(args: argparse.Namespace) -> int:
 
 def cmd_evidence_verify(args: argparse.Namespace) -> int:
     from scripts import audit_check as core
+
     from .evidence import verify_anchor_chain
     root = _root(args.dir)
     active_ok, count, active_problem = core.verify_chain(str(root))
