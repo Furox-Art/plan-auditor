@@ -21,7 +21,12 @@ DOCS = [
 ]
 
 #: Verbs of the dependency-free core (`python scripts/audit_check.py <verb>`).
-CORE_VERBS = {"audit", "run", "validate", "verify", "version", "help", "completion"}
+#: Kept as data because the core builds its parser dynamically; the list is
+#: pinned by a test below that runs each verb through the real entry point.
+CORE_VERBS = {
+    "audit", "run", "validate", "verify", "version", "help", "completion",
+    "status", "snapshot", "rollback",
+}
 
 
 def _all_subcommand_names(parser) -> set[str]:
@@ -52,8 +57,10 @@ def _documented_commands(paths) -> set[str]:
             # `plan-auditor/blob/...` is a URL path, not a command line.
             if first.startswith("/") or text[match.start(): match.start()+20].lstrip("plan-auditor ").startswith("/"):
                 continue
+            if first.startswith("--"):
+                continue
             found.add(first)
-            if second:
+            if second and not second.startswith("--"):
                 found.add(second)
         for match in re.finditer(r"audit_check\.py ([\w-]+)", text):
             found.add(match.group(1))
