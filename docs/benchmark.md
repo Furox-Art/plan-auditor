@@ -15,6 +15,33 @@ checks we *can* run and let you run them too.
 
 If you want to build that harness, [open an issue](https://github.com/Furox-Art/plan-auditor/issues).
 
+## The verified flow (authenticated since 2.5.0)
+
+Every number on this page is only meaningful for a completed run, and since 2.5.0
+a run can only complete when its evidence is HMAC-authenticated. The full flow:
+
+```bash
+# 1. Authorize the host-owned request contract
+plan-auditor request init . --file request-source.json
+
+# 2. Seal the plan's contract
+plan-auditor plan verify .
+
+# 3. Configure an external HMAC key (OUTSIDE the workspace) and initialise
+#    integrity. Without this the audit cannot pass: a keyless chain is
+#    tamper-evident but rebuildable by anyone with write access.
+mkdir -p ~/.plan-auditor && printf 'plan-auditor: %s' "$(openssl rand -hex 32)" > ~/.plan-auditor/hmac.key
+export PLAN_AUDITOR_HMAC_KEY_FILE=~/.plan-auditor/hmac.key
+plan-auditor integrity init .
+
+# 4. Run the checks and audit
+plan-auditor run .
+plan-auditor audit .   # exits 0 only with authenticated evidence
+```
+
+Exit codes are the documented four (`0` proven, `1` failed, `2` request refused,
+`3` undetermined); see [docs/cli.md](cli.md) for the authoritative table.
+
 ## Provenance for every number on this page
 
 Nothing on this page is a hand-copied figure. Each quality claim below is tied to

@@ -15,12 +15,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .assessment import assessment_path, write_assessment
 from .config import load_config
 from .orchestrator import evaluate_workspace
 from .watchdog import Watchdog
 
 STATE_FILENAME = "supervisor-runtime.json"
-ASSESSMENT_FILENAME = "supervisor-assessment.json"
 STOP_FILENAME = "supervisor.stop"
 EVENTS_FILENAME = "watchdog.jsonl"
 
@@ -31,10 +31,6 @@ def runtime_dir(workspace: str | Path) -> Path:
 
 def state_path(workspace: str | Path) -> Path:
     return runtime_dir(workspace) / STATE_FILENAME
-
-
-def assessment_path(workspace: str | Path) -> Path:
-    return runtime_dir(workspace) / ASSESSMENT_FILENAME
 
 
 def stop_path(workspace: str | Path) -> Path:

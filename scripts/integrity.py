@@ -32,6 +32,7 @@ UNSIGNED_AUTH = {"alg": "none"}
 
 EVIDENCE_RECORD_DOMAIN = "plan-auditor:evidence-record:v1"
 EVIDENCE_HEAD_DOMAIN = "plan-auditor:evidence-head:v1"
+SUPERVISOR_ASSESSMENT_DOMAIN = "plan-auditor:supervisor-assessment:v1"
 REGISTRY_RECORD_DOMAIN = "plan-auditor:registry-record:v1"
 REGISTRY_HEAD_DOMAIN = "plan-auditor:registry-head:v1"
 SEAL_DOMAIN = "plan-auditor:plan-seal:v1"
