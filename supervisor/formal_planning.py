@@ -41,6 +41,7 @@ MAX_PLANNER_LOG_BYTES = 2_000_000
 FORMAL_KEY = "formal_planning"
 FORMAL_EXECUTABLE = "plan-auditor-formal"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_OUTCOME_RANK = {"PASS": 0, "UNKNOWN": 1, "FAIL": 2}
 
 
 @dataclass(frozen=True)
@@ -838,7 +839,15 @@ def verify_workspace(
     digest: Optional[str] = None,
     fast_downward: Optional[str] = None,
     require_fast_downward: bool = False,
+    max_states: int | None = None,
 ) -> Tuple[bool, Dict[str, Any]]:
+    if max_states is not None and (
+        isinstance(max_states, bool)
+        or not isinstance(max_states, int)
+        or not (1 <= max_states <= 100_000_000)
+    ):
+        return False, {"outcome": "FAIL", "error": "--max-states must be an int between 1..100000000"}
+    search_bound = max_states if max_states is not None else MAX_SEARCH_STATES
     workspace = Path(root).expanduser().resolve()
     if digest is not None and not _SHA256_RE.fullmatch(digest):
         return False, {"outcome": "FAIL", "error": "--contract-sha must be lowercase SHA-256"}
@@ -851,15 +860,21 @@ def verify_workspace(
         return False, {"outcome": "FAIL", "error": f"no formal planning contract{target} found"}
 
     records: List[Dict[str, Any]] = []
-    overall = True
+    # Three outcomes, ranked so the worst contract decides: a search-bound
+    # UNKNOWN must stay distinguishable from a real FAIL all the way to the
+    # exit code, because "we could not decide" is not the same claim as
+    # "the plan is wrong".
+    outcome = "PASS"
     for plan_name, plan, check in matches:
-        analysis = analyze_formal_contract(plan)
+        analysis = analyze_formal_contract(plan, max_states=search_bound)
         record: Dict[str, Any] = {
             "plan": plan_name,
             "analysis": analysis.as_dict(),
         }
         if analysis.verdict != "PASS":
-            overall = False
+            verdict_outcome = "UNKNOWN" if analysis.verdict == "UNKNOWN" else "FAIL"
+            if _OUTCOME_RANK[verdict_outcome] > _OUTCOME_RANK[outcome]:
+                outcome = verdict_outcome
         raw = check.get(FORMAL_KEY)
         external: Optional[ExternalPlannerResult] = None
         selected = fast_downward
@@ -875,9 +890,9 @@ def verify_workspace(
             external = run_fast_downward(plan, raw, executable=selected)
             record["fast_downward"] = external.as_dict()
             if external.status == "UNAVAILABLE" and require_fast_downward:
-                overall = False
+                outcome = "FAIL"
             elif external.status not in {"SOLVED", "UNAVAILABLE"}:
-                overall = False
+                outcome = "FAIL"
             elif external.status == "SOLVED":
                 if external.solution_order != analysis.solution_order:
                     # Multiple valid orderings are allowed.  Both engines need only
@@ -890,10 +905,10 @@ def verify_workspace(
             if external is not None:
                 record["fast_downward"] = external.as_dict()
             if external is None or external.status != "SOLVED":
-                overall = False
+                outcome = "FAIL"
         records.append(record)
 
-    return overall, {"outcome": "PASS" if overall else "FAIL", "contracts": records}
+    return outcome == "PASS", {"outcome": outcome, "contracts": records}
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
@@ -902,9 +917,12 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         digest=args.contract_sha,
         fast_downward=args.fast_downward,
         require_fast_downward=args.require_fast_downward,
+        max_states=args.max_states,
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
-    return 0 if ok else 2
+    if ok:
+        return 0
+    return 3 if payload.get("outcome") == "UNKNOWN" else 2
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
@@ -983,6 +1001,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Fast Downward executable/path or 'auto'; omitted = internal planner only",
     )
     verify.add_argument("--require-fast-downward", action="store_true")
+    verify.add_argument(
+        "--max-states",
+        type=int,
+        help=(
+            f"state-space bound for the internal planner (default {MAX_SEARCH_STATES}); "
+            "exceeding it reports UNKNOWN with exit code 3"
+        ),
+    )
     verify.set_defaults(func=_cmd_verify)
 
     export = sub.add_parser("export-pddl", help="export one embedded contract to PDDL")

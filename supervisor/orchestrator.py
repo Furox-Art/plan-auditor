@@ -8,6 +8,8 @@ full audit, valid evidence/registry state, and passing policies.
 from __future__ import annotations
 
 import json
+from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -75,23 +77,28 @@ def _evidence_files(root: Path) -> List[Path]:
     return files
 
 
-def _read_evidence_records(root: Path) -> List[Dict[str, Any]]:
-    records: List[Dict[str, Any]] = []
+def _iter_evidence_records(root: Path) -> Iterator[Dict[str, Any]]:
+    """Yield every dict record from the archives and the active log, in order.
+
+    Streaming keeps the audit proof O(steps) in memory rather than holding
+    the whole evidence history; malformed lines are skipped exactly like the
+    whole-file reader did.
+    """
     for path in _evidence_files(root):
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            handle = path.open(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(rec, dict):
-                records.append(rec)
-    return records
+        with handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict):
+                    yield rec
 
 
 def _result_checks_match(expected, results):
@@ -179,16 +186,22 @@ def fresh_full_audit_proof(
         return FreshAuditProof(False, "plan has no valid dependency-graph steps")
     steps = [by_id[sid] for sid in order]
 
-    records = _read_evidence_records(root_path)
-    marker_index: Optional[int] = None
+    # One streaming pass: the last audit_complete marker for the plan wins,
+    # and the deque holds exactly the audit records that preceded it, bounded
+    # by the step count instead of by the size of the evidence history.
+    pending: deque[dict[str, Any]] = deque(maxlen=len(steps))
+    candidate: list[dict[str, Any]] = []
     marker: Optional[Dict[str, Any]] = None
-    for index in range(len(records) - 1, -1, -1):
-        record = records[index]
-        if record.get("mode") == "audit_complete" and record.get("plan", "default") == plan_name:
-            marker_index = index
+    for record in _iter_evidence_records(root_path):
+        if record.get("plan", "default") != plan_name:
+            continue
+        mode = record.get("mode")
+        if mode == "audit_complete":
             marker = record
-            break
-    if marker is None or marker_index is None:
+            candidate = list(pending)
+        elif mode == "audit":
+            pending.append(record)
+    if marker is None:
         return FreshAuditProof(False, f"no complete full-audit fingerprint evidence for plan {plan_name}")
     if marker.get("status") != "verified":
         return FreshAuditProof(False, "latest full audit did not pass")
@@ -199,13 +212,8 @@ def fresh_full_audit_proof(
     if marker.get("workspace_fingerprint") != core.workspace_fingerprint(str(root_path)):
         return FreshAuditProof(False, "workspace content/type/mode changed after audit")
 
-    audit_records = [
-        record for record in records[:marker_index]
-        if record.get("mode") == "audit" and record.get("plan", "default") == plan_name
-    ]
-    if len(audit_records) < len(steps):
+    if len(candidate) < len(steps):
         return FreshAuditProof(False, "full-audit marker lacks complete step evidence")
-    candidate = audit_records[-len(steps):]
     if [record.get("step") for record in candidate] != order:
         return FreshAuditProof(False, "latest audit evidence does not cover dependency order")
     for step, record in zip(steps, candidate):
