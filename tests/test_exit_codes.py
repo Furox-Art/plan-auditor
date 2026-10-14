@@ -8,16 +8,13 @@ remain in the CLI, and the documented table says exactly what the enum says.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
+
+from supervisor.exit_codes import ExitCode
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "supervisor" / "cli.py"
 DOCS = ROOT / "docs" / "cli.md"
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from supervisor.exit_codes import ExitCode
 
 
 def test_cli_uses_enum_not_literal_returns() -> None:
