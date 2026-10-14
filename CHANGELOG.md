@@ -2,6 +2,32 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## 2.6.2 — Exit-code contract and doc guards
+
+### Refactoring
+
+- The CLI exit-code contract is now one module (`supervisor/exit_codes.py`) with
+  the four documented meanings (0 verification passed, 1 verification failed,
+  2 request refused, 3 undetermined). The 48 literal returns scattered through
+  `cli.py` are gone; `tests/test_exit_codes.py` pins `docs/cli.md`'s table to
+  the enum so the two can no longer drift.
+- `supervisor/assessment.py` (the daemon-assessment persistence from the H3
+  finding) now reaches the release line: the assessment is HMAC-signed over a
+  dedicated domain, carries an evidence binding (key id, record count, chain
+  tail) recomputed on read, and a keyless state stores UNKNOWN — never a
+  PASS-shaped verdict a forged file could satisfy.
+
+### Tests
+
+- `tests/test_doc_commands.py`: every command named in docs/README (including
+  nested and core-entry-point forms) is checked against the live parser's
+  recursive subcommand set, so a renamed command can no longer leave a
+  documented flow pointing at nothing.
+- docs/benchmark.md now documents the authenticated flow (HMAC setup,
+  `integrity init`, exit-code legend), and the test asserts it stays.
+
+## 2.6.1 — Second-round audit findings (post-2.6.0)
+
 ## 2.6.1 — Second-round audit findings (post-2.6.0)
 
 ### Security
