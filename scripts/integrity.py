@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -146,11 +147,42 @@ def write_marker(root: str | Path, key: KeyMaterial) -> Path:
     return path
 
 
+def _unique_json_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for field, value in pairs:
+        if field in result:
+            raise ValueError("duplicate integrity marker JSON field")
+        result[field] = value
+    return result
+
+
+def _finite_json_number(raw: str) -> float:
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError("non-finite integrity marker JSON number")
+    return value
+
+
+def _reject_json_constant(raw: str) -> None:
+    raise ValueError(f"non-standard integrity marker JSON constant: {raw}")
+
+
+def _parse_marker(text: str) -> Any:
+    value = json.loads(
+        text,
+        object_pairs_hook=_unique_json_fields,
+        parse_float=_finite_json_number,
+        parse_constant=_reject_json_constant,
+    )
+    json.dumps(value, ensure_ascii=False).encode("utf-8")
+    return value
+
+
 def verify_marker(root: str | Path, key: KeyMaterial) -> bool:
     path = marker_path(root)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        value = _parse_marker(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
         return False
     if not isinstance(value, dict):
         return False
