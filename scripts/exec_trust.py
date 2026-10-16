@@ -20,6 +20,7 @@ This is deliberately strict: absence, ambiguity and tamper all fail closed.
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -89,6 +90,27 @@ else:
 REQUEST_NAME = "request.json"
 
 
+def _unique_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Duplicate fields make a signed trust decision parser-dependent."""
+    record: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in record:
+            raise ValueError("duplicate JSON object key")
+        record[key] = value
+    return record
+
+
+def _finite_json_number(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number")
+    return number
+
+
+def _invalid_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
 def _read_json_object(path: str, label: str) -> dict[str, Any]:
     """Read a JSON object, treating symlinks and unreadable files as fatal."""
     if os.path.islink(path):
@@ -97,10 +119,18 @@ def _read_json_object(path: str, label: str) -> dict[str, Any]:
         )
     try:
         with open(path, encoding="utf-8") as handle:
-            value = json.load(handle)
+            value = json.load(
+                handle,
+                object_pairs_hook=_unique_json_keys,
+                parse_float=_finite_json_number,
+                parse_constant=_invalid_json_constant,
+            )
+            # Canonical hashes/signatures use UTF-8, so unpaired surrogate
+            # escapes cannot be trusted even though json.load accepts them.
+            json.dumps(value, ensure_ascii=False).encode("utf-8")
     except FileNotFoundError:
         raise
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+    except (OSError, ValueError, UnicodeError) as exc:
         raise PlanTrustError(f"{label} is unreadable ({exc}): {path}") from exc
     if not isinstance(value, dict):
         raise PlanTrustError(f"{label} root must be a JSON object: {path}")
