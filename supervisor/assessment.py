@@ -24,6 +24,7 @@ This module closes that hole with the machinery the evidence chain already uses:
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -174,6 +175,42 @@ def write_assessment(workspace: str | Path, payload: dict[str, Any]) -> dict[str
     return stored
 
 
+MAX_ASSESSMENT_BYTES = 1024 * 1024
+
+
+def _unique_object_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for name, item in pairs:
+        if name in value:
+            raise ValueError(f"duplicate assessment JSON field: {name}")
+        value[name] = item
+    return value
+
+
+def _finite_assessment_float(raw: str) -> float:
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError("non-finite assessment JSON number")
+    return value
+
+
+def _reject_nonjson_constant(raw: str) -> None:
+    raise ValueError(f"non-standard assessment JSON constant: {raw}")
+
+
+def _parse_assessment(raw: str) -> Any:
+    value = json.loads(
+        raw,
+        object_pairs_hook=_unique_object_fields,
+        parse_float=_finite_assessment_float,
+        parse_constant=_reject_nonjson_constant,
+    )
+    # Python can decode lone UTF-16 surrogate escapes, which are not legal
+    # Unicode scalar values in an interoperable UTF-8 JSON document.
+    json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return value
+
+
 def read_assessment(workspace: str | Path) -> dict[str, Any] | None:
     """The stored document exactly as written, or ``None`` when unreadable.
 
@@ -181,8 +218,12 @@ def read_assessment(workspace: str | Path) -> dict[str, Any] | None:
     be used as a verdict; use :func:`read_assessment_verified` for that.
     """
     try:
-        value = json.loads(assessment_path(workspace).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeError):
+        with assessment_path(workspace).open("r", encoding="utf-8") as handle:
+            raw = handle.read(MAX_ASSESSMENT_BYTES + 1)
+        if len(raw.encode("utf-8")) > MAX_ASSESSMENT_BYTES:
+            return None
+        value = _parse_assessment(raw)
+    except (OSError, ValueError, UnicodeError):
         return None
     return value if isinstance(value, dict) else None
 
@@ -219,7 +260,10 @@ def read_assessment_verified(workspace: str | Path) -> dict[str, Any]:
             "persisted assessment signature is missing or does not match the "
             "configured HMAC key"
         )
-    if body.get("format_version") != ASSESSMENT_FORMAT_VERSION:
+    if (
+        type(body.get("format_version")) is not int
+        or body["format_version"] != ASSESSMENT_FORMAT_VERSION
+    ):
         return _rejection("persisted assessment format version is not recognised")
     binding = body.get("evidence_binding")
     if not isinstance(binding, dict):
