@@ -14,6 +14,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -23,7 +24,6 @@ import socket
 import stat
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import zipfile
@@ -112,6 +112,42 @@ _ROTATION_SEQ_RE = re.compile(r"^evidence-seq(\d{8})-")
 _SEQ_MARKER = "-seq"
 
 
+# Inputs persisted outside the HMAC envelope must not have ambiguous
+# object keys or values Python would silently coerce to infinities.
+MAX_SUPERVISOR_CONFIG_CHARS = 1024 * 1024
+
+
+def _strict_object_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _finite_json_float(source):
+    value = float(source)
+    if not math.isfinite(value):
+        raise ValueError("non-finite JSON number")
+    return value
+
+
+def _reject_json_constant(source):
+    raise ValueError(f"non-standard JSON constant: {source}")
+
+
+def _strict_external_json(source):
+    payload = json.loads(
+        source,
+        object_pairs_hook=_strict_object_keys,
+        parse_float=_finite_json_float,
+        parse_constant=_reject_json_constant,
+    )
+    json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return payload
+
+
 def _strict_runtime_int(data, key, default, minimum, maximum):
     value = data.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -125,10 +161,15 @@ def _validated_runtime_config(base):
     path = os.path.join(base, PG_DIR, "supervisor.json")
     if not os.path.isfile(path):
         return {}
+    if os.path.islink(path):
+        raise ValueError("invalid supervisor config: symlink is not trusted")
     try:
         with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
+            raw = handle.read(MAX_SUPERVISOR_CONFIG_CHARS + 1)
+        if len(raw) > MAX_SUPERVISOR_CONFIG_CHARS:
+            raise ValueError("supervisor config exceeds input size limit")
+        data = _strict_external_json(raw)
+    except (OSError, ValueError, UnicodeError) as exc:
         raise ValueError("invalid supervisor config: %s" % exc) from exc
     if not isinstance(data, dict):
         raise ValueError("supervisor config root must be an object")
@@ -1242,10 +1283,12 @@ def failed_attempt_counts(base, mode="run"):
                 if not line.strip():
                     continue
                 try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(rec, dict) or rec.get("mode") != mode:
+                    rec = _strict_external_json(line)
+                except (ValueError, UnicodeError) as exc:
+                    raise ValueError(f"ambiguous or corrupt evidence record: {path}: {exc}") from exc
+                if not isinstance(rec, dict):
+                    raise ValueError(f"invalid evidence record object: {path}")
+                if rec.get("mode") != mode:
                     continue
                 if rec.get("status") != "failed":
                     continue
@@ -1288,9 +1331,11 @@ def verify_chain(base):
             if not line:
                 continue
             try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                return False, count, "line %s is not JSON" % line_no
+                rec = _strict_external_json(line)
+            except (ValueError, UnicodeError):
+                return False, count, "line %s is not strict JSON" % line_no
+            if not isinstance(rec, dict):
+                return False, count, "line %s is not a JSON object" % line_no
             if rec.get("prev") != prev:
                 return False, count, "line %s: prev chain broken" % line_no
             actual = rec.get("hash")
@@ -1357,10 +1402,12 @@ def evidence_is_authenticated(base):
             if not line:
                 continue
             try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                return False, f"active evidence line {line_no} is not JSON"
-            auth = rec.get("auth") if isinstance(rec, dict) else None
+                rec = _strict_external_json(line)
+            except (ValueError, UnicodeError):
+                return False, f"active evidence line {line_no} is not strict JSON"
+            if not isinstance(rec, dict):
+                return False, f"active evidence line {line_no} is not an object"
+            auth = rec.get("auth")
             if isinstance(auth, dict) and auth.get("alg") == UNSIGNED_ALG:
                 unsigned += 1
             elif auth is None:
