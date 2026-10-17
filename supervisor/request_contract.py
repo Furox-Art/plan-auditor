@@ -4,6 +4,7 @@ The workspace plan is not the authoritative source of user requirements.  A host
 must activate a request contract before sealing.  The contract is then compared
 against the union of all active plans and their deterministic checks.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from scripts import audit_check as core
 from scripts.contract import (
@@ -45,11 +46,11 @@ def _canonical(value: Any) -> str:
     return canonical_json(value)
 
 
-def _payload(value: Dict[str, Any]) -> Dict[str, Any]:
+def _payload(value: dict[str, Any]) -> dict[str, Any]:
     return payload_without_auth(value)
 
 
-def _sha256(value: Dict[str, Any]) -> str:
+def _sha256(value: dict[str, Any]) -> str:
     return canonical_digest(payload_without_auth(value))
 
 
@@ -68,19 +69,27 @@ def activation_path(root: str | Path) -> Path:
     return _request_control_path(root, ACTIVATION_NAME)
 
 
-def _atomic_write(path: Path, value: Dict[str, Any]) -> None:
+def _atomic_write(path: Path, value: dict[str, Any]) -> None:
     """Persist an immutable control-plane record with a unique fsynced temp."""
     if path.is_symlink():
         raise ValueError(f"refusing to write request metadata through symlink: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(
-        value, indent=2, ensure_ascii=False, sort_keys=True, allow_nan=False,
+        value,
+        indent=2,
+        ensure_ascii=False,
+        sort_keys=True,
+        allow_nan=False,
     )
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=path.parent,
-            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
         ) as stream:
             temporary = Path(stream.name)
             stream.write(encoded)
@@ -92,7 +101,7 @@ def _atomic_write(path: Path, value: Dict[str, Any]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def _validate_check_list(req_id: str, checks: Any) -> List[str]:
+def _validate_check_list(req_id: str, checks: Any) -> list[str]:
     if not isinstance(checks, list) or not checks:
         return [f"requirement {req_id} requires non-empty acceptance_checks"]
     synthetic = {
@@ -103,8 +112,8 @@ def _validate_check_list(req_id: str, checks: Any) -> List[str]:
     return [f"requirement {req_id}: {item}" for item in core.validate_plan(synthetic)]
 
 
-def validate_request(value: Any) -> List[str]:
-    errors: List[str] = []
+def validate_request(value: Any) -> list[str]:
+    errors: list[str] = []
     if not isinstance(value, dict):
         return ["request contract root must be an object"]
     if value.get("format_version", REQUEST_FORMAT_VERSION) != REQUEST_FORMAT_VERSION:
@@ -145,11 +154,11 @@ class RequestStatus:
     activated: bool
     valid: bool
     reason: str = ""
-    request: Dict[str, Any] | None = None
+    request: dict[str, Any] | None = None
     request_sha256: str | None = None
     authenticated: bool = False
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "activated": self.activated,
             "valid": self.valid,
@@ -162,10 +171,10 @@ class RequestStatus:
 @dataclass
 class RequestAlignment:
     valid: bool
-    errors: List[str] = field(default_factory=list)
-    mapping: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    mapping: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {"valid": self.valid, "errors": self.errors, "mapping": self.mapping}
 
 
@@ -192,7 +201,7 @@ def _reject_control_constant(raw: str) -> None:
     raise ValueError(f"invalid request JSON constant: {raw}")
 
 
-def _read_object(path: Path) -> Dict[str, Any]:
+def _read_object(path: Path) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"{path.name} is not a safe regular file")
     with path.open(encoding="utf-8") as source:
@@ -200,7 +209,8 @@ def _read_object(path: Path) -> Dict[str, Any]:
     if len(raw) > MAX_REQUEST_CONTROL_BYTES:
         raise ValueError(f"{path.name} exceeds bounded request JSON input size")
     value = json.loads(
-        raw, object_pairs_hook=_unique_control_fields,
+        raw,
+        object_pairs_hook=_unique_control_fields,
         parse_float=_finite_control_float,
         parse_constant=_reject_control_constant,
     )
@@ -210,14 +220,16 @@ def _read_object(path: Path) -> Dict[str, Any]:
     return value
 
 
-def _auth_value(root: Path, key: KeyMaterial | None, domain: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _auth_value(
+    root: Path, key: KeyMaterial | None, domain: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     value = dict(payload)
     if key is not None:
         value["auth"] = make_auth(key, domain, payload)
     return value
 
 
-def _stamp_plan_binding(workspace: Path, payload: Dict[str, Any]) -> None:
+def _stamp_plan_binding(workspace: Path, payload: dict[str, Any]) -> None:
     """Record which plan contracts this request approves, keyed by plan name.
 
     Every active plan gets an entry (the default plan plus each
@@ -242,12 +254,14 @@ def _stamp_plan_binding(workspace: Path, payload: Dict[str, Any]) -> None:
         payload[REQUEST_PLAN_BINDING_FIELD] = bindings
 
 
-def initialize_request(root: str | Path, source: Dict[str, Any]) -> RequestStatus:
+def initialize_request(root: str | Path, source: dict[str, Any]) -> RequestStatus:
     workspace = Path(root).resolve()
     rpath = request_path(workspace)
     apath = activation_path(workspace)
     if rpath.exists() or apath.exists():
-        raise ValueError("request contract is already activated and immutable; create a new approval generation instead of overwriting it")
+        raise ValueError(
+            "request contract is already activated and immutable; create a new approval generation instead of overwriting it"
+        )
     payload = dict(source)
     payload.pop("auth", None)
     payload.setdefault("format_version", REQUEST_FORMAT_VERSION)
@@ -290,7 +304,9 @@ def initialize_request_auth(root: str | Path, key: KeyMaterial) -> None:
     rpath = request_path(workspace)
     apath = activation_path(workspace)
     if not rpath.is_file() or not apath.is_file():
-        raise ValueError("request contract must be activated before authenticated integrity initialization")
+        raise ValueError(
+            "request contract must be activated before authenticated integrity initialization"
+        )
     request_value = _read_object(rpath)
     activation_value = _read_object(apath)
     errors = validate_request(_payload(request_value))
@@ -299,7 +315,9 @@ def initialize_request_auth(root: str | Path, key: KeyMaterial) -> None:
     digest = _sha256(request_value)
     if activation_value.get("request_sha256") != digest:
         raise ValueError("request activation hash mismatch")
-    _atomic_write(rpath, _auth_value(workspace, key, REQUEST_CONTRACT_DOMAIN, _payload(request_value)))
+    _atomic_write(
+        rpath, _auth_value(workspace, key, REQUEST_CONTRACT_DOMAIN, _payload(request_value))
+    )
     _atomic_write(apath, _auth_value(workspace, key, ACTIVATION_DOMAIN, _payload(activation_value)))
 
 
@@ -327,8 +345,11 @@ def verify_request_contract(root: str | Path) -> RequestStatus:
     # An unauthenticated activation must not be extensible with unreviewed
     # fields that bypass the request digest and are invisible to readers.
     activation_keys = {
-        "format_version", "activated", "generation",
-        "request_sha256", "activated_at",
+        "format_version",
+        "activated",
+        "generation",
+        "request_sha256",
+        "activated_at",
     }
     if (
         set(activation_payload) != activation_keys
@@ -337,7 +358,13 @@ def verify_request_contract(root: str | Path) -> RequestStatus:
         or activation_payload.get("generation") != 1
         or activation_payload.get("request_sha256") != digest
     ):
-        return RequestStatus(True, False, "request activation metadata/hash mismatch", _payload(request_value), digest)
+        return RequestStatus(
+            True,
+            False,
+            "request activation metadata/hash mismatch",
+            _payload(request_value),
+            digest,
+        )
     try:
         key = load_key(workspace, required=False)
     except IntegrityKeyError as exc:
@@ -346,68 +373,142 @@ def verify_request_contract(root: str | Path) -> RequestStatus:
     activation_auth = activation_value.get("auth")
     if key is not None:
         if not verify_auth(key, REQUEST_CONTRACT_DOMAIN, _payload(request_value), request_auth):
-            return RequestStatus(True, False, "request contract HMAC authentication failed", _payload(request_value), digest)
+            return RequestStatus(
+                True,
+                False,
+                "request contract HMAC authentication failed",
+                _payload(request_value),
+                digest,
+            )
         if not verify_auth(key, ACTIVATION_DOMAIN, activation_payload, activation_auth):
-            return RequestStatus(True, False, "request activation HMAC authentication failed", _payload(request_value), digest)
+            return RequestStatus(
+                True,
+                False,
+                "request activation HMAC authentication failed",
+                _payload(request_value),
+                digest,
+            )
         authenticated = True
     else:
         if request_auth is not None or activation_auth is not None:
-            return RequestStatus(True, False, "authenticated request contract requires HMAC key", _payload(request_value), digest)
+            return RequestStatus(
+                True,
+                False,
+                "authenticated request contract requires HMAC key",
+                _payload(request_value),
+                digest,
+            )
         authenticated = False
-    return RequestStatus(True, True, "request contract active", _payload(request_value), digest, authenticated)
+    return RequestStatus(
+        True, True, "request contract active", _payload(request_value), digest, authenticated
+    )
 
 
-def _normalized_check(check: Dict[str, Any]) -> str:
+def _normalized_check(check: dict[str, Any]) -> str:
     return _canonical(core.norm_check(check))
 
 
-def analyze_request_alignment(plans: Dict[str, Dict[str, Any]], request: Dict[str, Any]) -> RequestAlignment:
-    errors: List[str] = []
-    mapping: Dict[str, List[Dict[str, Any]]] = {}
-    requirements = request.get("requirements", []) if isinstance(request, dict) else []
-    for req in requirements:
+def analyze_request_alignment(
+    plans: dict[str, dict[str, Any]], request: dict[str, Any]
+) -> RequestAlignment:
+    """Match exact host-approved checks to structurally valid, covering plan steps.
+
+    This is an independent authorization boundary: malformed in-memory payloads
+    must return an invalid alignment even when a caller skipped file validation.
+    """
+    errors: list[str] = []
+    mapping: dict[str, list[dict[str, Any]]] = {}
+    if not isinstance(plans, dict):
+        return RequestAlignment(False, ["active plans must be an object"], mapping)
+    if not isinstance(request, dict):
+        return RequestAlignment(False, ["authoritative request must be an object"], mapping)
+    requirements = request.get("requirements")
+    if not isinstance(requirements, list) or not requirements:
+        return RequestAlignment(
+            False, ["authoritative request requirements must be a non-empty list"], mapping
+        )
+
+    for index, req in enumerate(requirements, 1):
         if not isinstance(req, dict):
+            errors.append(f"authoritative request requirement {index} must be an object")
             continue
-        req_id = str(req.get("id", ""))
+        req_id = req.get("id")
+        if not isinstance(req_id, str) or not req_id.strip():
+            errors.append(f"authoritative request requirement {index} has no valid id")
+            continue
         priority = str(req.get("priority", "must")).lower()
-        matches: List[tuple[str, Dict[str, Any]]] = []
+        matches: list[tuple[str, dict[str, Any]]] = []
         for plan_name, plan in plans.items():
-            for item in plan.get("requirements", []) if isinstance(plan, dict) else []:
+            if not isinstance(plan, dict):
+                continue
+            plan_requirements = plan.get("requirements", [])
+            if not isinstance(plan_requirements, list):
+                errors.append(f"plan {plan_name} requirements must be a list")
+                continue
+            for item in plan_requirements:
                 if isinstance(item, dict) and item.get("id") == req_id:
                     matches.append((plan_name, item))
         if not matches:
-            errors.append(f"authoritative request requirement {req_id} is missing from every active plan")
+            errors.append(
+                f"authoritative request requirement {req_id} is missing from every active plan"
+            )
             continue
         exact = [
-            (name, item) for name, item in matches
+            (name, item)
+            for name, item in matches
             if item.get("description") == req.get("description")
             and str(item.get("priority", "must")).lower() == priority
         ]
         if not exact:
-            errors.append(f"authoritative request requirement {req_id} was modified in plan requirements")
+            errors.append(
+                f"authoritative request requirement {req_id} was modified in plan requirements"
+            )
             continue
-        covered: List[Dict[str, Any]] = []
-        actual_checks: List[str] = []
+        covered: list[dict[str, Any]] = []
+        actual_checks: list[str] = []
         for plan_name, _item in exact:
             plan = plans[plan_name]
-            for step in plan.get("steps", []):
-                if not isinstance(step, dict) or req_id not in (step.get("covers") or []):
+            steps = plan.get("steps", [])
+            if not isinstance(steps, list):
+                errors.append(f"plan {plan_name} steps must be a list")
+                continue
+            for step_index, step in enumerate(steps, 1):
+                if not isinstance(step, dict):
+                    errors.append(f"plan {plan_name} step {step_index} must be an object")
+                    continue
+                covers = step.get("covers") or []
+                if not isinstance(covers, list):
+                    errors.append(f"plan {plan_name} step {step_index} covers must be a list")
+                    continue
+                if req_id not in covers:
+                    continue
+                verify = step.get("verify", [])
+                if not isinstance(verify, list):
+                    errors.append(f"plan {plan_name} step {step_index} verify must be a list")
                     continue
                 covered.append({"plan": plan_name, "step": step.get("id")})
-                for check in step.get("verify", []):
+                for check in verify:
                     if isinstance(check, dict):
                         try:
                             actual_checks.append(_normalized_check(check))
-                        except Exception:
-                            pass
+                        except (ValueError, TypeError, KeyError):
+                            # An invalid check has no evidentiary value; matching
+                            # the host-approved check below must still fail.
+                            continue
         mapping[req_id] = covered
         if priority in {"must", "should"} and not covered:
-            errors.append(f"authoritative request requirement {req_id} is not covered by any active plan step")
+            errors.append(
+                f"authoritative request requirement {req_id} is not covered by any active plan step"
+            )
             continue
-        for check in req.get("acceptance_checks", []) if priority in {"must", "should"} else []:
+        checks = req.get("acceptance_checks", []) if priority in {"must", "should"} else []
+        if not isinstance(checks, list):
+            errors.append(f"requirement {req_id} acceptance_checks must be a list")
+            continue
+        for check in checks:
             try:
                 encoded = _normalized_check(check)
-            except Exception as exc:
+            except (ValueError, TypeError, KeyError) as exc:
                 errors.append(f"requirement {req_id} acceptance check cannot be normalized: {exc}")
                 continue
             if encoded not in actual_checks:
