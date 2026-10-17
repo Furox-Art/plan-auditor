@@ -170,3 +170,45 @@ def test_agent_hardening_state_never_invents_methods_on_unpatched_class():
     assert status["installed"] is False
     assert status["register"] is False
     assert status["is_lock_stale"] is False
+
+
+@pytest.mark.parametrize("payload", ["[]", '"unstructured"', "42", "true", "null"])
+def test_nonobject_agent_lock_record_is_handled_like_other_corrupt_lock_metadata(tmp_path,payload):
+    registry=MultiAgentRegistry(str(tmp_path))
+    registry.agents_dir.mkdir(parents=True,exist_ok=True)
+    path=registry.agents_dir/"alice.lock"
+    path.write_text(payload)
+    assert registry.is_lock_stale("alice")
+
+
+def test_legacy_registry_verifier_migration_failure_is_an_explicit_integrity_failure(tmp_path):
+    registry=MultiAgentRegistry(str(tmp_path))
+    registry.registry_legacy=True
+    registry.registry_tampered=False
+    registry._refresh_from_disk=lambda:None
+    def fail():
+        raise OSError("simulated legacy checkpoint failure")
+    registry._migrate_legacy_locked=fail
+    assert hard._verify_locked(registry) is False
+    assert registry.registry_tampered
+    assert "legacy migration failed" in registry.registry_problem
+
+
+def test_unregistered_agent_registry_never_invents_a_live_owner(tmp_path):
+    registry=MultiAgentRegistry(str(tmp_path))
+    assert registry.active_agents()==[]
+    assert registry.stale_agents()==[]
+
+
+def test_lock_file_read_error_is_not_reported_as_an_active_verified_lock(monkeypatch,tmp_path):
+    registry=MultiAgentRegistry(str(tmp_path))
+    registry.agents_dir.mkdir(parents=True,exist_ok=True)
+    path=registry.agents_dir/"alice.lock"
+    path.write_text('{"pid":100}')
+    original=Path.read_text
+    def deny(self,*a,**kw):
+        if self==path:
+            raise OSError("simulated unavailable owner metadata")
+        return original(self,*a,**kw)
+    monkeypatch.setattr(Path,"read_text",deny)
+    assert registry.is_lock_stale("alice")
