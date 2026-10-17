@@ -7,6 +7,9 @@ against the union of all active plans and their deterministic checks.
 from __future__ import annotations
 
 import json
+import math
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,14 +69,27 @@ def activation_path(root: str | Path) -> Path:
 
 
 def _atomic_write(path: Path, value: Dict[str, Any]) -> None:
-    if path.exists() and path.is_symlink():
+    """Persist an immutable control-plane record with a unique fsynced temp."""
+    if path.is_symlink():
         raise ValueError(f"refusing to write request metadata through symlink: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    if tmp.exists() and tmp.is_symlink():
-        raise ValueError(f"refusing symlinked request temp path: {tmp}")
-    tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-    tmp.replace(path)
+    encoded = json.dumps(
+        value, indent=2, ensure_ascii=False, sort_keys=True, allow_nan=False,
+    )
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _validate_check_list(req_id: str, checks: Any) -> List[str]:
@@ -153,10 +169,42 @@ class RequestAlignment:
         return {"valid": self.valid, "errors": self.errors, "mapping": self.mapping}
 
 
+MAX_REQUEST_CONTROL_BYTES = 1024 * 1024
+
+
+def _unique_control_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate request JSON field: {name}")
+        result[name] = value
+    return result
+
+
+def _finite_control_float(raw: str) -> float:
+    result = float(raw)
+    if not math.isfinite(result):
+        raise ValueError("non-finite request JSON number")
+    return result
+
+
+def _reject_control_constant(raw: str) -> None:
+    raise ValueError(f"invalid request JSON constant: {raw}")
+
+
 def _read_object(path: Path) -> Dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"{path.name} is not a safe regular file")
-    value = json.loads(path.read_text(encoding="utf-8"))
+    with path.open(encoding="utf-8") as source:
+        raw = source.read(MAX_REQUEST_CONTROL_BYTES + 1)
+    if len(raw) > MAX_REQUEST_CONTROL_BYTES:
+        raise ValueError(f"{path.name} exceeds bounded request JSON input size")
+    value = json.loads(
+        raw, object_pairs_hook=_unique_control_fields,
+        parse_float=_finite_control_float,
+        parse_constant=_reject_control_constant,
+    )
+    json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} root must be an object")
     return value
@@ -276,8 +324,15 @@ def verify_request_contract(root: str | Path) -> RequestStatus:
         return RequestStatus(True, False, "; ".join(errors))
     digest = _sha256(request_value)
     activation_payload = _payload(activation_value)
+    # An unauthenticated activation must not be extensible with unreviewed
+    # fields that bypass the request digest and are invisible to readers.
+    activation_keys = {
+        "format_version", "activated", "generation",
+        "request_sha256", "activated_at",
+    }
     if (
-        activation_payload.get("format_version") != ACTIVATION_FORMAT_VERSION
+        set(activation_payload) != activation_keys
+        or activation_payload.get("format_version") != ACTIVATION_FORMAT_VERSION
         or activation_payload.get("activated") is not True
         or activation_payload.get("generation") != 1
         or activation_payload.get("request_sha256") != digest

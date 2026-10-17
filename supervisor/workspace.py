@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set
@@ -152,12 +154,56 @@ def diff_workspaces(before: WorkspaceState, after: WorkspaceState) -> Dict:
     }
 
 
+def _unique_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for key, value in pairs:
+        if key in values:
+            raise ValueError(f"duplicate workspace JSON field: {key}")
+        values[key] = value
+    return values
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard workspace JSON numeric constant: {value}")
+
+
+def _finite_json_float(source: str) -> float:
+    number = float(source)
+    if not math.isfinite(number):
+        raise ValueError("non-finite workspace JSON number")
+    return number
+
+
 def load_workspace(path: str) -> Optional[WorkspaceState]:
+    """Decode only a well-formed, unambiguous workspace snapshot."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        data = json.loads(
+            Path(path).read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_keys,
+            parse_float=_finite_json_float,
+            parse_constant=_reject_json_constant,
+        )
+    except (ValueError, OSError, UnicodeError):
+        return None
+
+    if not isinstance(data, dict):
         return None
     git = data.get("git", {})
+    files = data.get("exists_files", [])
+    missing = data.get("missing_files", [])
+    tools = data.get("available_tools", {})
+    if (
+        not isinstance(git, dict)
+        or not isinstance(data.get("repository_root", "."), str)
+        or not isinstance(files, list)
+        or not all(isinstance(item, str) for item in files)
+        or not isinstance(missing, list)
+        or not all(isinstance(item, str) for item in missing)
+        or not isinstance(tools, dict)
+        or not all(isinstance(key, str) and isinstance(value, bool)
+                   for key, value in tools.items())
+    ):
+        return None
     return WorkspaceState(
         repository_root=data.get("repository_root", "."),
         git=GitState(
@@ -167,15 +213,37 @@ def load_workspace(path: str) -> Optional[WorkspaceState]:
             dirty_files=git.get("dirty_files", []),
             untracked=git.get("untracked", []),
         ),
-        exists_files=set(data.get("exists_files", [])),
-        missing_files=set(data.get("missing_files", [])),
-        available_tools=dict(data.get("available_tools", {})),
+        exists_files=set(files),
+        missing_files=set(missing),
+        available_tools=dict(tools),
         language=data.get("language"),
     )
 
 
 def save_workspace(state: WorkspaceState, path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    tmp = path + ".tmp"
-    Path(tmp).write_text(json.dumps(state.to_dict(), indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    """Write and fsync a same-directory temporary file, then atomically swap.
+
+    No predictable temporary name is used, so an attacker cannot plant a
+    symlink at path + ".tmp" to redirect writes outside the workspace.
+    """
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(state.to_dict(), indent=2, ensure_ascii=False, allow_nan=False)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
