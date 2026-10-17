@@ -15,7 +15,6 @@ import json
 import shutil
 import subprocess
 import tarfile
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -206,10 +205,10 @@ def test_launcher_source_propagates_exit_code(source: Path) -> None:
         assert "child.on('error'" in text
 
 
-def _pack_tarball() -> Path:
+def _pack_tarball(destination: Path) -> Path:
     """Build the exact tarball `npm publish` would upload."""
     proc = subprocess.run(
-        [*_npm(), "pack", "--pack-destination", tempfile.gettempdir()],
+        [*_npm(), "pack", "--pack-destination", str(destination)],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -218,7 +217,7 @@ def _pack_tarball() -> Path:
     assert proc.returncode == 0, proc.stdout[-800:] + proc.stderr[-800:]
     produced = [line.strip() for line in proc.stdout.splitlines() if line.strip().endswith(".tgz")]
     assert produced, proc.stdout
-    return Path(tempfile.gettempdir()) / produced[-1]
+    return destination / produced[-1]
 
 
 requires_npm = pytest.mark.skipif(NPM is None, reason="npm is required to pack the tarball")
@@ -242,7 +241,7 @@ def test_installed_tarball_propagates_exit_codes(tmp_path: Path) -> None:
     tarball, unpacked and run from its own directory. A failure here means the
     published package swallows the verifier's verdict even if the repo looks right.
     """
-    tarball = _pack_tarball()
+    tarball = _pack_tarball(tmp_path)
     unpacked = tmp_path / "unpacked"
     unpacked.mkdir()
     with tarfile.open(tarball) as archive:
@@ -282,9 +281,9 @@ def test_installed_tarball_propagates_exit_codes(tmp_path: Path) -> None:
 
 
 @requires_npm
-def test_packed_tarball_ships_every_runtime_dependency() -> None:
+def test_packed_tarball_ships_every_runtime_dependency(tmp_path: Path) -> None:
     """The launcher imports `../index.js`, which imports `supervisor.cli`."""
-    tarball = _pack_tarball()
+    tarball = _pack_tarball(tmp_path)
     with tarfile.open(tarball) as archive:
         names = {name.split("/", 1)[-1] for name in archive.getnames()}
     for required in (
