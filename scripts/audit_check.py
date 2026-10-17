@@ -28,7 +28,7 @@ import threading
 import time
 import zipfile
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:  # pragma: no cover - type checkers see the single package import
     from scripts.check_isolation import check_launch_options
@@ -117,7 +117,7 @@ _SEQ_MARKER = "-seq"
 MAX_SUPERVISOR_CONFIG_CHARS = 1024 * 1024
 
 
-def _strict_object_keys(pairs):
+def _strict_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result = {}
     for key, value in pairs:
         if key in result:
@@ -126,18 +126,18 @@ def _strict_object_keys(pairs):
     return result
 
 
-def _finite_json_float(source):
+def _finite_json_float(source: str) -> float:
     value = float(source)
     if not math.isfinite(value):
         raise ValueError("non-finite JSON number")
     return value
 
 
-def _reject_json_constant(source):
+def _reject_json_constant(source: str) -> NoReturn:
     raise ValueError(f"non-standard JSON constant: {source}")
 
 
-def _strict_external_json(source):
+def _strict_external_json(source: str) -> Any:
     payload = json.loads(
         source,
         object_pairs_hook=_strict_object_keys,
@@ -1333,9 +1333,9 @@ def verify_chain(base):
             try:
                 rec = _strict_external_json(line)
             except (ValueError, UnicodeError):
-                return False, count, "line %s is not strict JSON" % line_no
+                return False, count, f"line {line_no} is not strict JSON"
             if not isinstance(rec, dict):
-                return False, count, "line %s is not a JSON object" % line_no
+                return False, count, f"line {line_no} is not a JSON object"
             if rec.get("prev") != prev:
                 return False, count, "line %s: prev chain broken" % line_no
             actual = rec.get("hash")

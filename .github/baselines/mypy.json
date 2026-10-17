@@ -2,7 +2,7 @@
   "counts": {
     "arg-type": 11,
     "assignment": 3,
-    "attr-defined": 10,
+    "attr-defined": 8,
     "import-not-found": 2,
     "misc": 4,
     "no-redef": 12,
@@ -14,8 +14,8 @@
     "var-annotated": 2
   },
   "note": "Ratchet baseline. Findings are never suppressed; this file only records the current per-rule ceiling so regressions fail CI. Regenerate with scripts/quality_ratchet.py --write-baseline; it may only decrease.",
-  "recorded_at": "4b6ebb9",
+  "recorded_at": "8b4f8de",
   "tool": "mypy",
   "tool_version": "mypy 1.18.2 (compiled: yes)",
-  "total": 436
+  "total": 434
 }
