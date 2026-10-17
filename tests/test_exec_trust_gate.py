@@ -12,7 +12,6 @@ the operator is told to take.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -279,15 +278,15 @@ def test_bounded_command_executes_without_a_shell(tmp_path: Path):
 
 def test_unescaped_quote_in_cmd_is_rejected_not_guessed(tmp_path: Path):
     """Ambiguous quoting must fail loudly instead of being silently repaired."""
-    if os.name != "nt":
-        pytest.skip("Windows tokenizer-specific behaviour")
+    # _windows_argv is a pure tokenizer. Check its Windows quoting rules on
+    # every host rather than skipping the guard on non-Windows CI runners.
     with pytest.raises(ValueError):
         core._windows_argv('python -c "unterminated')
 
 
 def test_windows_argv_handles_quotes_and_backslashes():
-    if os.name != "nt":
-        pytest.skip("Windows tokenizer-specific behaviour")
+    # _windows_argv is a pure tokenizer. Check its Windows quoting rules on
+    # every host rather than skipping the guard on non-Windows CI runners.
     # Double quotes group.
     assert core._windows_argv('py -c "a b"') == ["py", "-c", "a b"]
     # A backslash before a quote escapes it into a literal quote character.

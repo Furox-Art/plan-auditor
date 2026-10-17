@@ -44,6 +44,21 @@ jobs:
         run: |
           set -euo pipefail
           sudo -n "$(command -v python)" -m pytest tests/test_linux_check_os_isolation.py -q
+      # Re-run the entire suite as root to exercise actual Linux UID/GID
+      # isolation while requiring zero skips. The unprivileged gate above
+      # remains independent, and any skipped tests in this privileged run
+      # fail CI rather than disappearing from the report.
+      - name: Privileged full-suite gate (zero skipped tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$(mktemp)"
+          trap 'rm -f "$report"' EXIT
+          sudo -n "$(command -v python)" -m pytest tests/ -q -rs | tee "$report"
+          if grep -Eq '(^|[[:space:]])[1-9][0-9]* skipped' "$report"; then
+            echo "::error::The privileged Linux suite skipped one or more tests."
+            exit 1
+          fi
       # The source set, branch mode and the 65% floor all live in
       # [tool.coverage.run]/[tool.coverage.report] in pyproject.toml, so the
       # workflow cannot drift away from what a local run enforces. Measured at
