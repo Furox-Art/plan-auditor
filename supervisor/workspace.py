@@ -58,7 +58,11 @@ def _run(argv: Sequence[str], cwd: str, timeout: int = 30) -> Optional[str]:
         )
         if process.returncode != 0:
             return None
-        return process.stdout.strip()
+        # Git porcelain status uses a leading blank as a meaningful XY status
+        # character (" M file"). Generic strip() destroys that character and
+        # silently truncates filenames when capture_workspace slices at index 3.
+        # Remove only the record terminator, never leading status bytes.
+        return process.stdout.rstrip("\r\n")
     except (OSError, subprocess.TimeoutExpired):
         return None
 
