@@ -9,19 +9,55 @@ evidence integrity, requirement coverage, policies and registry state.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from pathlib import Path
 
+MAX_HOOK_JSON_CHARS = 256 * 1024
+
+
+def _unique_hook_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for field, value in pairs:
+        if field in result:
+            raise ValueError(f"duplicate Stop-hook field: {field}")
+        result[field] = value
+    return result
+
+
+def _finite_hook_float(raw: str) -> float:
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError("non-finite Stop-hook number")
+    return value
+
+
+def _invalid_hook_constant(raw: str) -> None:
+    raise ValueError(f"non-standard Stop-hook numeric constant: {raw}")
+
 
 def _workspace() -> str:
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except json.JSONDecodeError:
-        payload = {}
+    raw = sys.stdin.read(MAX_HOOK_JSON_CHARS + 1)
+    if len(raw) > MAX_HOOK_JSON_CHARS:
+        raise ValueError("Stop-hook input exceeds bounded JSON size")
+    payload = json.loads(
+        raw or "{}",
+        object_pairs_hook=_unique_hook_keys,
+        parse_float=_finite_hook_float,
+        parse_constant=_invalid_hook_constant,
+    )
+    json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    if not isinstance(payload, dict):
+        raise ValueError("Stop-hook payload must be a JSON object")
+    declared_cwd = payload.get("cwd")
+    if declared_cwd is not None and (
+        not isinstance(declared_cwd, str) or not declared_cwd.strip()
+    ):
+        raise ValueError("Stop-hook cwd must be a non-empty string")
     return os.path.abspath(
         os.environ.get("COMMANDCODE_PROJECT_DIR")
-        or (payload.get("cwd") if isinstance(payload, dict) else None)
+        or declared_cwd
         or os.getcwd()
     )
 
@@ -36,8 +72,8 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from supervisor.orchestrator import evaluate_workspace
 
-    base = _workspace()
     try:
+        base = _workspace()
         report = evaluate_workspace(base)
     except Exception as exc:
         sys.stderr.write(

@@ -20,17 +20,22 @@ from tests.request_fixture import activate_for_plan
 @contextlib.contextmanager
 def _hmac_key_for(root: Path):
     """Point the runtime at an external HMAC key outside the workspace."""
-    key_file = root.parent / "hook-hmac.key"
-    key_file.write_bytes(b"plan-auditor-test-key-material-" * 2)
-    previous = os.environ.get("PLAN_AUDITOR_HMAC_KEY_FILE")
-    os.environ["PLAN_AUDITOR_HMAC_KEY_FILE"] = str(key_file)
-    try:
-        yield key_file
-    finally:
-        if previous is None:
-            os.environ.pop("PLAN_AUDITOR_HMAC_KEY_FILE", None)
-        else:
-            os.environ["PLAN_AUDITOR_HMAC_KEY_FILE"] = previous
+    # A fixed /tmp/hook-hmac.key collides across parallel jobs and Unix UIDs.
+    # Use a private, unique *external* directory so neither tests nor the
+    # audited workspace can overwrite another actor's HMAC key.
+    with tempfile.TemporaryDirectory(prefix="pa-hook-hmac-", dir=root.parent) as key_dir:
+        key_file = Path(key_dir) / "key"
+        key_file.write_bytes(b"plan-auditor-test-key-material-" * 2)
+        key_file.chmod(0o600)
+        previous = os.environ.get("PLAN_AUDITOR_HMAC_KEY_FILE")
+        os.environ["PLAN_AUDITOR_HMAC_KEY_FILE"] = str(key_file)
+        try:
+            yield key_file
+        finally:
+            if previous is None:
+                os.environ.pop("PLAN_AUDITOR_HMAC_KEY_FILE", None)
+            else:
+                os.environ["PLAN_AUDITOR_HMAC_KEY_FILE"] = previous
 
 
 def _run_hook(cwd, fmt="text", warn_file=None, env=None):

@@ -37,8 +37,6 @@ jobs:
         run: plan-auditor request init . --file .plan-auditor/request-source.json
       - name: Validate plan schema
         run: python scripts/audit_check.py validate .
-      - name: Unit test gate (explicit diagnostic)
-        run: python -m pytest tests/ -q
       # Privilege separation must be exercised against the Linux kernel; mocks
       # cannot prove that an unprivileged subprocess cannot read a root-only key.
       - name: Root-only Linux identity isolation regression
@@ -46,16 +44,50 @@ jobs:
         run: |
           set -euo pipefail
           sudo -n "$(command -v python)" -m pytest tests/test_linux_check_os_isolation.py -q
-      # The source set, branch mode and the 65% floor all live in
-      # [tool.coverage.run]/[tool.coverage.report] in pyproject.toml, so the
-      # workflow cannot drift away from what a local run enforces. Measured at
-      # 68% on this commit; scripts/stop_gate.py (0%) and
-      # supervisor/seal_migration.py (36%) are the obvious next targets.
-      - name: Branch coverage gate (no-regression floor)
-        run: python -m pytest tests/ -q --cov --cov-report=term-missing
-      # Generate the machine-readable report the upload and the artifact use.
-      - name: Generate the Codecov report
-        run: python -m pytest tests/ -q --cov --cov-report=xml:coverage.xml
+      # Run the entire suite as root to exercise actual Linux UID/GID
+      # isolation while requiring zero skipped tests. Any skipped tests in
+      # the privileged run fail CI rather than disappearing from the report.
+      - name: Privileged full-suite gate (zero skipped tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$(mktemp)"
+          trap 'rm -f "$report"' EXIT
+          sudo -n "$(command -v python)" -m pytest tests/ -q -rs | tee "$report"
+          if grep -Eq '(^|[[:space:]])[1-9][0-9]* skipped' "$report"; then
+            echo "::error::The privileged Linux suite skipped one or more tests."
+            exit 1
+          fi
+      # Exercise installed-wheel coverage with the same Linux root privileges
+      # as the zero-skip gate. Both statements and branches must be 100%.
+      # No omitted tests, loosened thresholds or coverage exclusions.
+      - name: Full statement and branch coverage gate (100%, zero skipped)
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$(mktemp)"
+          trap 'rm -f "$report"' EXIT
+          sudo -n "$(command -v python)" -m pytest tests/ -q -rs --cov --cov-report=term-missing --cov-report=xml:coverage.xml | tee "$report"
+          if grep -Eq '(^|[[:space:]])[1-9][0-9]* skipped' "$report"; then
+            echo "::error::The coverage run skipped one or more tests."
+            exit 1
+          fi
+          sudo -n "$(command -v python)" -m coverage json -o coverage.json
+          python - <<'PY_COVERAGE'
+          import json
+          from pathlib import Path
+
+          totals = json.loads(Path("coverage.json").read_text(encoding="utf-8"))["totals"]
+          for label, covered, total in (
+              ("statements", totals["covered_lines"], totals["num_statements"]),
+              ("branches", totals["covered_branches"], totals["num_branches"]),
+          ):
+              print(f"{label}: {covered}/{total}")
+              if total == 0 or covered != total:
+                  raise SystemExit(f"FAIL: {label} coverage below 100%")
+          if totals["missing_lines"] or totals["missing_branches"]:
+              raise SystemExit("FAIL: missing statement/branch coverage remains")
+          PY_COVERAGE
       # This step previously pointed at ./coverage.xml, which no coverage run
       # produced, and set fail_ci_if_error: false, so every upload failed
       # silently while the badge stayed "unknown".

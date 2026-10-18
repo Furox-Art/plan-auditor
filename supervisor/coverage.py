@@ -72,6 +72,9 @@ def analyze_coverage(plan: Dict[str, Any]) -> CoverageResult:
         if not isinstance(step, dict):
             continue
         sid = step.get("id")
+        if type(sid) is not int or sid <= 0:
+            errors.append(f"plan step id must be a positive integer, got {sid!r}")
+            continue
         covers = step.get("covers", [])
         if covers is None:
             covers = []
@@ -91,8 +94,7 @@ def analyze_coverage(plan: Dict[str, Any]) -> CoverageResult:
             if req_id not in known:
                 errors.append(f"step {sid} covers unknown requirement {req_id}")
                 continue
-            if isinstance(sid, int):
-                mapping.setdefault(req_id, []).append(sid)
+            mapping.setdefault(req_id, []).append(sid)
 
     covered = sorted(req_id for req_id in required_ids if mapping.get(req_id))
     missing = sorted(req_id for req_id in required_ids if not mapping.get(req_id))

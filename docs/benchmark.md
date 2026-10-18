@@ -52,7 +52,7 @@ number ever changes, the command changes too â€” that is the point.
 |---|---|---|---|---|
 | Regression suite result | `python -m pytest tests/ -q` | the version of `pytest` in your environment | `main` at the time of reading | the `audit` CI job for that commit |
 | Example regression | `python -m pytest examples/fib/test_fib.py -q` | same | same | the same CI run |
-| Branch coverage | `python -m pytest tests/ -q --cov --cov-report=term-missing` | `pytest-cov` | same | the `TOTAL` row the command prints, and the `fail_under` value in `[tool.coverage.report]` in `pyproject.toml` |
+| Branch and statement coverage (Linux, root) | `sudo -n "$(command -v python)" -m pytest tests/ -q -rs --cov --cov-report=term-missing` | `pytest-cov` | same | the `TOTAL` row the command prints, and the `fail_under` value in `[tool.coverage.report]` in `pyproject.toml` |
 | Docs build cleanly | `python -m mkdocs build --strict` | `mkdocs-material` | same | the `docs (mkdocs --strict)` required CI check |
 | Docs and package metadata are consistent | `python -m pytest tests/test_docs_metadata.py tests/test_readme_quickstart.py tests/test_doc_transcripts.py -q` | `pytest` | same | the same CI run |
 | Wheel and sdist carry the skill assets | `python .github/scripts/check_dist_assets.py` | none (standard library) | same | the `build (wheel + sdist)` required CI check |
@@ -193,13 +193,13 @@ by the same command CI runs:
 ```bash
 python -m pytest tests/ -q
 python -m pytest examples/fib/test_fib.py -q
-python -m pytest tests/ -q --cov --cov-report=term-missing
+sudo -n "$(command -v python)" -m pytest tests/ -q -rs --cov --cov-report=term-missing
 ```
 
 The coverage floor lives in `[tool.coverage.report]` as `fail_under` in
 `pyproject.toml`, so the workflow and a local run cannot disagree about it, and
-the workflow records the measured value and the reasoning for where the floor
-sits. `conftest.py` pins the suite to the installed distribution, so the number
+the workflow requires all statement and branch counts to be fully covered, with zero skipped tests.
+`conftest.py` pins the suite to the installed distribution, so the number
 measures the code that would ship rather than the working tree. A regression in
 coverage fails CI instead of quietly lowering a claim.
 

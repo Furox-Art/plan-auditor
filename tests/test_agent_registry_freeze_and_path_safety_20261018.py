@@ -1,0 +1,310 @@
+"""Actual agent file ownership confinement and immutable final audit freeze."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from supervisor import agents_hardening as hard
+from supervisor.agents import Agent, MultiAgentRegistry, RegistryIntegrityError
+
+
+@pytest.mark.parametrize(
+    "identifier", ["", ".", "..", "../outside", "bad name", "_bad", "x" * 129, None, True]
+)
+def test_agent_ids_are_safe_single_filename_components(identifier):
+    with pytest.raises(ValueError, match="safe basename"):
+        hard.validate_agent_id(identifier)
+
+
+@pytest.mark.parametrize("identifier", ["agent-1", "node.test", "A_2", "z" * 128])
+def test_valid_agent_ids_keep_an_exact_identity(identifier):
+    assert hard.validate_agent_id(identifier) == identifier
+
+
+@pytest.mark.parametrize(
+    ("owned", "message"),
+    [
+        ("", "non-empty"),
+        (None, "non-empty"),
+        ("/tmp/outside", "workspace-relative"),
+        ("../outside", "escapes workspace"),
+        (".", "below the workspace"),
+    ],
+)
+def test_file_ownership_must_be_workspace_confined(tmp_path, owned, message):
+    with pytest.raises(ValueError, match=message):
+        hard.canonical_owned_path(tmp_path, owned)
+
+
+def test_valid_relative_file_path_is_canonicalized_without_dropping_identity(tmp_path):
+    assert hard.canonical_owned_path(tmp_path, "a/../b/file.py") == "b/file.py"
+
+
+def test_external_symlink_cannot_be_owned_as_an_internal_file(tmp_path):
+    outside = tmp_path.parent / (tmp_path.name + "-elsewhere")
+    outside.mkdir()
+    (tmp_path / "escape").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="escapes workspace"):
+        hard.canonical_owned_path(tmp_path, "escape/secret.txt")
+
+
+@pytest.mark.parametrize("pid", [None, False, True, 0, -3, 1.1, "123"])
+def test_invalid_pid_does_not_probe_an_unrelated_process(pid):
+    assert hard._safe_pid_alive(pid) is False
+
+
+def test_stale_final_audit_freeze_is_removed_only_on_proved_dead_pid(monkeypatch, tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    marker = hard._freeze_path(registry)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"pid": 321}))
+    monkeypatch.setattr(hard, "_safe_pid_alive", lambda _: False)
+    assert hard._audit_freeze_active(registry) is False
+    assert not marker.exists()
+
+
+def test_live_final_audit_freeze_blocks_registered_agent_write(monkeypatch, tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    marker = hard._freeze_path(registry)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"pid": 321}))
+    monkeypatch.setattr(hard, "_safe_pid_alive", lambda _: True)
+    with pytest.raises(RegistryIntegrityError, match="freeze is active"):
+        registry.register(Agent("alpha", "task", "plan"))
+    assert marker.is_file()
+    assert not registry.registry_path.exists()
+
+
+def test_malformed_freeze_is_an_active_barrier_not_a_stale_one(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    marker = hard._freeze_path(registry)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("not-json")
+    assert hard._audit_freeze_active(registry)
+    with pytest.raises(RegistryIntegrityError, match="freeze is active"):
+        registry.register(Agent("alpha", "task", "plan"))
+
+
+def test_unreadable_stale_freeze_cannot_be_deleted_or_construed_as_permission(
+    monkeypatch, tmp_path
+):
+    registry = MultiAgentRegistry(str(tmp_path))
+    marker = hard._freeze_path(registry)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text('{"pid":123}')
+    monkeypatch.setattr(hard, "_safe_pid_alive", lambda _: False)
+    original = Path.unlink
+
+    def refuse(self, *args, **kwargs):
+        if self == marker:
+            raise PermissionError("simulated locked marker")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    assert hard._audit_freeze_active(registry)
+    assert marker.exists()
+
+
+def test_pid_permission_denied_still_means_a_foreign_process_may_be_alive(monkeypatch):
+    def denied(*args):
+        raise PermissionError("no permission to signal another user's PID")
+
+    monkeypatch.setattr(hard.os, "kill", denied)
+    assert hard._safe_pid_alive(87542)
+
+
+def test_genuinely_missing_pid_is_not_assumed_alive(monkeypatch):
+    def nonexistent(*args):
+        raise ProcessLookupError("process exited")
+
+    monkeypatch.setattr(hard.os, "kill", nonexistent)
+    assert not hard._safe_pid_alive(87542)
+
+
+def test_only_registered_agents_can_claim_a_file(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    with pytest.raises(RegistryIntegrityError, match="unknown agent"):
+        registry.claim_files("ghost", {"file.py"})
+
+
+def test_unknown_agent_cannot_change_ownership_or_heartbeat(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    with pytest.raises(RegistryIntegrityError, match="unknown agent"):
+        registry.update_ownership("ghost", {"file.py"})
+    with pytest.raises(RegistryIntegrityError, match="unknown agent"):
+        registry.heartbeat("ghost")
+
+
+def test_unapproved_parallel_mode_cannot_be_silent_warning(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.register(Agent("alice", "task", "plan"))
+    with pytest.raises(ValueError, match="invalid agent coordination mode"):
+        registry.claim_files("alice", {"file.py"}, mode="trust-everyone")
+
+
+def test_untrusted_owned_file_from_another_workspace_is_not_a_conflict_report(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.register(Agent("alice", "task", "plan"))
+    registry.register(Agent("bob", "task", "plan"))
+    registry._agents["alice"].owned_files = {"/tmp/outside.txt"}
+    with pytest.raises(RegistryIntegrityError, match="invalid persisted ownership path"):
+        hard._current_conflicts_locked(registry, "bob", {"file.py"})
+    assert registry.registry_tampered
+
+
+def test_lock_file_with_boolean_pid_is_stale_not_authenticated(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.agents_dir.mkdir(parents=True, exist_ok=True)
+    (registry.agents_dir / "alice.lock").write_text('{"pid":true}')
+    assert registry.is_lock_stale("alice")
+
+
+def test_agent_hardening_state_never_invents_methods_on_unpatched_class():
+    class Unpatched:
+        pass
+
+    status = hard.agent_hardening_state(Unpatched)
+    assert status["installed"] is False
+    assert status["register"] is False
+    assert status["is_lock_stale"] is False
+
+
+@pytest.mark.parametrize("payload", ["[]", '"unstructured"', "42", "true", "null"])
+def test_nonobject_agent_lock_record_is_handled_like_other_corrupt_lock_metadata(tmp_path, payload):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.agents_dir.mkdir(parents=True, exist_ok=True)
+    path = registry.agents_dir / "alice.lock"
+    path.write_text(payload)
+    assert registry.is_lock_stale("alice")
+
+
+def test_legacy_registry_verifier_migration_failure_is_an_explicit_integrity_failure(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.registry_legacy = True
+    registry.registry_tampered = False
+    registry._refresh_from_disk = lambda: None
+
+    def fail():
+        raise OSError("simulated legacy checkpoint failure")
+
+    registry._migrate_legacy_locked = fail
+    assert hard._verify_locked(registry) is False
+    assert registry.registry_tampered
+    assert "legacy migration failed" in registry.registry_problem
+
+
+def test_unregistered_agent_registry_never_invents_a_live_owner(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    assert registry.active_agents() == []
+    assert registry.stale_agents() == []
+
+
+def test_lock_file_read_error_is_not_reported_as_an_active_verified_lock(monkeypatch, tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.agents_dir.mkdir(parents=True, exist_ok=True)
+    path = registry.agents_dir / "alice.lock"
+    path.write_text('{"pid":100}')
+    original = Path.read_text
+
+    def deny(self, *a, **kw):
+        if self == path:
+            raise OSError("simulated unavailable owner metadata")
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "read_text", deny)
+    assert registry.is_lock_stale("alice")
+
+
+def test_real_agent_write_lock_records_current_pid_and_correct_agent(tmp_path):
+    import os
+
+    registry = MultiAgentRegistry(str(tmp_path))
+    lock = registry.write_lock("alice")
+    assert lock is not None
+    record = json.loads(lock.read_text())
+    assert record["agent_id"] == "alice"
+    assert record["pid"] == os.getpid()
+    assert registry.is_lock_stale("alice") is False
+
+
+def test_direct_agent_lock_denied_while_independent_final_audit_is_active(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    marker = hard._freeze_path(registry)
+    marker.parent.mkdir(parents=True)
+    import os
+
+    marker.write_text(json.dumps({"pid": os.getpid()}))
+    with pytest.raises(RegistryIntegrityError, match="freeze is active"):
+        registry.write_lock("alice")
+    assert not (registry.agents_dir / "alice.lock").exists()
+
+
+@pytest.mark.parametrize("deny_unlink", [True, False])
+def test_unregistration_records_leave_even_if_os_refuses_auxiliary_lock_cleanup(
+    monkeypatch, tmp_path, deny_unlink
+):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.register(Agent("alice", "task", "plan"))
+    path = registry.agents_dir / "alice.lock"
+    path.write_text("auxiliary lock")
+    if deny_unlink:
+        original = Path.unlink
+
+        def deny(self, *a, **kw):
+            if self == path:
+                raise PermissionError("cannot unlink auxiliary lock")
+            return original(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "unlink", deny)
+    registry.unregister("alice")
+    assert registry.verify_registry_chain()
+    assert ("alice" in registry._agents) is False
+    assert path.exists() is deny_unlink
+
+
+def test_expired_owner_is_not_reported_as_a_current_file_conflict(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.register(Agent("alice", "task", "plan"))
+    registry._agents["alice"].owned_files = {"resource.dat"}
+    registry._agents["alice"].last_heartbeat = 0.0
+    registry.owner_timeout = 1.0
+    assert hard._current_conflicts_locked(registry, "bob", {"resource.dat"}) == []
+
+
+def test_expired_agent_without_owned_files_is_marked_stale_without_false_release(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.register(Agent("alice", "task", "plan"))
+    registry.owner_timeout = 0.0
+    stale = registry.stale_agents()
+    assert len(stale) == 1
+    assert stale[0].agent_id == "alice"
+    assert registry.release_stale_ownership() == []
+    assert registry.active_agents() == []
+    assert registry.verify_registry_chain()
+
+
+def test_unverifiable_registry_is_never_used_for_agent_liveness_decisions(tmp_path):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.register(Agent("alice", "task", "plan"))
+    registry.registry_path.write_text('{"fake":"record"}\n')
+    assert registry.active_agents() == []
+    assert registry.stale_agents() == []
+    assert registry.release_stale_ownership() == []
+    assert registry.check_conflicts("bob", {"anything"}) == []
+    assert registry.registry_tampered
+
+
+def test_fault_injected_corrupt_persisted_owned_path_cannot_return_an_active_agent(
+    monkeypatch, tmp_path
+):
+    registry = MultiAgentRegistry(str(tmp_path))
+    registry.register(Agent("alice", "task", "plan"))
+    registry._agents["alice"].owned_files = {"/outside-workspace"}
+    # Simulate a separate trusted read layer yielding a malformed owned path.
+    monkeypatch.setattr(hard, "_verify_locked", lambda _: True)
+    assert registry.active_agents() == []
+    assert registry.registry_tampered
+    assert "invalid persisted ownership path" in registry.registry_problem

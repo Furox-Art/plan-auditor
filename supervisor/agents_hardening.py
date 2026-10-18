@@ -391,6 +391,11 @@ def install_agent_hardening(target: Any = None) -> dict[str, object]:
             data = json.loads(lock_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return True
+        # A valid JSON scalar/array is not a registry lock record. Apply the
+        # same conservative stale classification as malformed JSON, rather
+        # than crashing in the authorization and lock-cleanup path.
+        if not isinstance(data, dict):
+            return True
         pid = data.get("pid")
         return not (isinstance(pid, int) and not isinstance(pid, bool) and _safe_pid_alive(pid))
 

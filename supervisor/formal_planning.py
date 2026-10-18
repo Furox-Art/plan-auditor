@@ -325,14 +325,16 @@ def _anchor_argv_errors(check: Mapping[str, Any], digest: str) -> List[str]:
     return errors
 
 
-def find_formal_anchors(plan: Mapping[str, Any]) -> List[Tuple[int, int, Mapping[str, Any]]]:
-    anchors: List[Tuple[int, int, Mapping[str, Any]]] = []
+def find_formal_anchors(plan: Mapping[str, Any]) -> List[Tuple[Any, int, Mapping[str, Any]]]:
+    anchors: List[Tuple[Any, int, Mapping[str, Any]]] = []
     for step in plan.get("steps", []) or []:
         if not isinstance(step, Mapping):
             continue
         sid = step.get("id")
-        if not isinstance(sid, int):
-            continue
+        # Preserve even malformed-id formal anchors so independent validation
+        # rejects them, rather than treating their existence as no contract.
+        # Otherwise a rejected plan can be silently downgraded to "no formal
+        # verification required" by changing only its step identifier.
         for index, check in enumerate(step.get("verify", []) or []):
             if isinstance(check, Mapping) and FORMAL_KEY in check:
                 anchors.append((sid, index, check))

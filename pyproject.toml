@@ -146,7 +146,7 @@ source_pkgs = ["supervisor", "scripts"]
 [tool.coverage.report]
 show_missing = true
 # Keep the floor in one place so the workflow and local runs cannot disagree.
-fail_under = 65
+fail_under = 100
 
 [tool.ruff]
 line-length = 100
