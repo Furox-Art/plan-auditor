@@ -42,7 +42,7 @@ def test_live_registry_writer_lock_times_out_without_stealing_it(tmp_path, monke
     registry = agents.MultiAgentRegistry(str(tmp_path))
     registry._ensure_dirs()
     registry.lock_path.write_text(f'{{"pid": {os.getpid()}, "token": "live-lock-owner"}}', encoding="utf-8")
-    monkeypatch.setattr(registry, "REGISTRY_LOCK_TIMEOUT", 0.001)
+    monkeypatch.setattr(registry, "REGISTRY_LOCK_TIMEOUT", 0.001, raising=False)
     with pytest.raises(agents.RegistryIntegrityError, match="write lock timeout"):
         with registry._write_lock():
             pytest.fail("must never enter a locked registry")
@@ -61,7 +61,7 @@ def test_lock_metadata_failure_never_makes_a_live_lock_look_stale(tmp_path, monk
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", inaccessible)
-    monkeypatch.setattr(registry, "REGISTRY_LOCK_TIMEOUT", 0.001)
+    monkeypatch.setattr(registry, "REGISTRY_LOCK_TIMEOUT", 0.001, raising=False)
     with pytest.raises(agents.RegistryIntegrityError, match="remained malformed"):
         with registry._write_lock():
             pytest.fail("must not steal another writer's lock")
