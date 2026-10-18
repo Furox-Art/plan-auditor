@@ -102,7 +102,9 @@ def _iter_evidence_records(root: Path) -> Iterator[Dict[str, Any]]:
 
 
 def _result_checks_match(expected, results):
-    if len(results) != len(expected):
+    # Evidence is untrusted JSON. Non-arrays must never pass an empty check
+    # contract or raise an exception instead of producing a FAIL verdict.
+    if not isinstance(results, list) or len(results) != len(expected):
         return False
     actual = [result.get("check") for result in results if isinstance(result, dict)]
     return actual == expected and len(actual) == len(results) and all(
@@ -125,7 +127,7 @@ def _checks_match(step: Dict[str, Any], record: Dict[str, Any], dependencies: Li
         return False
 
     actual_outputs = record.get("outputs", [])
-    if len(actual_outputs) != len(declared_outputs):
+    if not isinstance(actual_outputs, list) or len(actual_outputs) != len(declared_outputs):
         return False
     for (name, contract), actual_output in zip(declared_outputs.items(), actual_outputs):
         if not isinstance(actual_output, dict):
@@ -137,7 +139,7 @@ def _checks_match(step: Dict[str, Any], record: Dict[str, Any], dependencies: Li
             return False
 
     actual_required = record.get("required_outputs", [])
-    if len(actual_required) != len(expected_required):
+    if not isinstance(actual_required, list) or len(actual_required) != len(expected_required):
         return False
     for expected_ref, actual_ref in zip(expected_required, actual_required):
         if not isinstance(actual_ref, dict):
