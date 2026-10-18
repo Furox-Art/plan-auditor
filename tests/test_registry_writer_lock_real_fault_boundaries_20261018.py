@@ -30,23 +30,23 @@ def test_registry_writer_lock_is_removed_after_body_error(tmp_path):
 def test_registry_writer_lock_recovers_provably_stale_lock(tmp_path):
     registry = agents.MultiAgentRegistry(str(tmp_path))
     registry._ensure_dirs()
-    registry.lock_path.write_text("stale process marker", encoding="utf-8")
+    registry.lock_path.write_text('{"pid": 999999999, "token": "dead-lock-owner", "created": 0}', encoding="utf-8")
     old = time.time() - agents.REGISTRY_LOCK_STALE - 5
     os.utime(registry.lock_path, (old, old))
     with registry._write_lock():
-        assert registry.lock_path.read_text(encoding="utf-8") != "stale process marker"
+        assert "dead-lock-owner" not in registry.lock_path.read_text(encoding="utf-8")
     assert not registry.lock_path.exists()
 
 
 def test_live_registry_writer_lock_times_out_without_stealing_it(tmp_path, monkeypatch):
     registry = agents.MultiAgentRegistry(str(tmp_path))
     registry._ensure_dirs()
-    registry.lock_path.write_text("another writer owns this lock", encoding="utf-8")
-    monkeypatch.setattr(agents, "REGISTRY_LOCK_TIMEOUT", 0.0)
+    registry.lock_path.write_text(f'{{"pid": {os.getpid()}, "token": "live-lock-owner"}}', encoding="utf-8")
+    monkeypatch.setattr(registry, "REGISTRY_LOCK_TIMEOUT", 0.001)
     with pytest.raises(agents.RegistryIntegrityError, match="write lock timeout"):
         with registry._write_lock():
             pytest.fail("must never enter a locked registry")
-    assert registry.lock_path.read_text(encoding="utf-8") == "another writer owns this lock"
+    assert "live-lock-owner" in registry.lock_path.read_text(encoding="utf-8")
 
 
 def test_lock_metadata_failure_never_makes_a_live_lock_look_stale(tmp_path, monkeypatch):
@@ -80,6 +80,7 @@ def test_lock_release_failure_does_not_turn_successful_body_into_false_exception
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", refuse_release)
-    with registry._write_lock():
-        assert registry.lock_path.is_file()
+    with pytest.raises(agents.RegistryIntegrityError, match="cannot release agent registry write lock"):
+        with registry._write_lock():
+            assert registry.lock_path.is_file()
     assert registry.lock_path.is_file()
