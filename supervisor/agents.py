@@ -11,10 +11,9 @@ import hashlib
 import json
 import os
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from scripts.integrity import (
     IntegrityKeyError,
@@ -147,46 +146,9 @@ class MultiAgentRegistry:
     def _ensure_dirs(self) -> None:
         self.agents_dir.mkdir(parents=True, exist_ok=True)
 
-    @contextmanager
-    def _write_lock(self) -> Iterator[None]:
-        """Serialize append/migration across independent agent processes."""
-        self._ensure_dirs()
-        deadline = time.monotonic() + REGISTRY_LOCK_TIMEOUT
-        acquired = False
-        while not acquired:
-            try:
-                fd = os.open(
-                    str(self.lock_path),
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
-                )
-                try:
-                    os.write(
-                        fd,
-                        json.dumps({"pid": os.getpid(), "ts": _now()}).encode("utf-8"),
-                    )
-                finally:
-                    os.close(fd)
-                acquired = True
-            except FileExistsError:
-                try:
-                    age = _now() - self.lock_path.stat().st_mtime
-                    if age > REGISTRY_LOCK_STALE:
-                        self.lock_path.unlink()
-                        continue
-                except OSError:
-                    pass
-                if time.monotonic() >= deadline:
-                    raise RegistryIntegrityError("agent registry write lock timeout")
-                time.sleep(0.02)
-        try:
-            yield
-        finally:
-            try:
-                self.lock_path.unlink()
-            except OSError:
-                pass
-
+    # Runtime registry and lock methods are installed by supervisor.__init__.
+    # Their shadowed, pre-hardening implementations were removed to eliminate
+    # unreachable and weaker authorization/locking paths.
     def _read_head(self) -> Optional[Dict]:
         if not self.head_path.exists():
             return None
@@ -455,188 +417,6 @@ class MultiAgentRegistry:
         elif self.head_path.exists():
             self.head_path.unlink()
 
-    def verify_registry_chain(self) -> bool:
-        self._refresh_from_disk()
-        if self.registry_tampered:
-            return False
-        if self.registry_legacy:
-            try:
-                with self._write_lock():
-                    self._refresh_from_disk()
-                    if self.registry_tampered:
-                        return False
-                    if self.registry_legacy:
-                        self._migrate_legacy_locked()
-                self._refresh_from_disk()
-            except (
-                OSError,
-                json.JSONDecodeError,
-                UnicodeError,
-                RegistryIntegrityError,
-            ) as exc:
-                self.registry_tampered = True
-                self.registry_problem = "legacy migration failed: %s" % exc
-                return False
-        return not self.registry_tampered
-
-    def _require_integrity(self) -> None:
-        if not self.verify_registry_chain():
-            raise RegistryIntegrityError(
-                "agent registry integrity check failed"
-                + (": %s" % self.registry_problem if self.registry_problem else "")
-            )
-
-    def register(self, agent: Agent) -> None:
-        self._require_integrity()
-        agent.workspace_root = str(self.root)
-        agent.last_heartbeat = _now()
-        agent.state = "active"
-        self._append_registry_event("join", agent)
-
-    def unregister(self, agent_id: str) -> None:
-        self._require_integrity()
-        self._refresh_from_disk()
-        agent = self._agents.get(agent_id)
-        if agent:
-            agent.state = "left"
-            self._append_registry_event("leave", agent)
-        lock = self.agents_dir / ("%s.lock" % agent_id)
-        if lock.exists():
-            try:
-                lock.unlink()
-            except OSError:
-                pass
-
-    def heartbeat(self, agent_id: str, action: str = "") -> None:
-        self._require_integrity()
-        self._refresh_from_disk()
-        agent = self._agents.get(agent_id)
-        if agent:
-            agent.last_heartbeat = _now()
-            agent.state = "active"
-            if action:
-                agent.current_action = action
-            self._append_registry_event("heartbeat", agent)
-
-    def update_ownership(self, agent_id: str, files: Set[str]) -> None:
-        self._require_integrity()
-        self._refresh_from_disk()
-        agent = self._agents.get(agent_id)
-        if agent:
-            agent.owned_files = set(files)
-            agent.last_heartbeat = _now()
-            self._append_registry_event("ownership", agent)
-
-    def claim_files(
-        self,
-        agent_id: str,
-        files: Set[str],
-        mode: str = "parallel-warn",
-    ) -> Tuple[bool, List[Conflict]]:
-        if not self.verify_registry_chain():
-            return False, []
-        conflicts = self.check_conflicts(agent_id, files)
-        if conflicts and mode == "parallel-strict":
-            return False, conflicts
-        self.update_ownership(agent_id, files)
-        return agent_id in self._agents, conflicts
-
-    def active_agents(self) -> List[Agent]:
-        self._refresh_from_disk()
-        if self.registry_tampered:
-            return []
-        now = _now()
-        return [
-            a
-            for a in self._agents.values()
-            if a.state == "active" and now - a.last_heartbeat < self.owner_timeout
-        ]
-
-    def stale_agents(self) -> List[Agent]:
-        self._refresh_from_disk()
-        if self.registry_tampered:
-            return []
-        now = _now()
-        return [
-            a
-            for a in self._agents.values()
-            if a.state == "active" and now - a.last_heartbeat >= self.owner_timeout
-        ]
-
-    def release_stale_ownership(self) -> List[str]:
-        if not self.verify_registry_chain():
-            return []
-        self._refresh_from_disk()
-        now = _now()
-        released: List[str] = []
-        for agent in list(self._agents.values()):
-            if agent.state == "active" and now - agent.last_heartbeat >= self.owner_timeout:
-                if agent.owned_files:
-                    released.append(agent.agent_id)
-                agent.owned_files = set()
-                agent.state = "stale"
-                self._append_registry_event("stale", agent)
-        return released
-
-    def check_conflicts(self, agent_id: str, files: Set[str]) -> List[Conflict]:
-        if not self.verify_registry_chain():
-            return []
-        self.release_stale_ownership()
-        self._refresh_from_disk()
-        conflicts: List[Conflict] = []
-        now = _now()
-        for other in self._agents.values():
-            if other.agent_id == agent_id or other.state != "active":
-                continue
-            if now - other.last_heartbeat >= self.owner_timeout:
-                continue
-            for path in files & other.owned_files:
-                conflicts.append(Conflict(path, other.agent_id, agent_id))
-        return conflicts
-
-    def _append_registry_event(self, event: str, agent: Agent) -> None:
-        self._ensure_dirs()
-        rec = {"ts": _now(), "event": event, "agent": agent.to_dict()}
-        with self._write_lock():
-            self._refresh_from_disk()
-            if self.registry_tampered:
-                raise RegistryIntegrityError(
-                    "refusing registry append after integrity failure"
-                    + (": %s" % self.registry_problem if self.registry_problem else "")
-                )
-            if self.registry_legacy:
-                self._migrate_legacy_locked()
-                self._refresh_from_disk()
-                if self.registry_tampered:
-                    raise RegistryIntegrityError("registry migration produced invalid state")
-
-            seq = self._registry_seq + 1
-            prev = self._registry_tail
-            current_hash = _registry_hash(seq, prev, rec)
-            envelope = {
-                "format_version": REGISTRY_FORMAT_VERSION,
-                "seq": seq,
-                "prev": prev,
-                "hash": current_hash,
-                "rec": rec,
-            }
-            key = runtime_key(self.root)
-            if key is not None:
-                envelope["auth"] = make_auth(
-                    key, REGISTRY_RECORD_DOMAIN, _registry_auth_payload(envelope)
-                )
-            with self.registry_path.open("a", encoding="utf-8") as handle:
-                handle.write(_canonical(envelope) + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            self._write_head(seq, current_hash)
-
-        self._refresh_from_disk()
-        if self.registry_tampered:
-            raise RegistryIntegrityError(
-                "registry failed self-verification after append: %s" % self.registry_problem
-            )
-        self._agents[agent.agent_id] = Agent.from_dict(agent.to_dict())
 
     def write_lock(self, agent_id: str) -> Optional[Path]:
         self._ensure_dirs()
@@ -649,19 +429,6 @@ class MultiAgentRegistry:
             return lock_path
         except OSError:
             return None
-
-    def is_lock_stale(self, agent_id: str) -> bool:
-        lock_path = self.agents_dir / ("%s.lock" % agent_id)
-        if not lock_path.exists():
-            return False
-        try:
-            data = json.loads(lock_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return True
-        pid = data.get("pid")
-        if pid and _pid_alive(pid):
-            return False
-        return True
 
 
 def initialize_registry_auth(root: str | Path, key: KeyMaterial) -> None:
