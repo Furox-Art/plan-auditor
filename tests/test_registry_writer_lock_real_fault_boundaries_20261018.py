@@ -62,7 +62,7 @@ def test_lock_metadata_failure_never_makes_a_live_lock_look_stale(tmp_path, monk
 
     monkeypatch.setattr(Path, "stat", inaccessible)
     monkeypatch.setattr(registry, "REGISTRY_LOCK_TIMEOUT", 0.001)
-    with pytest.raises(agents.RegistryIntegrityError, match="write lock timeout"):
+    with pytest.raises(agents.RegistryIntegrityError, match="remained malformed"):
         with registry._write_lock():
             pytest.fail("must not steal another writer's lock")
     assert registry.lock_path.read_text(encoding="utf-8") == "other writer"
