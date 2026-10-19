@@ -23,15 +23,15 @@ identical to a result until you re-run everything yourself.
 ## The solution
 
 Verification runs in a **separate process with its own check implementation**, so the
-implementing agent's claims carry no weight Ã¢â‚¬â€ only sealed command output does.
+implementing agent's claims carry no weight — only sealed command output does.
 
 - Every step is a machine-checkable requirement, not a prose bullet.
 - Every step needs at least one **behavioral** check (`run`, `pytest`, `exec`). A
   file-existence check can never verify a step on its own.
 - Output is appended to a SHA-256 hash-chained log, and completion claims
   require that chain to be **HMAC-authenticated**. A hash chain alone is only
-  tamper-evident Ã¢â‚¬â€ anyone with write access to the workspace can rebuild an
-  identical one Ã¢â‚¬â€ so configure `PLAN_AUDITOR_HMAC_KEY` (or
+  tamper-evident — anyone with write access to the workspace can rebuild an
+  identical one — so configure `PLAN_AUDITOR_HMAC_KEY` (or
   `PLAN_AUDITOR_HMAC_KEY_FILE` pointing outside the workspace) and run
   `plan-auditor integrity init .` before the audit you intend to claim. Records
   written without a key carry `"auth": {"alg": "none"}` and never pass the
@@ -59,7 +59,7 @@ pip install plan-auditor           # into the current environment / virtualenv
 Python 3.10 or newer, no third-party runtime dependencies. The npm package is a thin Node
 launcher for the same CLI and needs Python on `PATH`. The examples call the interpreter
 `python`; on a system that only ships `python3`, use a virtualenv that provides `python`.
-In CI, add `- uses: Furox-Art/plan-auditor@main` with `path: .` Ã¢â‚¬â€ see
+In CI, add `- uses: Furox-Art/plan-auditor@main` with `path: .` — see
 [integrations](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md).
 
 **Release status:** `2.6.2` is current on both registries. PyPI publishes every artifact
@@ -71,7 +71,7 @@ attestations endpoint returns `404` for one. Measured per channel in
 
 `tests/test_readme_quickstart.py` runs these commands on every CI run and compares the
 transcript to real output without normalising hash values, so it cannot drift. Copy the
-two files verbatim Ã¢â‚¬â€ `request-source.json` is the input to the `request_sha256` below.
+two files verbatim — `request-source.json` is the input to the `request_sha256` below.
 
 **1. Create the project and the plan.**
 
@@ -80,7 +80,7 @@ mkdir plan-auditor-demo && cd plan-auditor-demo
 mkdir .plan-auditor
 ```
 
-`.plan-auditor/plan.json`, and `request-source.json` beside it Ã¢â‚¬â€ the host-owned
+`.plan-auditor/plan.json`, and `request-source.json` beside it — the host-owned
 statement of what you asked for, sealed on activation so the agent cannot restate it:
 
 ```json
@@ -120,7 +120,7 @@ plan-auditor plan verify .
 plan-auditor run . 1
 
 # Before claiming completion, authenticate the evidence chain. A keyless chain
-# is only tamper-evident Ã¢â‚¬â€ anyone with write access can rebuild it Ã¢â‚¬â€ so the
+# is only tamper-evident — anyone with write access can rebuild it — so the
 # gate never treats it as proof. Generate the key OUTSIDE the workspace and
 # point the environment at it:
 python -c "import os, pathlib; d = pathlib.Path.home()/'.plan-auditor'; d.mkdir(exist_ok=True); (d/'plan-auditor-hmac.key').write_bytes(b'plan-auditor: ' + os.urandom(48))"
@@ -205,7 +205,7 @@ Per-layer detail, profiles (`light`/`standard`/`strict`), run modes
 
 The skill is `SKILL.md` plus `scripts/`, `references/` and `hooks/`, either from a
 checkout or from a `pip` install, which ships them under `plan_auditor_skill/`. Copy
-them into your host's skills directory Ã¢â‚¬â€ `~/.claude/`, `~/.commandcode/`,
+them into your host's skills directory — `~/.claude/`, `~/.commandcode/`,
 `~/.config/opencode/` or `~/.codex/`, each with a `skills/plan-auditor/` subdirectory.
 `hooks/gate_hook.py` is the primary hook gate; `scripts/stop_gate.py` (Claude Code) delegates
 to the same `evaluate_workspace`. Wire each host's blocking hook to one.
@@ -222,9 +222,9 @@ Reading order starts at [docs/index.md](https://github.com/Furox-Art/plan-audito
 | Every subcommand, real invocations, exit codes `0`/`1`/`2`/`3` | [cli](https://github.com/Furox-Art/plan-auditor/blob/main/docs/cli.md) |
 | Per-layer detail, profiles, run modes, LLM tiers | [architecture](https://github.com/Furox-Art/plan-auditor/blob/main/docs/architecture.md) |
 | What the tool writes into `.plan-auditor/`, and why | [workspace artifacts](https://github.com/Furox-Art/plan-auditor/blob/main/docs/workspace-artifacts.md) |
-| Step DAGs, formal planning, threat model, deployment isolation | [dependency graph](https://github.com/Furox-Art/plan-auditor/blob/main/docs/dependency-graph.md) Ã‚Â· [formal planning](https://github.com/Furox-Art/plan-auditor/blob/main/docs/formal-planning.md) Ã‚Â· [threat model](https://github.com/Furox-Art/plan-auditor/blob/main/docs/threat-model.md) Ã‚Â· [deployment isolation](https://github.com/Furox-Art/plan-auditor/blob/main/docs/deployment-isolation.md) |
+| Step DAGs, formal planning, threat model, deployment isolation | [dependency graph](https://github.com/Furox-Art/plan-auditor/blob/main/docs/dependency-graph.md) · [formal planning](https://github.com/Furox-Art/plan-auditor/blob/main/docs/formal-planning.md) · [threat model](https://github.com/Furox-Art/plan-auditor/blob/main/docs/threat-model.md) · [deployment isolation](https://github.com/Furox-Art/plan-auditor/blob/main/docs/deployment-isolation.md) |
 | Skill hosts, blocking hooks, CI | [integrations](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md) |
-| Published versions, defects, attestations; what is measurable | [release status](https://github.com/Furox-Art/plan-auditor/blob/main/docs/release-status.md) Ã‚Â· [benchmark](https://github.com/Furox-Art/plan-auditor/blob/main/docs/benchmark.md) |
+| Published versions, defects, attestations; what is measurable | [release status](https://github.com/Furox-Art/plan-auditor/blob/main/docs/release-status.md) · [benchmark](https://github.com/Furox-Art/plan-auditor/blob/main/docs/benchmark.md) |
 | Plan schema and check types | [plan-format.md](https://github.com/Furox-Art/plan-auditor/blob/main/references/plan-format.md) |
 
 Entry points: the `plan-auditor` CLI (`request`, `plan`, `evidence`, `integrity`,
@@ -235,16 +235,16 @@ Entry points: the `plan-auditor` CLI (`request`, `plan`, `evidence`, `integrity`
 
 Check types are `run`, `exec`, `pytest`, `regex` and `file_exists`; `regex` and
 `file_exists` are non-behavioural and cannot verify a step alone. Exit codes are `0`
-proven, `1` failed, `2` blocked, `3` `UNKNOWN` Ã¢â‚¬â€ and `3` withholds completion rather than
+proven, `1` failed, `2` blocked, `3` `UNKNOWN` — and `3` withholds completion rather than
 passing it. The npm launcher mirrors them and fails closed. Runnable example:
 [`examples/fib/`](https://github.com/Furox-Art/plan-auditor/tree/main/examples/fib).
 
 No rendered documentation site exists yet. `mkdocs build --strict` is a required CI check,
 so the Markdown is known to build, but nothing serves it; build it with
 `python -m pip install mkdocs-material && mkdocs serve`. Files GitHub already renders:
-[SKILL.md](https://github.com/Furox-Art/plan-auditor/blob/main/SKILL.md) Ã‚Â·
-[CONTRIBUTING.md](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md) Ã‚Â·
-[CHANGELOG.md](https://github.com/Furox-Art/plan-auditor/blob/main/CHANGELOG.md) Ã‚Â·
+[SKILL.md](https://github.com/Furox-Art/plan-auditor/blob/main/SKILL.md) ·
+[CONTRIBUTING.md](https://github.com/Furox-Art/plan-auditor/blob/main/CONTRIBUTING.md) ·
+[CHANGELOG.md](https://github.com/Furox-Art/plan-auditor/blob/main/CHANGELOG.md) ·
 [SECURITY.md](https://github.com/Furox-Art/plan-auditor/blob/main/SECURITY.md)
 
 ## Honest limits
