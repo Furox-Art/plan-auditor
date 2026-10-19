@@ -1,4 +1,4 @@
-# What is measurable here â€” and what is not
+# What is measurable here — and what is not
 
 This page replaces a previous version of this file that contained comparative
 numbers which were never produced by any harness in this repository. Those
@@ -46,7 +46,7 @@ Exit codes are the documented four (`0` proven, `1` failed, `2` request refused,
 
 Nothing on this page is a hand-copied figure. Each quality claim below is tied to
 the exact command that produces it, so you can regenerate it and compare. If a
-number ever changes, the command changes too â€” that is the point.
+number ever changes, the command changes too — that is the point.
 
 | Claim | Command that produces it | Tool | Commit this text describes | Where the live value lives |
 |---|---|---|---|---|
@@ -86,7 +86,7 @@ counts the command prints tell you which run you are looking at.
 ## What is reproducible: the in-repo example
 
 `examples/fib/` is a complete, runnable plan. It is in the repository and in the
-**sdist**, but not in the wheel, so a `pip`-only install will not have it â€” use a
+**sdist**, but not in the wheel, so a `pip`-only install will not have it — use a
 checkout if you want to run this. (The wheel does ship the Agent Skill assets,
 namespaced under `plan_auditor_skill/`; `examples/` is deliberately not among
 them.)
@@ -150,8 +150,8 @@ $ plan-auditor run .
 
 **Scoped omission:** the single elided line is the tool's `output:` block, which
 carries the captured Python traceback as one physical output line joined with
-`" | "`. Its interior frames depend on your Python version â€” 3.11 and newer add
-the offending source line and a caret â€” so quoting it verbatim would be correct on
+`" | "`. Its interior frames depend on your Python version — 3.11 and newer add
+the offending source line and a caret — so quoting it verbatim would be correct on
 some interpreters and wrong on the rest. Every remaining line above is verbatim,
 the step fails with `exit=1`, and the invocation exits `1`.
 
@@ -176,7 +176,7 @@ The same scoped omission applies to the launcher's `output:` line; the launcher 
 code of `1` is reproduced by `tests/test_npm_launcher.py`, which also asserts that
 a passing `run` yields `0` and that an unstartable Python fails closed.
 
-Step 2 is not merely "unverified" â€” it is **blocked**, because its prerequisite
+Step 2 is not merely "unverified" — it is **blocked**, because its prerequisite
 output contract no longer holds. Restoring `fib.py` and re-running returns both
 steps to `VERIFIED`, and the evidence log records the failing and the passing
 attempts in one hash-chained sequence. `plan-auditor evidence verify .`

@@ -78,12 +78,6 @@ jobs:
     name: publish to PyPI
     needs: [package-preflight, wheel-preflight]
     runs-on: ubuntu-latest
-    # Exported so `github-release` can honour the same decision. It cannot
-    # re-derive it: that job runs *after* this one has uploaded, so by then the
-    # version does exist on PyPI and a fresh existence check would read
-    # "already published" and skip the release it is supposed to create.
-    outputs:
-      skip: ${{ steps.gate.outputs.skip }}
     # Protects the `pypi` environment. Required reviewers are deliberately not
     # enabled: this is a single-maintainer repository, so a required reviewer
     # would block every release until a second person approves, which trades a
@@ -203,8 +197,29 @@ jobs:
           print(f"name={data['project']['name']}")
           print(f"version={data['project']['version']}")
           PY
+      # Gated on the GitHub release itself, not on the PyPI gate: a version can be
+      # on PyPI while its release is missing (2.6.2 shipped that way). At this
+      # action SHA, updating an existing release with generate_release_notes
+      # appends a second copy of the notes, so an existing release is left alone.
+      - name: Check whether the GitHub release already exists
+        id: release_gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          if out=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id 2>&1); then
+            echo "GitHub release ${TAG} already exists (id ${out}); leaving it untouched."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "HTTP 404" <<<"$out"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Could not determine whether ${TAG} exists: ${out}"
+            exit 1
+          fi
       - name: Create GitHub release
-        if: needs.publish.outputs.skip != 'true'
+        if: steps.release_gate.outputs.exists != 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ steps.meta.outputs.version }}

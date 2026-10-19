@@ -2,14 +2,14 @@
 
 Plan Auditor turns "the agent says it is done" into a checkable fact. A step is
 `verified` only when a deterministic check, executed in a fresh subprocess by a
-separate process, actually passed â€” and the result is appended to a hash-chained
+separate process, actually passed — and the result is appended to a hash-chained
 evidence log that later audits re-verify.
 
 Nothing on this site requires an LLM, a GPU, or a network connection.
 
 ## Start here
 
-| If you want toâ€¦ | Read |
+| If you want to… | Read |
 |---|---|
 | See a verified task end to end in five minutes | [Quick start](quickstart.md) |
 | Look up a command or exit code | [CLI reference](cli.md) |
@@ -47,8 +47,8 @@ contains the runtime files and the skill assets, via
 3. **Evidence is append-only and hash-chained, and evidence that claims
    completion must be HMAC-authenticated.** `plan-auditor evidence verify`
    re-checks the chain, including rotated archives. A chain without a
-   configured HMAC key is tamper-evidence only â€” it can be rebuilt identically
-   by anyone with write access â€” so the gate refuses to treat it as proof.
+   configured HMAC key is tamper-evidence only — it can be rebuilt identically
+   by anyone with write access — so the gate refuses to treat it as proof.
    Set `PLAN_AUDITOR_HMAC_KEY` (or `PLAN_AUDITOR_HMAC_KEY_FILE`, outside the
    workspace) and run `plan-auditor integrity init .` before the audit you
    intend to claim.
@@ -59,28 +59,28 @@ contains the runtime files and the skill assets, via
 
 ## Concepts in one paragraph each
 
-**Request contract** â€” A JSON document you write that states the task and its
+**Request contract** — A JSON document you write that states the task and its
 requirements with deterministic acceptance checks. Activating it computes a
 digest; the supervisor refuses to pass a plan whose requirements drifted from it.
 
-**Plan** â€” `.plan-auditor/plan.json` (plus any `.plan-auditor/plans/<name>.json`).
+**Plan** — `.plan-auditor/plan.json` (plus any `.plan-auditor/plans/<name>.json`).
 Requirements, steps, `covers` bindings, dependencies, named outputs, and `verify`
 checks. Every active plan must pass; a passing default plan cannot hide an
 unfinished named plan.
 
-**Seal** â€” A hash over the full verification contract: requirements, coverage,
+**Seal** — A hash over the full verification contract: requirements, coverage,
 the dependency DAG, output contracts, every check, and the supervisor
 profile/mode/policy fingerprint. `plan verify` creates it; later audits detect any
 attempt to weaken it.
 
-**Evidence** â€” An append-only JSONL log where every record carries the SHA-256 of
+**Evidence** — An append-only JSONL log where every record carries the SHA-256 of
 the previous one. Tampering with a past record breaks the chain. Without a
 configured HMAC key every record carries `"auth": {"alg": "none"}`, the chain
 still verifies, and it is still not authentication: the completion gate
 requires an authenticated chain because a keyless one is rebuildable by
 anyone with write access to the workspace.
 
-**Fresh full audit** â€” `plan-auditor audit` re-runs every check in a new
+**Fresh full audit** — `plan-auditor audit` re-runs every check in a new
 subprocess while the workspace is frozen, and fails if the workspace changed
 during the run. It is the only command whose exit code `0` means "complete".
 

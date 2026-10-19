@@ -24,13 +24,13 @@ ends up proving less than it looks:
 
 | Mechanism | What it proves | Where to read it |
 |---|---|---|
-| `dist.integrity` / `sha256` digest | The bytes you received are the bytes that were published. Integrity only â€” says nothing about how they were built. | `npm view <pkg> dist.integrity`, PyPI `digests.sha256` |
+| `dist.integrity` / `sha256` digest | The bytes you received are the bytes that were published. Integrity only — says nothing about how they were built. | `npm view <pkg> dist.integrity`, PyPI `digests.sha256` |
 | npm `dist.signatures` | The **registry** signed the packument entry, so the metadata was not altered in transit. A transport signature, **not** build provenance. | `npm view <pkg> dist.signatures` |
 | Build attestation | A CI run built this artifact from a named workflow, repo and commit, and a transparency log has the statement. | see per channel below |
 
 The two channels differ, so check them differently. Both were measured on `2.4.3`:
 
-- **PyPI â€” attested.** Publishing goes through OIDC trusted publishing, so every `2.4.3`
+- **PyPI — attested.** Publishing goes through OIDC trusted publishing, so every `2.4.3`
   artifact carries a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation
   with predicate type `https://docs.pypi.org/attestations/publish/v1`, bound to the
   artifact's SHA-256. Fetch and check it yourself:
@@ -43,9 +43,9 @@ The two channels differ, so check them differently. Both were measured on `2.4.3
 
   Note the URL shape: PyPI serves attestations **per file**, so the path ends in
   `/<filename>/provenance`. `https://pypi.org/integrity/plan-auditor/2.4.3/` is not an
-  endpoint and returns `404` â€” that 404 means "no such URL", not "no attestation".
+  endpoint and returns `404` — that 404 means "no such URL", not "no attestation".
 
-- **npm â€” not attested.** `2.4.3` was published in token mode, and a registry token cannot
+- **npm — not attested.** `2.4.3` was published in token mode, and a registry token cannot
   mint an attestation. The attestations endpoint returns `404`:
 
   ```bash
