@@ -4,15 +4,15 @@ Two parts of the runtime that every user depends on had no coverage of their own
 
 * ``_bounded_command``, the only place this project ever spawns a program, was
   only ever exercised by launching a real interpreter. A regression in the
-  launch options â€” a shell reappearing, ``cwd`` escaping the workspace, the
-  buffer bound silently raised â€” would pass those tests, because a real
+  launch options — a shell reappearing, ``cwd`` escaping the workspace, the
+  buffer bound silently raised — would pass those tests, because a real
   interpreter accepts any of them. The tests below replace ``subprocess.Popen``
   with a recorder, so the launch contract is asserted on what the executor
   actually passes out, and no program is ever run.
 
 * ``maybe_rotate`` was only smoke-tested for "an archive appeared". What the
-  anchor is *for* â€” linking one rotated archive to the tail of the one before
-  it, so a torn-out history is detectable â€” had no coverage at all.
+  anchor is *for* — linking one rotated archive to the tail of the one before
+  it, so a torn-out history is detectable — had no coverage at all.
 """
 
 from __future__ import annotations
