@@ -28,8 +28,6 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
 ## 2.6.1 — Second-round audit findings (post-2.6.0)
 
-## 2.6.1 — Second-round audit findings (post-2.6.0)
-
 ### Security
 
 - The standalone core entry point (`python scripts/audit_check.py audit .`,
