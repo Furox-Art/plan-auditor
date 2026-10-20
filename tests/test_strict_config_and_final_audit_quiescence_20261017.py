@@ -165,13 +165,14 @@ def test_content_change_during_final_audit_refuses_completion(tmp_path):
 
 def test_user_audit_failure_remains_original_not_replaced_by_secondary_state(tmp_path):
     (tmp_path / "source.txt").write_text("original")
+    failure = None
     try:
         with audit_session.final_audit_session(tmp_path, _fake_registry()):
             raise RuntimeError("original audit failure")
     except RuntimeError as exc:
-        assert "original audit failure" in str(exc)
-    else:
-        raise AssertionError("expected the original audit failure to propagate")
+        failure = exc
+    assert failure is not None
+    assert "original audit failure" in str(failure)
     assert not audit_session.freeze_path(tmp_path).exists()
 
 

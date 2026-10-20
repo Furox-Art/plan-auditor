@@ -118,13 +118,14 @@ def test_user_run_error_is_preserved_even_if_freeze_release_fails(monkeypatch, t
         return original(self, *a, **kw)
 
     monkeypatch.setattr(Path, "unlink", fail)
+    failure = None
     try:
         with audit_session.final_audit_session(tmp_path, state):
             raise RuntimeError("original audit work failure")
     except RuntimeError as exc:
-        assert "original audit work failure" in str(exc)
-    else:
-        raise AssertionError("expected the original audit failure to propagate")
+        failure = exc
+    assert failure is not None
+    assert "original audit work failure" in str(failure)
     assert path.exists()
 
 

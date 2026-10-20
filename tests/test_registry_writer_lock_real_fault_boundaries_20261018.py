@@ -21,13 +21,14 @@ def test_registry_writer_lock_is_exclusive_and_removed_after_success(tmp_path):
 
 def test_registry_writer_lock_is_removed_after_body_error(tmp_path):
     registry = agents.MultiAgentRegistry(str(tmp_path))
+    failure = None
     try:
         with registry._write_lock():
             raise RuntimeError("original audit failure")
     except RuntimeError as exc:
-        assert "original audit failure" in str(exc)
-    else:
-        raise AssertionError("expected the original audit failure to propagate")
+        failure = exc
+    assert failure is not None
+    assert "original audit failure" in str(failure)
     assert not registry.lock_path.exists()
 
 
