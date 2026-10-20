@@ -102,6 +102,11 @@ def cache_path(action: str, sha: str) -> Path:
     return CACHE / f"{action.replace('/', '__')}__{sha}.json"
 
 
+def repo_slug(action: str) -> str:
+    """Strip a subpath: github/codeql-action/init lives in the owner/repo slug."""
+    return "/".join(action.split("/")[:2])
+
+
 def resolve(action: str, sha: str, token: str | None, offline: bool) -> tuple[bool, str]:
     """Return (resolves, detail). Never returns False for an unreachable network."""
     path = cache_path(action, sha)
@@ -115,7 +120,7 @@ def resolve(action: str, sha: str, token: str | None, offline: bool) -> tuple[bo
             "run without --offline to verify it against GitHub"
         )
 
-    status, body = _get(f"{API}/repos/{action}/commits/{sha}", token)
+    status, body = _get(f"{API}/repos/{repo_slug(action)}/commits/{sha}", token)
     if status == 200:
         record = json.loads(body)
         detail = f"{record.get('sha', sha)[:12]} {record.get('commit', {}).get('message', '').splitlines()[0]}"
@@ -139,12 +144,12 @@ def tag_matches(action: str, sha: str, version: str, token: str | None) -> str:
     """Best-effort: is `version` the tag that resolves to `sha`? Empty = not asked."""
     if not version:
         return ""
-    status, body = _get(f"{API}/repos/{action}/git/ref/tags/v{version}", token)
+    status, body = _get(f"{API}/repos/{repo_slug(action)}/git/ref/tags/v{version}", token)
     if status != 200:
         return f"tag v{version} does not exist upstream"
     ref = json.loads(body)["object"]
     if ref["type"] == "tag":  # annotated: peel to the commit
-        status, body = _get(f"{API}/repos/{action}/git/tags/{ref['sha']}", token)
+        status, body = _get(f"{API}/repos/{repo_slug(action)}/git/tags/{ref['sha']}", token)
         if status != 200:
             return f"annotated tag v{version} could not be dereferenced"
         ref = json.loads(body)["object"]
