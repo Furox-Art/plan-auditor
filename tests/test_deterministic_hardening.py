@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 
+import supervisor.orchestrator as orchestrator
 from scripts import audit_check as core
 from scripts import stop_gate
 from supervisor import formal_planning
@@ -48,7 +49,6 @@ from supervisor.formal_planning import (
     verify_workspace,
 )
 from supervisor.integrity import initialize_integrity
-from supervisor.orchestrator import evaluate_workspace
 from supervisor.request_contract import auditor_state_present
 
 # --------------------------------------------------------------------------
@@ -479,8 +479,6 @@ def test_stop_gate_blocks_a_failing_workspace(tmp_path: Path, monkeypatch, capsy
 
 
 def test_stop_gate_fails_closed_when_the_gate_crashes(tmp_path: Path, monkeypatch, capsys):
-    import supervisor.orchestrator as orchestrator
-
     def _boom(_base):
         raise RuntimeError("gate exploded")
 
@@ -533,7 +531,7 @@ def test_activation_without_plans_fails_instead_of_degrading(tmp_path: Path):
     pg = tmp_path / ".plan-auditor"
     pg.mkdir()
     (pg / "watchdog.jsonl").write_text("", encoding="utf-8")
-    report = evaluate_workspace(str(tmp_path))
+    report = orchestrator.evaluate_workspace(str(tmp_path))
     assert report["outcome"] == "FAIL"
     assert "missing" in str(report.get("error", ""))
 

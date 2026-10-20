@@ -148,7 +148,7 @@ def wait_for_version(
     """
     if attempts < 1:
         raise ValueError("attempts must be at least 1")
-    read = prober or (lambda url, t: probe_once(url, t))
+    read = prober or probe_once
     url = version_url(registry, package, version)
     delays = backoff_delays(attempts, first_delay, growth, max_delay)
     started = clock()

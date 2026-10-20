@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from scripts.plan_graph import PlanGraphError, effective_dependencies, required_outputs
 
 from .formal_planning import FORMAL_KEY, contract_sha256, find_formal_anchors, make_formal_check
-from .formal_semantics import analyze_formal_semantics
 from .plans import PlanRef, all_plan_refs, load_plan_ref, plan_path, seal_path, validate_plan_name
 
 FORMALIZER_EXECUTABLE = "plan-auditor-formalize"
@@ -588,6 +587,8 @@ def verify_workspace(
             # The compiler is the caller, so it injects its own recompilation
             # check: the semantics module never imports this one at module
             # scope, which is what keeps the two from forming an import cycle.
+            from .formal_semantics import analyze_formal_semantics
+
             semantic = analyze_formal_semantics(
                 plan, contract_validator=validate_generated_contract
             )

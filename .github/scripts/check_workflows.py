@@ -125,7 +125,6 @@ for path in sorted(WORKFLOWS.glob("*.yml")):
         if not isinstance(steps, list):
             continue
 
-        writes_repo = False
         mints_oidc = False
         for index, step in enumerate(steps):
             if not isinstance(step, dict):
@@ -145,7 +144,6 @@ for path in sorted(WORKFLOWS.glob("*.yml")):
                 )
                 action = ref[0]
                 if action in REPO_WRITING_ACTIONS:
-                    writes_repo = True
                     check(
                         effective_write,
                         f"{name}: job {job_name} step {step.get('name')!r} uses {action!r}, "

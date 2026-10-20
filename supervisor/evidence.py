@@ -17,10 +17,12 @@ from scripts.integrity import (
     EVIDENCE_RECORD_DOMAIN,
     IntegrityKeyError,
     KeyMaterial,
-    canonical as auth_canonical,
     make_auth,
     runtime_key,
     verify_auth,
+)
+from scripts.integrity import (
+    canonical as auth_canonical,
 )
 
 EVIDENCE_HEAD = "evidence.head.json"
@@ -329,6 +331,7 @@ def _sign_jsonl(path: Path, key: KeyMaterial, initial_prev: str = "GENESIS") -> 
             try:
                 tmp.unlink()
             except OSError:
+                # The temporary file may already be gone.
                 pass
 
 

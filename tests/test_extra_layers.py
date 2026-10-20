@@ -1,18 +1,18 @@
 """Tests for L1, L4, L5, L9, L11, L12."""
-import sys
-import os
 import json
+import os
+import sys
 import tempfile
 from pathlib import Path
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from supervisor.requirements import parse_requirements, Requirement
-from supervisor.goals import GoalModel, Beliefs, Desires
+from supervisor.adversarial import run_adversarial_review
+from supervisor.evidence import tail_hash, verify_anchor_chain
+from supervisor.goals import Beliefs, GoalModel
 from supervisor.plan_verifier import verify_plan
+from supervisor.requirements import Requirement, parse_requirements
 from supervisor.watchdog import Watchdog, _snapshot_files
-from supervisor.evidence import build_archive_manifest, verify_anchor_chain, tail_hash
-from supervisor.adversarial import run_adversarial_review, Finding
-
 
 # --------------------------------------------------------------- L1 requirements
 

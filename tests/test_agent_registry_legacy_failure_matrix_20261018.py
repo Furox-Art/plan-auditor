@@ -9,7 +9,6 @@ import pytest
 
 import supervisor.agents as a
 from scripts.integrity import KeyMaterial
-from supervisor.agents import Agent, MultiAgentRegistry, RegistryIntegrityError
 
 
 def _legacy(rec):
@@ -22,7 +21,7 @@ def _log(registry, records):
 
 
 def test_legacy_reader_handles_absent_and_blank_lines(tmp_path):
-    registry = MultiAgentRegistry(str(tmp_path))
+    registry = a.MultiAgentRegistry(str(tmp_path))
     assert registry._legacy_records() == []
     _log(registry, [_legacy({"event": "join", "agent": {"agent_id": "a"}})])
     registry.registry_path.write_text("  \n" + registry.registry_path.read_text())
@@ -38,14 +37,14 @@ def test_legacy_reader_handles_absent_and_blank_lines(tmp_path):
     ],
 )
 def test_legacy_reader_rejects_untrusted_envelope(tmp_path, value, description):
-    reg = MultiAgentRegistry(str(tmp_path))
+    reg = a.MultiAgentRegistry(str(tmp_path))
     _log(reg, [value])
-    with pytest.raises(RegistryIntegrityError, match=description):
+    with pytest.raises(a.RegistryIntegrityError, match=description):
         reg._legacy_records()
 
 
 def test_legacy_migration_with_no_existing_log_writes_empty_trusted_v2_log(tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
+    reg = a.MultiAgentRegistry(str(tmp_path))
     reg._ensure_dirs()
     reg._migrate_legacy_locked()
     assert reg.registry_path.is_file()
@@ -55,7 +54,7 @@ def test_legacy_migration_with_no_existing_log_writes_empty_trusted_v2_log(tmp_p
 
 
 def test_empty_legacy_migration_removes_existing_stale_head(tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
+    reg = a.MultiAgentRegistry(str(tmp_path))
     reg._ensure_dirs()
     reg.head_path.write_text("untrusted old checkpoint")
     reg._migrate_legacy_locked()
@@ -64,15 +63,15 @@ def test_empty_legacy_migration_removes_existing_stale_head(tmp_path):
 
 
 def test_legacy_reader_can_report_corrupt_second_line(tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
+    reg = a.MultiAgentRegistry(str(tmp_path))
     _log(reg, [_legacy({"event": "join", "agent": {"agent_id": "a"}}), {"rec": []}])
-    with pytest.raises(RegistryIntegrityError, match="line 2 malformed"):
+    with pytest.raises(a.RegistryIntegrityError, match="line 2 malformed"):
         reg._legacy_records()
 
 
 def test_authenticated_registry_logs_unreadable_refuses_head(monkeypatch, tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
-    reg.register(Agent("a", "t", "p"))
+    reg = a.MultiAgentRegistry(str(tmp_path))
+    reg.register(a.Agent("a", "t", "p"))
     key = KeyMaterial(b"t" * 32, "test fixture", "key-id")
     a.initialize_registry_auth(tmp_path, key)
     monkeypatch.setattr(a, "runtime_key", lambda root: key)
@@ -90,8 +89,8 @@ def test_authenticated_registry_logs_unreadable_refuses_head(monkeypatch, tmp_pa
 
 
 def test_authenticated_registry_blank_lines_are_allowed(monkeypatch, tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
-    reg.register(Agent("a", "t", "p"))
+    reg = a.MultiAgentRegistry(str(tmp_path))
+    reg.register(a.Agent("a", "t", "p"))
     key = KeyMaterial(b"t" * 32, "test fixture", "key-id")
     a.initialize_registry_auth(tmp_path, key)
     monkeypatch.setattr(a, "runtime_key", lambda root: key)
@@ -100,8 +99,8 @@ def test_authenticated_registry_blank_lines_are_allowed(monkeypatch, tmp_path):
 
 
 def test_authenticated_head_disagrees_with_persisted_sequence(monkeypatch, tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
-    reg.register(Agent("a", "t", "p"))
+    reg = a.MultiAgentRegistry(str(tmp_path))
+    reg.register(a.Agent("a", "t", "p"))
     key = KeyMaterial(b"t" * 32, "test fixture", "key-id")
     a.initialize_registry_auth(tmp_path, key)
     monkeypatch.setattr(a, "runtime_key", lambda root: key)
@@ -111,7 +110,7 @@ def test_authenticated_head_disagrees_with_persisted_sequence(monkeypatch, tmp_p
 
 
 def test_legacy_agent_write_lock_file_error_is_refusal(monkeypatch, tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
+    reg = a.MultiAgentRegistry(str(tmp_path))
     original_write = Path.write_text
 
     def fail_only_lock(path, *args, **kwargs):
@@ -124,7 +123,7 @@ def test_legacy_agent_write_lock_file_error_is_refusal(monkeypatch, tmp_path):
 
 
 def test_initialize_hmac_existing_empty_log_writes_signed_head(tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
+    reg = a.MultiAgentRegistry(str(tmp_path))
     reg._ensure_dirs()
     reg.registry_path.write_text("")
     key = KeyMaterial(b"t" * 32, "test fixture", "key-id")
@@ -134,7 +133,7 @@ def test_initialize_hmac_existing_empty_log_writes_signed_head(tmp_path):
 
 
 def test_initialize_hmac_ignores_blank_existing_registry_lines(tmp_path):
-    reg = MultiAgentRegistry(str(tmp_path))
+    reg = a.MultiAgentRegistry(str(tmp_path))
     reg._ensure_dirs()
     reg.registry_path.write_text("\n  \n", encoding="utf-8")
     key = KeyMaterial(b"t" * 32, "test fixture", "key-id")

@@ -85,6 +85,7 @@ def main():
                 json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
             )
         except OSError:
+            # Payload logging is best-effort; the gate decision must not depend on it.
             pass
 
     if outcome in {"PASS", "NO_PLAN"}:

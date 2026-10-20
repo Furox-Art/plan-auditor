@@ -162,10 +162,15 @@ def test_registry_release_fails_closed_if_another_actor_replaces_owner(tmp_path)
 def test_registry_held_body_error_is_not_silenced_even_when_lock_was_replaced(tmp_path):
     lock = tmp_path / "registry.lock"
     stub = hardened_stub(lock)
-    with pytest.raises(RuntimeError, match="original verification failed"):
+    failure = None
+    try:
         with stub._write_lock():
             make_lock(lock, pid=os.getpid(), token="someone-else")
             raise RuntimeError("original verification failed")
+    except RuntimeError as exc:
+        failure = exc
+    assert failure is not None
+    assert "original verification failed" in str(failure)
     assert lock.exists()
 
 
@@ -224,7 +229,12 @@ def test_body_failure_is_preserved_when_lock_cleanup_is_also_denied(monkeypatch,
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", refuse)
-    with pytest.raises(RuntimeError, match="original protected body failure"):
+    failure = None
+    try:
         with stub._write_lock():
             raise RuntimeError("original protected body failure")
+    except RuntimeError as exc:
+        failure = exc
+    assert failure is not None
+    assert "original protected body failure" in str(failure)
     assert lock.exists()

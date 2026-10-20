@@ -288,10 +288,6 @@ def test_probe_treats_a_mismatched_body_as_not_visible(tmp_path, monkeypatch):
     result = vis.probe_once("https://registry.npmjs.org/plan-auditor/2.4.2")
     assert result.visible is True, "probe_once reports transport success; caller compares"
 
-    class _WrongVersion(_Response):
-        def __init__(self) -> None:
-            super().__init__(json.dumps({"version": "9.9.9"}).encode())
-
     class _NoVersion(_Response):
         def __init__(self) -> None:
             super().__init__(json.dumps({"error": "not found"}).encode())

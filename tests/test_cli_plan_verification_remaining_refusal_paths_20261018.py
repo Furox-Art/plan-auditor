@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 import supervisor.cli as cli
-from supervisor.config import load_config
-from supervisor.sealing import MonotonicCheck, SealIntegrityError
+import supervisor.config as config_module
+import supervisor.sealing as sealing
 
 
 def _args(tmp_path):
@@ -23,8 +23,7 @@ def gate(monkeypatch, tmp_path):
     status = SimpleNamespace(valid=True, activated=True, as_dict=lambda: {"valid": True})
     monkeypatch.setattr(cli, "_selected_refs", lambda root, name: [ref])
     monkeypatch.setattr(cli, "_request_gate", lambda root: (status, None, []))
-    cfg = load_config(str(tmp_path))
-    import supervisor.config as config_module
+    cfg = config_module.load_config(str(tmp_path))
 
     monkeypatch.setattr(config_module, "load_config", lambda root: cfg)
     monkeypatch.setattr(cli, "_policy_errors", lambda root, config: [])
@@ -37,7 +36,6 @@ def gate(monkeypatch, tmp_path):
     import supervisor.contracts as contracts
     import supervisor.plan_verifier as pv
     import supervisor.plans as plans
-    import supervisor.sealing as sealing
 
     monkeypatch.setattr(core, "validate_plan", lambda plan: [])
     monkeypatch.setattr(contract, "plan_hash", lambda plan: "current-sha")
@@ -64,9 +62,9 @@ def gate(monkeypatch, tmp_path):
             format_version=4, criteria_count=1, plan_hash="current-sha"
         ),
     )
-    monkeypatch.setattr(sealing, "check_monotonic", lambda old, plan: MonotonicCheck(True, [], []))
+    monkeypatch.setattr(sealing, "check_monotonic", lambda old, plan: sealing.MonotonicCheck(True, [], []))
     monkeypatch.setattr(
-        sealing, "check_environment", lambda seal, env: MonotonicCheck(True, [], [])
+        sealing, "check_environment", lambda seal, env: sealing.MonotonicCheck(True, [], [])
     )
     return SimpleNamespace(
         ref=ref,
@@ -106,7 +104,7 @@ def test_static_plan_analysis_reject_disables_sealing(gate, tmp_path):
 
 def test_invalid_existing_seal_refuses_resigning(gate, tmp_path, monkeypatch):
     def forged(_):
-        raise SealIntegrityError("seal signature invalid")
+        raise sealing.SealIntegrityError("seal signature invalid")
 
     monkeypatch.setattr(gate.sealing, "load_seal", forged)
     assert cli.cmd_plan_verify(_args(tmp_path)) == 2
@@ -133,14 +131,14 @@ def test_existing_seal_with_weakened_contract_is_refused(gate, tmp_path, monkeyp
     old = SimpleNamespace(format_version=4, plan_hash="current-sha", as_plan=lambda: {})
     monkeypatch.setattr(gate.sealing, "load_seal", lambda path: old)
     monkeypatch.setattr(
-        gate.sealing, "check_monotonic", lambda old, plan: MonotonicCheck(False, ["weakened"], [])
+        gate.sealing, "check_monotonic", lambda old, plan: sealing.MonotonicCheck(False, ["weakened"], [])
     )
     assert cli.cmd_plan_verify(_args(tmp_path)) == 2
 
 
 def test_write_failure_during_sealing_is_explicit_refusal(gate, tmp_path, monkeypatch):
     def failed(*args):
-        raise SealIntegrityError("cannot persist seal")
+        raise sealing.SealIntegrityError("cannot persist seal")
 
     monkeypatch.setattr(gate.sealing, "save_seal", failed)
     assert cli.cmd_plan_verify(_args(tmp_path)) == 2
@@ -153,13 +151,12 @@ def test_req_generation_reseal_flag_refused(gate, tmp_path):
 
 
 def test_supervisor_settings_do_not_trust_nonmapping_file(tmp_path):
-    from supervisor.config import CONFIG_FILENAME
 
     dest = tmp_path / ".plan-auditor"
     dest.mkdir()
-    (dest / CONFIG_FILENAME).write_text("[1,2,3]", encoding="utf-8")
+    (dest / config_module.CONFIG_FILENAME).write_text("[1,2,3]", encoding="utf-8")
     cli._persist_supervisor_config(tmp_path, "strict", "serial")
-    payload = json.loads((dest / CONFIG_FILENAME).read_text())
+    payload = json.loads((dest / config_module.CONFIG_FILENAME).read_text())
     assert payload["profile"] == "strict"
     assert payload["mode"] == "serial"
     assert payload.get("tier") == 1

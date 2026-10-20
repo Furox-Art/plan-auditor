@@ -728,16 +728,19 @@ def _kill_process_tree(proc):
                 timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
+            # The process is forcibly killed below; a failed graceful stop is not fatal.
             pass
     else:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (OSError, ProcessLookupError):
+            # The process group may already be gone.
             pass
     if proc.poll() is None:
         try:
             proc.kill()
         except OSError:
+            # The process may have exited between poll() and kill().
             pass
 
 
@@ -783,6 +786,7 @@ def _bounded_command(command, base, timeout, max_output):
                     _kill_process_tree(proc)
                     break
         except (OSError, ValueError):
+            # Output draining is best-effort; the process exit status is authoritative.
             pass
 
     reader = threading.Thread(target=drain, name="plan-auditor-output-drain", daemon=True)
@@ -811,12 +815,14 @@ def _bounded_command(command, base, timeout, max_output):
         try:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
+            # The wait timeout is expected; the reader thread is joined below.
             pass
     reader.join(timeout=2)
     if reader.is_alive() and proc.stdout is not None:
         try:
             proc.stdout.close()
         except OSError:
+            # Closing an already-closed pipe is harmless.
             pass
     output = bytes(tail).decode("utf-8", errors="replace")
     overflow = overflow_event.is_set() or total[0] > max_output
@@ -1211,6 +1217,7 @@ def _evidence_lock(base):
                 try:
                     os.unlink(lock_path)
                 except OSError:
+                    # Another process may already have reaped the lock file.
                     pass
                 continue
             if time.monotonic() >= deadline:
@@ -1222,6 +1229,7 @@ def _evidence_lock(base):
         try:
             os.unlink(lock_path)
         except OSError:
+            # Another process may already have reaped the lock file.
             pass
 
 
@@ -2200,6 +2208,7 @@ def main():
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
+            # Streams without reconfigure() keep their default encoding.
             pass
 
     parser = argparse.ArgumentParser(description="Plan Auditor deterministic core")

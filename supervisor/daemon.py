@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .assessment import assessment_path, write_assessment
+from .assessment import assessment_path
 from .config import load_config
 from .orchestrator import evaluate_workspace
 from .watchdog import Watchdog
@@ -58,26 +58,26 @@ def _windows_pid_alive(pid: int) -> bool:
     """Probe a Windows process without sending a signal or mutating it."""
     try:
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes
 
         process_query_limited_information = 0x1000
         still_active = 259
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         open_process = kernel32.OpenProcess
-        open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        open_process.restype = wintypes.HANDLE
+        open_process.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD]
+        open_process.restype = ctypes.wintypes.HANDLE
         get_exit_code = kernel32.GetExitCodeProcess
-        get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-        get_exit_code.restype = wintypes.BOOL
+        get_exit_code.argtypes = [ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.wintypes.DWORD)]
+        get_exit_code.restype = ctypes.wintypes.BOOL
         close_handle = kernel32.CloseHandle
-        close_handle.argtypes = [wintypes.HANDLE]
-        close_handle.restype = wintypes.BOOL
+        close_handle.argtypes = [ctypes.wintypes.HANDLE]
+        close_handle.restype = ctypes.wintypes.BOOL
 
         handle = open_process(process_query_limited_information, False, pid)
         if not handle:
             return False
         try:
-            code = wintypes.DWORD()
+            code = ctypes.wintypes.DWORD()
             if not get_exit_code(handle, ctypes.byref(code)):
                 return False
             return code.value == still_active
@@ -181,6 +181,7 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
     try:
         stop_path(root).unlink()
     except FileNotFoundError:
+        # No stop request is pending.
         pass
 
     cfg = load_config(root)
@@ -198,6 +199,7 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
         try:
             signal.signal(sig, _signal_handler)
         except (ValueError, OSError):
+            # Non-main threads cannot install signal handlers; polling still runs.
             pass
 
     def write_state(state: str) -> None:
@@ -240,6 +242,7 @@ def run_daemon(workspace: str, profile: str, mode: str) -> int:
         try:
             stop_path(root).unlink()
         except FileNotFoundError:
+            # No stop request is pending.
             pass
         # Final assessment captures any changes observed during shutdown.
         assessment = _safe_assessment(root, profile, mode)

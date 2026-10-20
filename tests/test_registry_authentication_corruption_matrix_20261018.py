@@ -8,12 +8,6 @@ import pytest
 
 import supervisor.agents as registry_module
 from scripts.integrity import IntegrityKeyError, KeyMaterial, make_auth
-from supervisor.agents import (
-    Agent,
-    MultiAgentRegistry,
-    RegistryIntegrityError,
-    initialize_registry_auth,
-)
 
 
 def key_material():
@@ -21,13 +15,13 @@ def key_material():
 
 
 def registry(tmp_path):
-    return MultiAgentRegistry(str(tmp_path))
+    return registry_module.MultiAgentRegistry(str(tmp_path))
 
 
 def signed_empty(tmp_path, monkeypatch):
     reg = registry(tmp_path)
     key = key_material()
-    initialize_registry_auth(tmp_path, key)
+    registry_module.initialize_registry_auth(tmp_path, key)
     monkeypatch.setattr(registry_module, "runtime_key", lambda _: key)
     return reg, key
 
@@ -113,9 +107,9 @@ def test_legacy_authentication_scan_refuses_invalid_json(tmp_path):
 
 def test_real_signed_registry_rejects_record_missing_mac(tmp_path, monkeypatch):
     reg = registry(tmp_path)
-    reg.register(Agent(agent_id="a", task_id="t", plan_id="p"))
+    reg.register(registry_module.Agent(agent_id="a", task_id="t", plan_id="p"))
     key = key_material()
-    initialize_registry_auth(tmp_path, key)
+    registry_module.initialize_registry_auth(tmp_path, key)
     monkeypatch.setattr(registry_module, "runtime_key", lambda _: key)
     assert reg._verify_registry_auth() == (True, "")
     rows = [json.loads(line) for line in reg.registry_path.read_text().splitlines()]
@@ -128,8 +122,8 @@ def test_invalid_registry_record_not_signed_into_trusted_state(tmp_path):
     reg = registry(tmp_path)
     reg.agents_dir.mkdir(parents=True, exist_ok=True)
     reg.registry_path.write_text(json.dumps({"rec": 2}) + "\n", encoding="utf-8")
-    with pytest.raises(RegistryIntegrityError, match="malformed"):
-        initialize_registry_auth(tmp_path, key_material())
+    with pytest.raises(registry_module.RegistryIntegrityError, match="malformed"):
+        registry_module.initialize_registry_auth(tmp_path, key_material())
     assert not reg.head_path.exists()
 
 

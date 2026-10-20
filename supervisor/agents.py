@@ -16,15 +16,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ContextManager, Dict, List, Optional, Set, Tuple
 
 from scripts.integrity import (
-    IntegrityKeyError,
-    KeyMaterial,
     REGISTRY_HEAD_DOMAIN,
     REGISTRY_RECORD_DOMAIN,
+    IntegrityKeyError,
+    KeyMaterial,
     make_auth,
     runtime_key,
     verify_auth,
 )
-
 
 REGISTRY_FORMAT_VERSION = 2
 REGISTRY_GENESIS = "GENESIS"
@@ -70,6 +69,7 @@ class Agent:
             try:
                 retries[int(key)] = int(value)
             except (TypeError, ValueError):
+                # Malformed retry counters are dropped rather than rejecting the record.
                 pass
         return cls(
             agent_id=str(data.get("agent_id", "")),
@@ -147,18 +147,18 @@ class MultiAgentRegistry:
     # installed by supervisor.__init__ via the canonical path and PID-aware
     # lock hardeners. Keeping two executable implementations would be unsafe.
     if TYPE_CHECKING:
-        def _write_lock(self) -> ContextManager[None]: ...
-        def verify_registry_chain(self) -> bool: ...
-        def register(self, agent: Agent) -> None: ...
-        def unregister(self, agent_id: str) -> None: ...
-        def heartbeat(self, agent_id: str, action: str = "") -> None: ...
-        def update_ownership(self, agent_id: str, files: Set[str]) -> None: ...
-        def claim_files(self, agent_id: str, files: Set[str], mode: str = "parallel-warn") -> Tuple[bool, List[Conflict]]: ...
-        def active_agents(self) -> List[Agent]: ...
-        def stale_agents(self) -> List[Agent]: ...
-        def release_stale_ownership(self) -> List[str]: ...
-        def check_conflicts(self, agent_id: str, files: Set[str]) -> List[Conflict]: ...
-        def is_lock_stale(self, agent_id: str) -> bool: ...
+        def _write_lock(self) -> ContextManager[None]: pass
+        def verify_registry_chain(self) -> bool: pass
+        def register(self, agent: Agent) -> None: pass
+        def unregister(self, agent_id: str) -> None: pass
+        def heartbeat(self, agent_id: str, action: str = "") -> None: pass
+        def update_ownership(self, agent_id: str, files: Set[str]) -> None: pass
+        def claim_files(self, agent_id: str, files: Set[str], mode: str = "parallel-warn") -> Tuple[bool, List[Conflict]]: pass
+        def active_agents(self) -> List[Agent]: pass
+        def stale_agents(self) -> List[Agent]: pass
+        def release_stale_ownership(self) -> List[str]: pass
+        def check_conflicts(self, agent_id: str, files: Set[str]) -> List[Conflict]: pass
+        def is_lock_stale(self, agent_id: str) -> bool: pass
 
     def _ensure_dirs(self) -> None:
         self.agents_dir.mkdir(parents=True, exist_ok=True)

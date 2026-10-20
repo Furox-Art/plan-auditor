@@ -67,6 +67,7 @@ def main() -> int:
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
+            # Streams without reconfigure() keep their default encoding.
             pass
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

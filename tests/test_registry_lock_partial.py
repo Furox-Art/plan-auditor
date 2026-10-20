@@ -30,6 +30,7 @@ def test_transient_partial_registry_lock_is_retried_without_eviction(tmp_path: P
         try:
             registry.lock_path.unlink()
         except FileNotFoundError:
+            # The owning thread may already have removed the lock.
             pass
 
     owner = threading.Thread(target=finish_owner)

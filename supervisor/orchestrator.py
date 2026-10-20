@@ -29,16 +29,20 @@ from .agents import MultiAgentRegistry
 from .config import Profile, load_config
 from .contracts import environment_contract
 from .events import EventBus
+from .evidence import verify_anchor_chain
 from .gate import CompletionGate
 from .goals import Beliefs, Desires, GoalModel, Intentions
 from .lifecycle import States, TaskLifecycle
-from .plans import PlanRef, all_plan_refs, load_plan_ref, seal_path
 from .plan_verifier import verify_plan
+from .plans import PlanRef, all_plan_refs, load_plan_ref, seal_path
 from .policies import default_engine, load_policy_rules_from_dir
-from .requirements import parse_requirements
 from .request_contract import (
-    RequestAlignment, analyze_request_alignment, auditor_state_present, verify_request_contract,
+    RequestAlignment,
+    analyze_request_alignment,
+    auditor_state_present,
+    verify_request_contract,
 )
+from .requirements import parse_requirements
 from .sealing import (
     MonotonicCheck,
     SealIntegrityError,
@@ -47,7 +51,6 @@ from .sealing import (
     load_seal,
 )
 from .workspace import capture_workspace, tool_available
-from .evidence import verify_anchor_chain
 
 
 @dataclass
@@ -239,6 +242,7 @@ def _tail_logs(root: Path, limit: int = 200) -> List[str]:
         try:
             lines.extend(path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:])
         except OSError:
+            # Unreadable log files are skipped; the remaining lines still count.
             pass
     return lines[-limit:]
 

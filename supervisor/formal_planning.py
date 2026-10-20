@@ -667,16 +667,19 @@ def _kill_process_group(proc: subprocess.Popen[Any]) -> None:
                 timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
+            # The process is forcibly killed below; a failed graceful stop is not fatal.
             pass
     else:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (OSError, ProcessLookupError):
+            # The process group may already be gone.
             pass
     if proc.poll() is None:
         try:
             proc.kill()
         except OSError:
+            # The process may have exited between poll() and kill().
             pass
 
 
@@ -758,6 +761,7 @@ def run_fast_downward(
                     try:
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
+                        # The timeout is reported to the caller below.
                         pass
                     return ExternalPlannerResult(
                         status="TIMEOUT",

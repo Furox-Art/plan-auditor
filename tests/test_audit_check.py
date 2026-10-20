@@ -3,8 +3,6 @@ import json
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import audit_check as ac  # noqa: E402
 

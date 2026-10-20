@@ -7,18 +7,11 @@ import threading
 import time
 from pathlib import Path
 
-from supervisor.daemon import (
-    pid_alive,
-    read_state,
-    run_daemon,
-    runtime_dir,
-    state_path,
-    stop_path,
-)
+import supervisor.daemon as daemon_module
 
 
 def _write_fast_config(workspace: Path) -> None:
-    pg = runtime_dir(workspace)
+    pg = daemon_module.runtime_dir(workspace)
     pg.mkdir(parents=True, exist_ok=True)
     (pg / "supervisor.json").write_text(
         json.dumps({"heartbeat_sec": 1}), encoding="utf-8"
@@ -35,7 +28,7 @@ def _wait_for_state(
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
-        state = read_state(workspace)
+        state = daemon_module.read_state(workspace)
         last = state
         if state and state.get("state") == expected:
             if pid is None or state.get("pid") == pid:
@@ -48,7 +41,7 @@ def _wait_for_state(
 
 def _start_thread(workspace: Path) -> threading.Thread:
     thread = threading.Thread(
-        target=run_daemon,
+        target=daemon_module.run_daemon,
         args=(str(workspace), "standard", "serial"),
         daemon=True,
     )
@@ -57,30 +50,30 @@ def _start_thread(workspace: Path) -> threading.Thread:
 
 
 def _request_stop(workspace: Path) -> None:
-    marker = stop_path(workspace)
+    marker = daemon_module.stop_path(workspace)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("stop\n", encoding="utf-8")
 
 
 def test_runtime_paths_are_workspace_local(tmp_path: Path) -> None:
-    assert runtime_dir(tmp_path) == tmp_path.resolve() / ".plan-auditor"
-    assert state_path(tmp_path).parent == runtime_dir(tmp_path)
-    assert stop_path(tmp_path).parent == runtime_dir(tmp_path)
+    assert daemon_module.runtime_dir(tmp_path) == tmp_path.resolve() / ".plan-auditor"
+    assert daemon_module.state_path(tmp_path).parent == daemon_module.runtime_dir(tmp_path)
+    assert daemon_module.stop_path(tmp_path).parent == daemon_module.runtime_dir(tmp_path)
 
 
 def test_pid_alive_handles_current_and_invalid_pids() -> None:
-    assert pid_alive(os.getpid()) is True
-    assert pid_alive(None) is False
-    assert pid_alive(0) is False
-    assert pid_alive(-1) is False
+    assert daemon_module.pid_alive(os.getpid()) is True
+    assert daemon_module.pid_alive(None) is False
+    assert daemon_module.pid_alive(0) is False
+    assert daemon_module.pid_alive(-1) is False
 
 
 def test_read_state_missing_or_invalid_is_none(tmp_path: Path) -> None:
-    assert read_state(tmp_path) is None
-    path = state_path(tmp_path)
+    assert daemon_module.read_state(tmp_path) is None
+    path = daemon_module.state_path(tmp_path)
     path.parent.mkdir(parents=True)
     path.write_text("not-json", encoding="utf-8")
-    assert read_state(tmp_path) is None
+    assert daemon_module.read_state(tmp_path) is None
 
 
 def test_daemon_writes_running_state_and_stops_cleanly(tmp_path: Path) -> None:
@@ -98,23 +91,23 @@ def test_daemon_writes_running_state_and_stops_cleanly(tmp_path: Path) -> None:
     assert time.monotonic() - started < 2.0
 
     stopped = _wait_for_state(tmp_path, "stopped", pid=os.getpid())
-    assert not stop_path(tmp_path).exists()
+    assert not daemon_module.stop_path(tmp_path).exists()
     assert stopped["state"] == "stopped"
 
 
 def test_duplicate_running_daemon_is_rejected(tmp_path: Path) -> None:
-    path = state_path(tmp_path)
+    path = daemon_module.state_path(tmp_path)
     path.parent.mkdir(parents=True)
     path.write_text(
         json.dumps({"state": "running", "pid": os.getpid()}),
         encoding="utf-8",
     )
-    assert run_daemon(str(tmp_path), "standard", "serial") == 2
+    assert daemon_module.run_daemon(str(tmp_path), "standard", "serial") == 2
 
 
 def test_stale_running_state_is_replaced(tmp_path: Path) -> None:
     _write_fast_config(tmp_path)
-    path = state_path(tmp_path)
+    path = daemon_module.state_path(tmp_path)
     path.write_text(
         json.dumps({"state": "running", "pid": 99999999}),
         encoding="utf-8",
@@ -138,7 +131,7 @@ def test_daemon_records_workspace_events(tmp_path: Path) -> None:
     observed = tmp_path / "observed.txt"
     observed.write_text("first", encoding="utf-8")
 
-    events_path = runtime_dir(tmp_path) / "watchdog.jsonl"
+    events_path = daemon_module.runtime_dir(tmp_path) / "watchdog.jsonl"
     deadline = time.time() + 3.0
     while time.time() < deadline:
         if events_path.exists():
@@ -160,8 +153,6 @@ def test_daemon_records_workspace_events(tmp_path: Path) -> None:
 
 
 def test_daemon_publishes_starting_state_before_initial_assessment(tmp_path: Path, monkeypatch) -> None:
-    import supervisor.daemon as daemon_module
-
     _write_fast_config(tmp_path)
     release = threading.Event()
 
@@ -182,8 +173,6 @@ def test_daemon_publishes_starting_state_before_initial_assessment(tmp_path: Pat
 
 
 def test_atomic_write_json_retries_transient_permission_error(tmp_path: Path, monkeypatch) -> None:
-    import supervisor.daemon as daemon_module
-
     target = tmp_path / "state.json"
     target.write_text('{"old": true}', encoding="utf-8")
     real_replace = daemon_module.os.replace
