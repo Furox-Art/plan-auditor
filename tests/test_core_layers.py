@@ -1,15 +1,18 @@
 """Tests for L2 workspace, L3 policy, L6 lifecycle."""
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from supervisor.workspace import WorkspaceState, GitState, diff_workspaces
+from supervisor.lifecycle import States, TaskLifecycle
 from supervisor.policies import (
-    default_engine, required_tests_passing, no_pending_steps,
-    seal_not_violated, no_secret_leak,
+    default_engine,
+    no_pending_steps,
+    no_secret_leak,
+    required_tests_passing,
+    seal_not_violated,
 )
-from supervisor.lifecycle import TaskLifecycle, States
-
+from supervisor.workspace import GitState, WorkspaceState, diff_workspaces
 
 # --------------------------------------------------------------- L2 workspace
 

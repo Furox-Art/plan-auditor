@@ -17,10 +17,12 @@ from scripts.integrity import (
     EVIDENCE_RECORD_DOMAIN,
     IntegrityKeyError,
     KeyMaterial,
-    canonical as auth_canonical,
     make_auth,
     runtime_key,
     verify_auth,
+)
+from scripts.integrity import (
+    canonical as auth_canonical,
 )
 
 EVIDENCE_HEAD = "evidence.head.json"

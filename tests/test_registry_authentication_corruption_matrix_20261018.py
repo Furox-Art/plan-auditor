@@ -10,7 +10,6 @@ import supervisor.agents as registry_module
 from scripts.integrity import IntegrityKeyError, KeyMaterial, make_auth
 
 
-
 def key_material():
     return KeyMaterial(key=b"k" * 32, source="isolated fixture", key_id="isolated-key")
 

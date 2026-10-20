@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from scripts.integrity import KeyMaterial
 import supervisor.agents as agents
+from scripts.integrity import KeyMaterial
 
 
 def key():

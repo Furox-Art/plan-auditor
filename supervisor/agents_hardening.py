@@ -28,6 +28,7 @@ def _safe_pid_alive(pid: int) -> bool:
     if os.name == "nt":
         try:
             import ctypes
+            import ctypes.wintypes
 
             process_query_limited_information = 0x1000
             still_active = 259

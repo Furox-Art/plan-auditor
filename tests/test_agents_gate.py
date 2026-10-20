@@ -1,18 +1,23 @@
 """Tests for L7 priority, L8 sealing, L13 gate, L14 multi-agent."""
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from supervisor.priority import (
-    resolve_priority, LEVEL_DETERMINISTIC_VERIFICATION, LEVEL_AI_SEMANTIC_JUDGMENT,
-)
-from supervisor.sealing import (
-    plan_hash, seal_plan, check_monotonic, MonotonicCheck,
-)
+from supervisor.agents import Agent, MultiAgentRegistry
 from supervisor.gate import CompletionGate
 from supervisor.policies import PolicyEngine, PolicyRule, RuleResult
-from supervisor.agents import Agent, MultiAgentRegistry
-
+from supervisor.priority import (
+    LEVEL_AI_SEMANTIC_JUDGMENT,
+    LEVEL_DETERMINISTIC_VERIFICATION,
+    resolve_priority,
+)
+from supervisor.sealing import (
+    MonotonicCheck,
+    check_monotonic,
+    plan_hash,
+    seal_plan,
+)
 
 # --------------------------------------------------------------- L7 priority
 

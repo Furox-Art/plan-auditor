@@ -4,21 +4,22 @@ Simulates adversarial agents and corrupted state to verify the
 supervisor's fail-closed guarantees. Each test represents one attack
 vector from the threat model.
 """
-import sys
-import os
-import json
 import hashlib
+import json
+import os
+import sys
 import tempfile
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-from supervisor.sealing import seal_plan, check_monotonic, plan_hash
-from supervisor.gate import CompletionGate
-from supervisor.policies import default_engine, required_tests_passing, no_pending_steps
-from supervisor.events import EventBus, Trigger
-from supervisor.evidence import verify_anchor_chain, build_archive_manifest
 from supervisor.agents import Agent, MultiAgentRegistry
 from supervisor.config import Config
+from supervisor.events import EventBus, Trigger
+from supervisor.evidence import build_archive_manifest, verify_anchor_chain
+from supervisor.gate import CompletionGate
+from supervisor.policies import default_engine, no_pending_steps, required_tests_passing
+from supervisor.sealing import check_monotonic, plan_hash, seal_plan
 
 
 # 1. Agent deletes verify test from plan.
@@ -190,8 +191,8 @@ def test_gate_fail_seal_violation():
 
 # 19. CompletionGate UNKNOWN on missing coverage (non-security).
 def test_gate_unknown_on_missing_coverage():
-    from supervisor.priority import LEVEL_REQUIREMENT_COVERAGE
     from supervisor.policies import PolicyEngine, PolicyRule, RuleResult
+    from supervisor.priority import LEVEL_REQUIREMENT_COVERAGE
     def fn(ctx):
         return RuleResult("COV", triggered=True, level=LEVEL_REQUIREMENT_COVERAGE, detail="missing")
     engine = PolicyEngine([PolicyRule("COV", LEVEL_REQUIREMENT_COVERAGE, "q", fn)])

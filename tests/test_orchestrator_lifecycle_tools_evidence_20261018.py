@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from supervisor.lifecycle import States
 import supervisor.orchestrator as orchestrator
+from supervisor.lifecycle import States
 from supervisor.sealing import MonotonicCheck
 
 

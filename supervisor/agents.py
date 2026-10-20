@@ -16,15 +16,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ContextManager, Dict, List, Optional, Set, Tuple
 
 from scripts.integrity import (
-    IntegrityKeyError,
-    KeyMaterial,
     REGISTRY_HEAD_DOMAIN,
     REGISTRY_RECORD_DOMAIN,
+    IntegrityKeyError,
+    KeyMaterial,
     make_auth,
     runtime_key,
     verify_auth,
 )
-
 
 REGISTRY_FORMAT_VERSION = 2
 REGISTRY_GENESIS = "GENESIS"

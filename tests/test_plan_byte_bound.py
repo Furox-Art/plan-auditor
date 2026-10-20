@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts.audit_check import MAX_PLAN_BYTES, load_plan
 import supervisor.plans as plans
+from scripts.audit_check import MAX_PLAN_BYTES, load_plan
 
 
 def _tiny_plan() -> dict:

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts.integrity import KeyMaterial
 import supervisor.agents as a
+from scripts.integrity import KeyMaterial
 
 
 def _legacy(rec):

@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 
+import supervisor.orchestrator as orchestrator
 from scripts import audit_check as core
 from scripts import stop_gate
 from supervisor import formal_planning
@@ -48,7 +49,6 @@ from supervisor.formal_planning import (
     verify_workspace,
 )
 from supervisor.integrity import initialize_integrity
-import supervisor.orchestrator as orchestrator
 from supervisor.request_contract import auditor_state_present
 
 # --------------------------------------------------------------------------

@@ -58,6 +58,7 @@ def _windows_pid_alive(pid: int) -> bool:
     """Probe a Windows process without sending a signal or mutating it."""
     try:
         import ctypes
+        import ctypes.wintypes
 
         process_query_limited_information = 0x1000
         still_active = 259
