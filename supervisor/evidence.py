@@ -329,6 +329,7 @@ def _sign_jsonl(path: Path, key: KeyMaterial, initial_prev: str = "GENESIS") -> 
             try:
                 tmp.unlink()
             except OSError:
+                # The temporary file may already be gone.
                 pass
 
 

@@ -277,6 +277,7 @@ def test_installed_tarball_propagates_exit_codes(tmp_path: Path) -> None:
     try:
         tarball.unlink()
     except OSError:
+        # Best-effort cleanup of the test tarball.
         pass
 
 
@@ -297,4 +298,5 @@ def test_packed_tarball_ships_every_runtime_dependency(tmp_path: Path) -> None:
     try:
         tarball.unlink()
     except OSError:
+        # Best-effort cleanup of the test tarball.
         pass

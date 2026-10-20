@@ -28,25 +28,24 @@ def _safe_pid_alive(pid: int) -> bool:
     if os.name == "nt":
         try:
             import ctypes
-            from ctypes import wintypes
 
             process_query_limited_information = 0x1000
             still_active = 259
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             open_process = kernel32.OpenProcess
-            open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-            open_process.restype = wintypes.HANDLE
+            open_process.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD]
+            open_process.restype = ctypes.wintypes.HANDLE
             get_exit_code = kernel32.GetExitCodeProcess
-            get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-            get_exit_code.restype = wintypes.BOOL
+            get_exit_code.argtypes = [ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.wintypes.DWORD)]
+            get_exit_code.restype = ctypes.wintypes.BOOL
             close_handle = kernel32.CloseHandle
-            close_handle.argtypes = [wintypes.HANDLE]
-            close_handle.restype = wintypes.BOOL
+            close_handle.argtypes = [ctypes.wintypes.HANDLE]
+            close_handle.restype = ctypes.wintypes.BOOL
             handle = open_process(process_query_limited_information, False, pid)
             if not handle:
                 return False
             try:
-                code = wintypes.DWORD()
+                code = ctypes.wintypes.DWORD()
                 return bool(get_exit_code(handle, ctypes.byref(code))) and code.value == still_active
             finally:
                 close_handle(handle)
@@ -269,6 +268,7 @@ def install_agent_hardening(target: Any = None) -> dict[str, object]:
             try:
                 lock.unlink()
             except OSError:
+                # The lock may already have been removed by its owner.
                 pass
 
     def heartbeat(self: MultiAgentRegistry, agent_id: str, action: str = "") -> None:

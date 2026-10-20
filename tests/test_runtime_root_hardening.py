@@ -191,7 +191,7 @@ def test_parallel_strict_claim_is_atomic(tmp_path: Path):
             registry = MultiAgentRegistry(str(tmp_path))
             barrier.wait(timeout=3)
             outcomes.append((agent_id, registry.claim_files(agent_id, {"shared.txt"}, mode="parallel-strict")))
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=claim, args=(name,)) for name in ("a1", "a2")]
@@ -218,7 +218,7 @@ def test_concurrent_heartbeat_and_ownership_preserve_each_other(tmp_path: Path):
             barrier.wait(timeout=3)
             for _ in range(10):
                 other.heartbeat("a1", "working")
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
 
     def ownership():
@@ -227,7 +227,7 @@ def test_concurrent_heartbeat_and_ownership_preserve_each_other(tmp_path: Path):
             barrier.wait(timeout=3)
             for _ in range(10):
                 other.update_ownership("a1", {"src/a.py"})
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=heartbeats), threading.Thread(target=ownership)]

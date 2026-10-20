@@ -96,7 +96,7 @@ def _fake_registry(*, agents=None, tampered=False, legacy=False):
     registry.registry_legacy = legacy
     registry._agents = agents or {}
     registry.owner_timeout = 60
-    registry._write_lock = lambda: contextlib.nullcontext()
+    registry._write_lock = contextlib.nullcontext
     registry._refresh_from_disk = lambda: None
     registry._migrate_legacy_locked = lambda: None
     return registry
@@ -165,9 +165,13 @@ def test_content_change_during_final_audit_refuses_completion(tmp_path):
 
 def test_user_audit_failure_remains_original_not_replaced_by_secondary_state(tmp_path):
     (tmp_path / "source.txt").write_text("original")
-    with pytest.raises(RuntimeError, match="original audit failure"):
+    try:
         with audit_session.final_audit_session(tmp_path, _fake_registry()):
             raise RuntimeError("original audit failure")
+    except RuntimeError as exc:
+        assert "original audit failure" in str(exc)
+    else:
+        raise AssertionError("expected the original audit failure to propagate")
     assert not audit_session.freeze_path(tmp_path).exists()
 
 

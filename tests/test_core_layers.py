@@ -5,8 +5,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from supervisor.workspace import WorkspaceState, GitState, diff_workspaces
 from supervisor.policies import (
-    PolicyEngine, default_engine, required_tests_passing, no_pending_steps,
-    seal_not_violated, no_secret_leak, RuleResult,
+    default_engine, required_tests_passing, no_pending_steps,
+    seal_not_violated, no_secret_leak,
 )
 from supervisor.lifecycle import TaskLifecycle, States
 

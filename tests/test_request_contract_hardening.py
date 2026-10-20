@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
 from supervisor.cli import main as cli_main
 from supervisor.orchestrator import evaluate_workspace
 from supervisor.request_contract import initialize_request
-from supervisor.sealing import check_monotonic, seal_plan
 
 
 def _request(*requirements):

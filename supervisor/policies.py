@@ -38,6 +38,7 @@ def register_policy_workspace(root: str | Path, configured_relative: str) -> lis
             try:
                 _DENIED_POLICY_DIRS.add(lexical.resolve(strict=False))
             except OSError:
+                # An unresolvable path is still matched lexically below.
                 pass
             continue
         if path.exists():

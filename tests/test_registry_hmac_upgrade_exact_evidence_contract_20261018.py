@@ -170,7 +170,7 @@ def test_v2_checkpoint_nonobject_fails_closed(tmp_path, local_key):
 def test_signed_migrated_registry_can_be_verified_with_the_same_external_key(
     monkeypatch, tmp_path, local_key
 ):
-    log, head = _registry(tmp_path, [_legacy(_rec())])
+    _registry(tmp_path, [_legacy(_rec())])
     agents.initialize_registry_auth(tmp_path, local_key)
     monkeypatch.setattr(agents, "runtime_key", lambda _: local_key)
     instance = agents.MultiAgentRegistry(str(tmp_path))

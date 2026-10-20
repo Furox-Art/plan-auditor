@@ -124,6 +124,7 @@ def _persist_supervisor_config(root: Path, profile: str, mode: str) -> None:
         if isinstance(raw, dict):
             existing = raw
     except (OSError, json.JSONDecodeError):
+        # A missing or corrupt profile file falls back to the defaults.
         pass
     existing["profile"] = profile
     existing["mode"] = mode
@@ -142,6 +143,7 @@ def _spawn_daemon(root: Path, profile: str, mode: str) -> subprocess.Popen[bytes
         try:
             stale.unlink()
         except FileNotFoundError:
+            # No stale lock is present.
             pass
     log_path = root / ".plan-auditor" / "supervisor.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,6 +215,7 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> int:
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
+        # The process may already have exited.
         pass
     time.sleep(0.2)
     if pid_alive(pid):

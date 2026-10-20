@@ -11,7 +11,6 @@ import hashlib
 import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from pathlib import Path
 
 from supervisor.sealing import seal_plan, check_monotonic, plan_hash
 from supervisor.gate import CompletionGate
@@ -175,7 +174,6 @@ def test_heartbeat_keeps_ownership(tmp_path):
 
 # 17. CompletionGate FAIL on deterministic failure.
 def test_gate_fail_deterministic():
-    from supervisor.sealing import MonotonicCheck
     gate = CompletionGate(default_engine())
     report = gate.evaluate(deterministic_passed=False, pending_steps=[], workspace_context={})
     assert report.outcome == "FAIL"
@@ -214,7 +212,6 @@ def test_gate_pass_only_when_clean():
 
 # 21. Invalid path rejected by path confinement.
 def test_invalid_path_rejected():
-    cfg = Config(workspace_root="/repo")
     assert ".." not in str(Config(workspace_root="/repo").pg_path)
 
 

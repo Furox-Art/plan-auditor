@@ -19,7 +19,7 @@ def registry(*, legacy=False):
     state.registry_legacy = legacy
     state._agents = {}
     state.owner_timeout = 60
-    state._write_lock = lambda: contextlib.nullcontext()
+    state._write_lock = contextlib.nullcontext
     state._refresh_from_disk = lambda: None
     state._migrate_legacy_locked = lambda: None
     return state
@@ -118,9 +118,13 @@ def test_user_run_error_is_preserved_even_if_freeze_release_fails(monkeypatch, t
         return original(self, *a, **kw)
 
     monkeypatch.setattr(Path, "unlink", fail)
-    with pytest.raises(RuntimeError, match="original audit work failure"):
+    try:
         with audit_session.final_audit_session(tmp_path, state):
             raise RuntimeError("original audit work failure")
+    except RuntimeError as exc:
+        assert "original audit work failure" in str(exc)
+    else:
+        raise AssertionError("expected the original audit failure to propagate")
     assert path.exists()
 
 

@@ -7,11 +7,11 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from supervisor.requirements import parse_requirements, Requirement
-from supervisor.goals import GoalModel, Beliefs, Desires
+from supervisor.goals import GoalModel, Beliefs
 from supervisor.plan_verifier import verify_plan
 from supervisor.watchdog import Watchdog, _snapshot_files
-from supervisor.evidence import build_archive_manifest, verify_anchor_chain, tail_hash
-from supervisor.adversarial import run_adversarial_review, Finding
+from supervisor.evidence import verify_anchor_chain, tail_hash
+from supervisor.adversarial import run_adversarial_review
 
 
 # --------------------------------------------------------------- L1 requirements

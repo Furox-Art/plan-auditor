@@ -239,6 +239,7 @@ def _tail_logs(root: Path, limit: int = 200) -> List[str]:
         try:
             lines.extend(path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:])
         except OSError:
+            # Unreadable log files are skipped; the remaining lines still count.
             pass
     return lines[-limit:]
 

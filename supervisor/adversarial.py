@@ -119,6 +119,7 @@ def _parse_llm_findings(raw: str) -> List[Finding]:
                     ))
             return findings
     except json.JSONDecodeError:
+        # Not a JSON payload; fall back to the line-based scan below.
         pass
     # Fallback: split on lines, look for [SEVERITY] markers.
     for line in raw.splitlines():
@@ -164,6 +165,7 @@ def run_adversarial_review(
             with open(evidence_path, encoding="utf-8", errors="replace") as f:
                 evidence_lines = f.readlines()
         except OSError:
+            # Missing or unreadable evidence yields an empty evidence scan.
             pass
 
     findings = _static_adversarial_checks(plan, evidence_lines)

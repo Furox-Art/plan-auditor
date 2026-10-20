@@ -4,15 +4,14 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from supervisor.priority import (
-    resolve_priority, PriorityVerdict,
-    LEVEL_DETERMINISTIC_VERIFICATION, LEVEL_AI_SEMANTIC_JUDGMENT,
+    resolve_priority, LEVEL_DETERMINISTIC_VERIFICATION, LEVEL_AI_SEMANTIC_JUDGMENT,
 )
 from supervisor.sealing import (
     plan_hash, seal_plan, check_monotonic, MonotonicCheck,
 )
 from supervisor.gate import CompletionGate
 from supervisor.policies import PolicyEngine, PolicyRule, RuleResult
-from supervisor.agents import Agent, MultiAgentRegistry, Conflict
+from supervisor.agents import Agent, MultiAgentRegistry
 
 
 # --------------------------------------------------------------- L7 priority

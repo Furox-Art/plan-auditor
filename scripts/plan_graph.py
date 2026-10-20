@@ -6,8 +6,7 @@ existing plans gain prerequisite enforcement without a schema migration.
 """
 from __future__ import annotations
 
-from collections import deque
-from typing import Any, Dict, Iterable, List, Mapping, Sequence, Set
+from typing import Any, Dict, List, Mapping, Sequence, Set
 
 
 class PlanGraphError(ValueError):
