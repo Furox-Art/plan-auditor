@@ -203,9 +203,9 @@ Per-layer detail, profiles (`light`/`standard`/`strict`), run modes
 
 ## Use it as an Agent Skill
 
-The skill is `SKILL.md` plus `scripts/`, `references/` and `hooks/`, either from a
-checkout or from a `pip` install, which ships them under `plan_auditor_skill/`. Copy
-them into your host's skills directory — `~/.claude/`, `~/.commandcode/`,
+The skill is `SKILL.md` plus `scripts/`, `references/` and `hooks/`, from a checkout
+or a `pip` install (pip keeps `scripts/` top-level, the rest under `plan_auditor_skill/`).
+Copy them into your host's skills directory — `~/.claude/`, `~/.commandcode/`,
 `~/.config/opencode/` or `~/.codex/`, each with a `skills/plan-auditor/` subdirectory.
 `hooks/gate_hook.py` is the primary hook gate; `scripts/stop_gate.py` (Claude Code) delegates
 to the same `evaluate_workspace`. Wire each host's blocking hook to one.

@@ -59,7 +59,7 @@ Other suites worth running before you open a pull request:
 | `python -m pytest examples/fib/test_fib.py -q` | The shipped example still passes. |
 | `python -m pytest tests/ -q --cov --cov-report=term-missing` | The same coverage command CI runs, with the per-module table. |
 | `npm test` | The Node launcher and `bin` entry point parse. |
-| `npm run test:contract` | The launcher keeps the caller's working directory, propagates exit codes and fails closed. |
+| `npm run test:contract` | The launcher keeps the caller's working directory, propagates exit codes and fails closed; the pre-publish gate stays wired into `prepublishOnly` and CI. |
 | `npm run test:gate` | The packed tarball has no `__pycache__`, venv, build output or `*.test.js`, and does carry what the launcher needs. |
 | `python -m mkdocs build --strict` | The documentation site still builds with no warnings. |
 
@@ -252,8 +252,9 @@ different commits, which is the mistake this section exists to prevent; the
 record is in the "The two published `2.4.1` builds" section of
 [CHANGELOG.md](https://github.com/Furox-Art/plan-auditor/blob/main/CHANGELOG.md).
 
-1. Bump the version in **all four** places: `pyproject.toml`, `package.json`,
-   the `metadata.version` in `SKILL.md`, and `version` in `CITATION.cff`. The
+1. Bump the version in **all five** places: `pyproject.toml`, `package.json`,
+   the `metadata.version` in `SKILL.md`, `version` in `CITATION.cff`, and
+   `__version__` in `supervisor/__init__.py`. The
    `version-lockstep` check fails if they disagree.
 2. Build and verify both distributions locally:
 
