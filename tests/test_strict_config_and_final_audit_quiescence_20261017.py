@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,6 +43,8 @@ def _write_config(root: Path, value: object):
 def test_invalid_supervisor_configuration_never_silently_gets_permission(
     tmp_path, key, bad_value, error_fragment
 ):
+    if os.name == "nt" and bad_value == "/outside":
+        pytest.skip("ntpath treats /outside as drive-relative, unlike POSIX")
     _write_config(tmp_path, {key: bad_value})
     out = config.load_config(str(tmp_path))
     assert out.valid is False

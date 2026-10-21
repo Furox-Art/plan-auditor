@@ -11,6 +11,7 @@ import pytest
 from supervisor import agents
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not enforced on Windows")
 def test_registry_writer_lock_is_exclusive_and_removed_after_success(tmp_path):
     registry = agents.MultiAgentRegistry(str(tmp_path))
     with registry._write_lock():

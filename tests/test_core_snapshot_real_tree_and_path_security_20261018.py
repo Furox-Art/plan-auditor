@@ -85,6 +85,7 @@ def test_directory_manifest_retains_type_and_actual_mode(tmp_path):
     assert result["mode"] == 0o755 or result["mode"] & 0o700 == 0o700
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.mkfifo is unavailable on Windows")
 def test_snapshot_rejects_fifo_instead_of_deadlocking_on_special_file(tmp_path):
     if not hasattr(os, "mkfifo"):
         pytest.fail("platform must use a supported FIFO test or provide equivalent coverage")

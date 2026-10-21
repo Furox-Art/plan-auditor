@@ -2,6 +2,64 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## 2.6.3 — 2026-10-21
+
+This entry summarises the 53 commits since 2.6.2, including the six commits
+labelled `security:`.
+
+### Security
+
+- Reject ambiguous trust-seal JSON before any execution instead of
+  interpreting it permissively (`db8820b`).
+- Reject ambiguous integrity markers and Stop-hook workspace input
+  (`92b4c85`).
+- Reject ambiguous supervisor configuration and audit evidence
+  (`b1e9da8`).
+- Reject ambiguous assessment JSON and cover legacy seal migration
+  (`cdd841a`).
+- Bound strict request and workspace JSON and write it atomically
+  (`8b4f8de`).
+- Reject duplicate requirement IDs and detach plan criteria so one plan
+  cannot claim another plan's evidence (`256d428`).
+
+### Fixed
+
+- Reject fabricated requirement coverage and restore the strict CI quality
+  ratchets (`6b7970a`).
+- Deterministic evidence hardening: the head checkpoint is the O(1) source
+  for chain tail/count, interrupted appends heal only when exactly one
+  record behind, stale locks are stolen only when their PID is provably
+  gone on this host, and rotation/snapshot names carry a monotonic sequence
+  (`3fc2fcd`).
+- Fail closed on malformed authoritative requests and covering-step
+  structures (`06bdb11`), malformed formal anchors and STRIPS PDDL branches
+  (`7b44cf4`), malformed audit evidence in the orchestrator (`bc1f3fd`),
+  and non-object agent lock JSON (`c8fdb81`).
+- Preserve Git porcelain status while verifying formal and OS gates
+  (`14adf07`).
+- Create the missing GitHub releases, repair mojibake and correct the
+  codemeta version (`b62b6bd`); resolve the open CodeQL code-scanning
+  alerts (`ebce269`).
+- Require full statement and branch coverage without skipped tests, with
+  added orchestrator, evidence, registry, daemon and Windows/POSIX
+  fail-closed test matrices (`89c3cf3`, `52f0bad` and the remaining test
+  commits in this release).
+
+### CI
+
+- Add CodeQL analysis and resolve subpath action pins (`b9d76b0`), then fix
+  the resulting code-scanning alerts (`ebce269`).
+- Cache test dependencies in the build, lint, plan-audit and wheel-smoke
+  workflows while retaining full plan audits (`f159379`).
+
+### Docs
+
+- Repair double-encoded UTF-8 in the README (`0f7f381`) and remaining
+  mojibake, plus a duplicated 2.6.1 CHANGELOG heading (`b62b6bd`).
+- Update the release-status version references to 2.6.3 in README,
+  SECURITY.md, docs/index.md, docs/release-status.md, SKILL.md,
+  CITATION.cff and codemeta.json.
+
 ## 2.6.2 — Exit-code contract and doc guards
 
 ### Refactoring
@@ -79,8 +137,6 @@ All notable changes to plan-auditor. Versions are published to PyPI and npm.
   wired every standalone guard into CI, removed dead or duplicated code
   paths, and pinned every doc claim to a test so it cannot silently
   drift again. Regression tests fail without the corresponding fix.
-
-## Unreleased
 
 ## 2.5.0 — Completion gate requires authenticated evidence
 

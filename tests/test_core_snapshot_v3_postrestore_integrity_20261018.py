@@ -59,6 +59,7 @@ def test_v3_real_archive_rejects_wrong_restored_file_type(tmp_path, monkeypatch)
         _restore_without_evidence(monkeypatch, tmp_path, archive)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink restore semantics")
 def test_v3_real_archive_rejects_symlink_target_mutation(tmp_path, monkeypatch):
     (tmp_path / "target.txt").write_text("safe", encoding="utf-8")
     archive = _make_archive(

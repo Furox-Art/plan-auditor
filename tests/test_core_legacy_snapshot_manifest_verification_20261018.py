@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 import zipfile
 
@@ -27,6 +28,7 @@ def _file(name, content, **options):
     return {"path": name, "type": "file", "sha256": hashlib.sha256(content).hexdigest(), **options}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits and symlink restore semantics")
 def test_v2_real_archive_restores_content_and_sha(tmp_path):
     original = b"exact-data\n"
     (tmp_path / "record.bin").write_bytes(b"modified")
@@ -41,6 +43,7 @@ def test_v2_real_archive_restores_content_and_sha(tmp_path):
     assert ac.verify_chain(str(tmp_path))[0] is True
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits and symlink restore semantics")
 def test_v2_real_archive_full_workspace_prunes_untracked_files(tmp_path):
     (tmp_path / "untracked.txt").write_text("must be removed", encoding="utf-8")
     content = b"trusted"
@@ -54,6 +57,7 @@ def test_v2_real_archive_full_workspace_prunes_untracked_files(tmp_path):
     assert (tmp_path / "ok.txt").read_bytes() == content
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits and symlink restore semantics")
 def test_v2_symlink_restore_is_bounded_to_workspace(tmp_path):
     (tmp_path / "destination.txt").write_text("ok", encoding="utf-8")
     archive = _archive(

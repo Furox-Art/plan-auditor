@@ -102,6 +102,7 @@ def test_pipe_without_stdout_is_safe_when_collecting_bounded_output(monkeypatch,
     assert ac._bounded_command(["unused"], str(tmp_path), 1, 1024) == (0, "ok", "", False)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.killpg is unavailable on Windows")
 def test_group_kill_does_not_kill_process_again_when_it_has_already_exited(monkeypatch):
     class Finishing:
         pid = 424242

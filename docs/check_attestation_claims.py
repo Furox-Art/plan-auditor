@@ -69,7 +69,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Bumped together with the release.
-CURRENT_VERSION = "2.6.2"
+CURRENT_VERSION = "2.6.3"
 
 #: Documents that state current facts. Strict rules apply to their prose.
 CURRENT_FACT_DOCS = ("README.md", "SECURITY.md")

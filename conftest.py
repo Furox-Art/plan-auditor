@@ -21,9 +21,14 @@ quietly falling back to the source tree.
 
 from __future__ import annotations
 
+import functools
 import importlib
+import inspect
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent
 RUNTIME_PACKAGES = ("supervisor", "scripts")
@@ -110,3 +115,56 @@ except ImportError as _exc:  # pragma: no cover - surfaced by the assert above
 sys.modules.setdefault("audit_check", _audit_check)
 
 del _name, _module
+
+
+# ---------------------------------------------------------------------------
+# Symlink capability
+# ---------------------------------------------------------------------------
+# Many tests exercise symlink confinement by creating real links. An
+# unprivileged Windows host cannot create symlinks at all (WinError 1314), so
+# those tests would fail before reaching any assertion. Probe the capability
+# once and skip only the tests that actually create a symlink; every other test
+# still runs, and capable hosts (POSIX, or Windows with Developer Mode) keep the
+# full assertions.
+
+
+@functools.lru_cache(maxsize=1)
+def _symlink_creation_supported() -> bool:
+    """True when this OS/filesystem lets the current user create symlinks."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        target_file = root / "target.txt"
+        target_file.write_text("probe", encoding="utf-8")
+        target_dir = root / "target-dir"
+        target_dir.mkdir()
+        try:
+            (root / "file-link").symlink_to(target_file)
+            (root / "dir-link").symlink_to(target_dir, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return False
+        return True
+
+
+def _test_function_source(item) -> str | None:
+    """Best-effort source of the test function behind a collected item."""
+    function = getattr(item, "function", None)
+    if function is None:
+        return None
+    try:
+        function = inspect.unwrap(function)
+    except ValueError:  # pragma: no cover - defensive against wrapper cycles
+        return None
+    try:
+        return inspect.getsource(function)
+    except (OSError, TypeError):  # pragma: no cover - dynamically defined tests
+        return None
+
+
+def pytest_collection_modifyitems(config, items):  # noqa: ARG001 - pytest hook
+    if _symlink_creation_supported():
+        return
+    skip = pytest.mark.skip(reason="OS cannot create symlinks (unprivileged Windows)")
+    for item in items:
+        source = _test_function_source(item)
+        if source is not None and "symlink_to" in source:
+            item.add_marker(skip)
