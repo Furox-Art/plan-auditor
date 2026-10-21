@@ -24,14 +24,17 @@ concurrency:
   group: npm-publish
   cancel-in-progress: false
 
-# Read-only by default. The publish job opts into id-token only when it actually
-# uses OIDC, so the token path never mints an attestation it will not use.
+# Read-only by default. The publish job declares id-token unconditionally because
+# job permissions cannot depend on a dispatch input; the token path simply never
+# uses the OIDC identity.
 permissions:
   contents: read
 
 jobs:
   verify:
     name: verify launcher before publishing
+    # workflow_dispatch can target any branch; the release path is main only.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,6 +83,7 @@ jobs:
   publish:
     name: publish to npm
     needs: verify
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -107,8 +111,10 @@ jobs:
       # Decide the publish mode once, up front, and fail closed here rather than
       # discovering a missing credential at upload time.
       #
-      # Automatic version-trigger pushes use the verified repository token path.
-      # Manual dispatches keep the explicit OIDC/token choice for recovery/testing.
+      # OIDC is the default on every event. Token mode exists only as an explicit
+      # per-dispatch opt-in, because a publish that silently downgrades its own
+      # credential (and therefore drops provenance) is worse than one that fails
+      # and says why.
       - name: Select the publish mode and validate its credential
         id: mode
         shell: bash
@@ -118,14 +124,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "$USE_TOKEN_FALLBACK" = "true" ]; then
-              mode="token"
-            else
-              mode="oidc"
-            fi
-          else
+          if [ "$USE_TOKEN_FALLBACK" = "true" ]; then
             mode="token"
+          else
+            mode="oidc"
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "selected publish mode: $mode"
@@ -138,7 +140,6 @@ jobs:
             fi
             echo "using the NPM_TOKEN secret; this path publishes WITHOUT --provenance"
             echo "because a registry token cannot mint an attestation"
-            echo "automatic version-trigger releases use this verified token path"
           else
             echo "using OIDC trusted publishing with --provenance"
             echo "if this fails with E404, no trusted publisher is registered on npmjs.com"

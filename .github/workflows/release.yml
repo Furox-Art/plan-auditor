@@ -25,6 +25,8 @@ permissions:
 jobs:
   package-preflight:
     name: release-preflight
+    # workflow_dispatch can target any branch; the release path is main only.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,6 +53,7 @@ jobs:
 
   wheel-preflight:
     name: release-wheel-cli-smoke (${{ matrix.os }})
+    if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +80,7 @@ jobs:
   publish:
     name: publish to PyPI
     needs: [package-preflight, wheel-preflight]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Protects the `pypi` environment. Required reviewers are deliberately not
     # enabled: this is a single-maintainer repository, so a required reviewer
@@ -129,16 +133,10 @@ jobs:
         id: trusted_publish
         if: steps.gate.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-      # Documented fallback, not the default path. It runs only when the step
-      # above fails, which should mean the trusted publisher has been removed
-      # from PyPI and the maintainer has provisioned PYPI_API_TOKEN instead. PyPI
-      # has no equivalent of npm's --provenance, so the attestation is weaker on
-      # this path. Delete this step once trusted publishing is confirmed working.
-      - name: Publish to PyPI with the token fallback
-        if: steps.gate.outputs.skip != 'true' && steps.trusted_publish.outcome != 'success'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+      # No token fallback. The 2.6.3 artifacts carry a PEP 740 attestation, which
+      # only the OIDC trusted publisher can mint, so the trusted path is known to
+      # work and a long-lived PYPI_API_TOKEN has no job left to do. A failed OIDC
+      # upload must fail the release instead of quietly downgrading to a token.
       - name: Wait for PyPI propagation
         if: steps.gate.outputs.skip != 'true'
         shell: bash
@@ -148,9 +146,10 @@ jobs:
           simple_url="https://pypi.org/simple/${{ steps.meta.outputs.name }}/"
           version="${{ steps.meta.outputs.version }}"
 
-          # A successful upload action is authoritative. Public indexes can lag,
-          # so propagation is retried for observability without creating a false
-          # red release after the artifact was accepted by PyPI.
+          # The upload action returning is not the version being readable. Poll
+          # both public indexes over five minutes; a version that never appears
+          # fails the release instead of reporting a green run for an upload
+          # nobody can install.
           for attempt in $(seq 1 20); do
             if curl --retry 2 --retry-delay 2 --retry-all-errors -sfL "$json_url" > /dev/null; then
               echo "PyPI JSON endpoint sees ${version} on attempt ${attempt}."
@@ -163,8 +162,8 @@ jobs:
             sleep 15
           done
 
-          echo "::warning::PyPI upload succeeded, but public indexes have not propagated yet."
-          exit 0
+          echo "::error::PyPI accepted the upload, but neither public index serves ${version} after 5 minutes."
+          exit 1
 
   # Split out of the `publish` job so that the only job holding `contents: write`
   # is the one that needs it. Runs 37075003605 and 37165300933 uploaded to PyPI
@@ -182,6 +181,7 @@ jobs:
   github-release:
     name: create GitHub release
     needs: [publish]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
