@@ -6,8 +6,9 @@ rather than against this repository, and it is the page to re-read before trusti
 version number.
 
 The short version, kept in the README as well: **`2.6.3` is the current release on
-both PyPI and npm**, and the quick start in the README describes the published
-packages rather than only a checkout.
+PyPI. npm still serves `2.6.2`.** The npm publish step for `2.6.3` fails with `E404`
+until a trusted publisher or a publish-scoped token is configured; the quick start in
+the README describes the published packages rather than only a checkout.
 
 If this page and a registry ever disagree, the registry is right and this page is
 stale.

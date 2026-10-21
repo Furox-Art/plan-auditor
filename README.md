@@ -62,9 +62,10 @@ launcher for the same CLI and needs Python on `PATH`. The examples call the inte
 In CI, add `- uses: Furox-Art/plan-auditor@main` with `path: .` — see
 [integrations](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md).
 
-**Release status:** `2.6.3` is current on both registries. PyPI publishes every artifact
-with a PEP 740 provenance attestation; npm has **no** provenance attestation and its
-attestations endpoint returns `404` for one. Measured per channel in
+**Release status:** `2.6.3` is current on PyPI. npm still serves `2.6.2`; the publish
+step for `2.6.3` fails until a trusted publisher or a publish-scoped token is configured.
+PyPI publishes every artifact with a PEP 740 provenance attestation; npm has **no**
+provenance attestation and its attestations endpoint returns `404`. Measured per channel in
 [docs/release-status.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/release-status.md).
 
 ## Quick start (verified, 5 minutes)
