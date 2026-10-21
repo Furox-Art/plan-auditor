@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 import pytest
 
@@ -31,6 +32,7 @@ def test_spawn_checks_duplicate_live_daemon(monkeypatch, tmp_path):
     assert not (tmp_path / ".plan-auditor" / "supervisor.log").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="start_new_session is a POSIX spawn parameter")
 def test_spawn_removes_stale_markers_and_never_invokes_shell(monkeypatch, tmp_path):
     pg = tmp_path / ".plan-auditor"
     pg.mkdir()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -219,12 +220,14 @@ def test_external_planner_executable_discovery_uses_single_argv_and_no_shell(mon
     assert fp._fast_downward_base("planner") == ["/trusted/bin/planner"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.killpg is unavailable on Windows")
 def test_external_planner_process_is_not_killed_again_if_already_exited(monkeypatch):
     process = SimpleNamespace(poll=lambda: 0)
     monkeypatch.setattr(fp.os, "killpg", lambda *_: pytest.fail("must not kill exited PID"))
     fp._kill_process_group(process)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.killpg is unavailable on Windows")
 def test_external_planner_kill_failure_does_not_leave_an_unbounded_owned_process(monkeypatch):
     seen = []
     process = SimpleNamespace(
@@ -241,6 +244,7 @@ def test_external_planner_kill_failure_does_not_leave_an_unbounded_owned_process
     assert seen == ["fallback-kill"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.killpg is unavailable on Windows")
 def test_external_planner_failed_individual_kill_is_handled_without_false_success(monkeypatch):
     process = SimpleNamespace(
         pid=9513,

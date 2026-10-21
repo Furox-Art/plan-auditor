@@ -5,7 +5,7 @@ attested on each registry. Everything here was measured against the live registr
 rather than against this repository, and it is the page to re-read before trusting a
 version number.
 
-The short version, kept in the README as well: **`2.6.2` is the current release on
+The short version, kept in the README as well: **`2.6.3` is the current release on
 both PyPI and npm**, and the quick start in the README describes the published
 packages rather than only a checkout.
 
@@ -14,12 +14,17 @@ stale.
 
 ## What is published
 
+The PyPI and npm measurements below were taken against `2.4.3` and are retained
+because the hashes and endpoints reproduce exactly; they do not describe the
+current release. Substitute the current version in the commands under
+[Checking these claims yourself](#checking-these-claims-yourself) to re-measure it.
+
 | Surface | Version | Published | Notes |
 |---|---|---|---|
 | npm (`latest`) | `2.4.3` | 2026-10-04 | Byte-identical to `npm pack` of the `main` tip (`45fd5ee`): `shasum` `f220d14e987008d7177c7ac2a19da4da63ee082c` and integrity `sha512-XYRobvGvmzBlv/VfLDD96W08XP0OPzeVXs2qMVDFnRzb8kgbWuu3IW1Q3MbEiF2Q67JKyW0ikFgn8zXYSVvBLg==` both reproduce from a clean checkout. 63 files, 617 609 bytes unpacked. |
 | PyPI | `2.4.3` | 2026-10-04 | Carries a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation on both files. Wheel SHA-256 `c4fdfddd9c12001d1fb76c3d48962a0cc3de07427bbcc6422a8bf04ad1b77c47`, sdist SHA-256 `29ae465bfc008687cd6ae5ad01fe49f154276441fedcbc120ed803fc446ce2fb`. |
 
-## `2.4.0` and `2.4.1` were defective; `2.4.2` fixed them; `2.6.2` is the current release
+## `2.4.0` and `2.4.1` were defective; `2.4.2` fixed them; `2.6.3` is the current release
 
 | Version | Defect |
 |---|---|

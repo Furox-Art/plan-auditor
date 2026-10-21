@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -126,8 +127,11 @@ def test_invalid_dependency_graph_has_no_guessed_implicit_contract_edges():
 
 
 def test_default_and_named_seals_get_distinct_constrained_paths(tmp_path):
-    assert contract.seal_path(tmp_path).endswith("/.plan-auditor/seal.json")
-    assert contract.seal_path(tmp_path, "case").endswith("/.plan-auditor/seals/case.json")
+    assert Path(contract.seal_path(tmp_path)) == tmp_path / ".plan-auditor" / "seal.json"
+    assert (
+        Path(contract.seal_path(tmp_path, "case"))
+        == tmp_path / ".plan-auditor" / "seals" / "case.json"
+    )
 
 
 def test_second_path_containment_gate_rejects_unexpected_resolution(monkeypatch, tmp_path):

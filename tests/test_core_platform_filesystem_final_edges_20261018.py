@@ -15,6 +15,7 @@ from scripts import audit_check as ac
 from scripts.integrity import KeyMaterial
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.mkfifo is unavailable on Windows")
 def test_workspace_fingerprint_distinguishes_nonregular_file_from_plain_file(tmp_path):
     fifo = tmp_path / "named-pipe"
     os.mkfifo(fifo)

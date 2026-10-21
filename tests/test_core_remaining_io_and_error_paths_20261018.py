@@ -114,6 +114,7 @@ def test_pid_probe_windows_error_87_is_only_unknown_pid_signal(monkeypatch):
     assert ac._pid_is_alive(345) is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.mkfifo is unavailable on Windows")
 def test_snapshot_entry_kind_for_fifo_is_not_fabricated_file(tmp_path):
     if not hasattr(os, "mkfifo"):
         pytest.fail("FIFO capability missing from required Linux WSL test environment")

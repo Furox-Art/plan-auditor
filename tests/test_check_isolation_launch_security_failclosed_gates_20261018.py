@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from scripts import check_isolation as isolation
@@ -67,6 +69,7 @@ def test_partial_child_identity_cannot_be_interpreted_as_optional_security(
         isolation.check_launch_options(str(tmp_path))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux root-isolation path uses os.geteuid")
 def test_required_isolation_cannot_be_claimed_in_unprivileged_process(monkeypatch, tmp_path):
     monkeypatch.setenv(isolation.MODE_ENV, "required")
     monkeypatch.setenv(isolation.UID_ENV, "1000")
@@ -76,6 +79,7 @@ def test_required_isolation_cannot_be_claimed_in_unprivileged_process(monkeypatc
         isolation.check_launch_options(str(tmp_path))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux root-isolation path uses os.geteuid")
 def test_child_command_in_strict_mode_receives_only_safe_environment_allowlist(
     monkeypatch, tmp_path
 ):
@@ -103,6 +107,7 @@ def test_child_command_in_strict_mode_receives_only_safe_environment_allowlist(
         assert denied not in out["env"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux root-isolation path uses os.geteuid")
 def test_required_isolation_invokes_both_root_control_plane_and_key_checks(monkeypatch, tmp_path):
     monkeypatch.setenv(isolation.MODE_ENV, "required")
     monkeypatch.setenv(isolation.UID_ENV, "1000")

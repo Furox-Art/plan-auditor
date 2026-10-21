@@ -50,7 +50,7 @@ body:
     attributes:
       label: Version and registry
       description: Which artifact did you install, and from where?
-      placeholder: "pipx, 2.4.1 from PyPI"
+      placeholder: "pipx, 2.6.3 from PyPI"
     validations:
       required: true
 
@@ -93,7 +93,7 @@ body:
   - type: textarea
     id: evidence-output
     attributes:
-      label: "`plan-auditor doctor .` output
+      label: "`plan-auditor doctor .` output"
       description: Machine-readable capability and health report. It is the first thing asked for when triaging.
       render: json
 

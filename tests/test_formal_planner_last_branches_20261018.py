@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -62,6 +63,7 @@ def test_two_independent_action_orders_do_not_duplicate_reached_state():
     assert "reachable" in reason
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.killpg is unavailable on Windows")
 def test_terminated_external_process_is_not_killed_again_after_group_cleanup(monkeypatch):
     sequence = [None, 0]
     calls = []

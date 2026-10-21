@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -44,6 +45,8 @@ def test_invalid_pid_values_rejected_before_kill_probe(pid):
     ],
 )
 def test_pid_liveness_error_meaning_is_not_reversed(monkeypatch, error_type, expected):
+    if os.name == "nt" and error_type is PermissionError:
+        pytest.skip("Windows liveness probe uses OpenProcess, not os.kill")
     def fail(*args):
         raise error_type("injected probe")
 

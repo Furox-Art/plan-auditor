@@ -6,6 +6,8 @@ import io
 import os
 import subprocess
 
+import pytest
+
 from scripts import audit_check as ac
 
 
@@ -62,6 +64,7 @@ def test_windows_process_tree_fallback_if_taskkill_unavailable(monkeypatch):
     assert proc.killed == 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="exercises the POSIX process-group fallback")
 def test_unix_process_tree_fallback_if_group_not_found(monkeypatch):
     class UnixFacade(OSFacade):
         def killpg(self, pid, sig):
@@ -73,6 +76,7 @@ def test_unix_process_tree_fallback_if_group_not_found(monkeypatch):
     assert proc.killed == 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="exercises POSIX group shutdown after kill failure")
 def test_kill_failure_after_group_shutdown_is_conservatively_ignored(monkeypatch):
     class UnixFacade(OSFacade):
         def killpg(self, pid, sig):

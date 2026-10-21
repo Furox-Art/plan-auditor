@@ -29,7 +29,7 @@ body:
     id: version
     attributes:
       label: Version and entry point
-      placeholder: "pipx, 2.4.1 from PyPI"
+      placeholder: "pipx, 2.6.3 from PyPI"
     validations:
       required: true
 

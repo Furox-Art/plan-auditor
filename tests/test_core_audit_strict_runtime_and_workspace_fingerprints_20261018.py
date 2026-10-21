@@ -184,6 +184,7 @@ def test_workspace_fingerprint_records_real_directory_and_symlink_transitions(tm
     assert audit.workspace_fingerprint(str(tmp_path)) == after_dir
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX permission bits through chmod")
 def test_workspace_fingerprint_tracks_executable_permission_without_reading_binary_content(
     tmp_path,
 ):

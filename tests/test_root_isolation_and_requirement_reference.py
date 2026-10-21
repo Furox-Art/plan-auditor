@@ -7,6 +7,7 @@ kernel UID separation; the kernel integration suite is a separate gate.
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -150,6 +151,7 @@ def test_identity_settings_require_explicit_isolation(monkeypatch, mode):
         iso.check_launch_options("/no/workspace")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.geteuid is unavailable on Windows")
 def test_requested_isolation_rejects_unprivileged_linux(monkeypatch):
     monkeypatch.setenv(iso.MODE_ENV, "required")
     monkeypatch.setenv(iso.UID_ENV, "1001")
@@ -159,6 +161,7 @@ def test_requested_isolation_rejects_unprivileged_linux(monkeypatch):
         iso.check_launch_options("/no/workspace")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.geteuid is unavailable on Windows")
 def test_privilege_switch_constructs_minimal_child_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):

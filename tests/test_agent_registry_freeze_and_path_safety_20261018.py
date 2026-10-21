@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,8 @@ def test_valid_agent_ids_keep_an_exact_identity(identifier):
     ],
 )
 def test_file_ownership_must_be_workspace_confined(tmp_path, owned, message):
+    if os.name == "nt" and owned == "/tmp/outside":
+        pytest.skip("POSIX-absolute path; ntpath treats /tmp as drive-relative")
     with pytest.raises(ValueError, match=message):
         hard.canonical_owned_path(tmp_path, owned)
 
@@ -108,6 +111,7 @@ def test_unreadable_stale_freeze_cannot_be_deleted_or_construed_as_permission(
     assert marker.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="_safe_pid_alive probes via OpenProcess on Windows, not os.kill")
 def test_pid_permission_denied_still_means_a_foreign_process_may_be_alive(monkeypatch):
     def denied(*args):
         raise PermissionError("no permission to signal another user's PID")
