@@ -27,7 +27,8 @@ Nothing on this site requires an LLM, a GPU, or a network connection.
 
 ## Release status, stated once
 
-`2.6.3` is published on PyPI and npm, and this site describes that release.
+`2.6.3` is published on PyPI and this site describes that release; npm serves
+`2.6.2` until a trusted publisher or publish-scoped token is configured.
 `2.4.0` and `2.4.1` were defective and cannot be withdrawn, because npm versions
 are immutable; see the README's release-status section for what each one shipped.
 

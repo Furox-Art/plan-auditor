@@ -267,19 +267,23 @@ record is in the "The two published `2.4.1` builds" section of
    ```
 
 3. Move the `Unreleased` section of the changelog under the new version heading.
-4. PyPI: push a change to `.github/pypi-release-trigger`. The workflow builds,
-   runs the suite, smoke-tests the wheel on Linux, Windows and macOS, checks the
-   distributions, and **skips publishing if the version already exists on PyPI** —
-   so an unchanged version number will silently not publish. Publishing uses OIDC
-   trusted publishing only; there is no long-lived token in repository secrets.
-   Creating the GitHub release is gated on whether that release already exists,
-   not on PyPI: a version that is already on PyPI still gets its missing release,
-   and a re-run leaves an existing release untouched, so it cannot append a
-   second copy of the notes.
-5. npm: the publish workflow triggers on any change to `package.json`,
-   `index.js`, `bin/**` or the skill assets. It runs a `verify` job first — the
-   launcher tests and the packed-tarball check — and refuses to publish a version
-   already on the registry, so a no-op push is not a red or duplicate build.
+4. PyPI: push a change to `.github/pypi-release-trigger` on `main`. The workflow
+   builds, runs the suite, smoke-tests the wheel on Linux, Windows and macOS,
+   checks the distributions, and **skips publishing if the version already exists
+   on PyPI** — so an unchanged version number will silently not publish. Publishing
+   uses OIDC trusted publishing only; PyPI has no long-lived token in repository
+   secrets and no token fallback step. Creating the GitHub release is gated on
+   whether that release already exists, not on PyPI: a version that is already on
+   PyPI still gets its missing release, and a re-run leaves an existing release
+   untouched, so it cannot append a second copy of the notes.
+5. npm: the publish workflow watches the same `.github/pypi-release-trigger` path
+   on `main`, so one version bump updates both registries. It runs a `verify` job
+   first — the launcher tests and the packed-tarball check — and refuses to publish
+   a version already on the registry, so a no-op push is not a red or duplicate
+   build. Automatic runs use OIDC trusted publishing with provenance and fail if
+   no trusted publisher is registered; `workflow_dispatch` accepts an explicit
+   `use_token_fallback=true` to publish with the `NPM_TOKEN` secret instead, which
+   cannot produce provenance. A manual dispatch is accepted only from `main`.
 6. Confirm the tag, the PyPI artifact and the npm artifact are the same commit,
    and that the wheel you published actually contains `plan_auditor_skill/`.
 

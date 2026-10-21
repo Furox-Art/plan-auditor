@@ -256,7 +256,8 @@ so the Markdown is known to build, but nothing serves it; build it with
 - It verifies that *declared, checkable* requirements were met. Domain meaning that
   cannot be a deterministic check is reviewed by a human, not guessed.
 - The npm package needs Python on `PATH` and carries **no** Sigstore build
-  attestation: the npm attestations endpoint returns `404` for `2.6.3`. Its
+  attestation: the npm attestations endpoint returns `404` for `2.6.2`, the
+  version npm currently serves. Its
   `dist.signatures` block is a registry transport signature and is **not** build
   provenance, so verify the npm tarball against `dist.integrity` instead.
   PyPI does carry a PEP 740 provenance attestation for every artifact.
