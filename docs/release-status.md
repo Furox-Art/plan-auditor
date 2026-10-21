@@ -91,9 +91,9 @@ npm view plan-auditor@2.4.3 dist.signatures
 ## What would give npm provenance
 
 **Pending.** npm is weaker here for exactly one reason: this package has no trusted
-publisher registered on npmjs.com, so the workflow publishes in token mode, and a registry
-token cannot mint an attestation. Nothing in this repository needs to change; one record
-on npmjs.com does:
+publisher registered on npmjs.com, so an automatic release fails with `E404` instead
+of silently publishing without provenance. Nothing in this repository needs to change;
+one record on npmjs.com does:
 
 | Field | Value |
 |---|---|
@@ -102,9 +102,11 @@ on npmjs.com does:
 | Workflow filename | `npm-publish.yml` |
 | Environment | the environment the publish job declares |
 
-The workflow already takes the OIDC path with `--provenance` when that record exists, and
-fails closed rather than silently downgrading. Until the record is created, npm consumers
-get digest verification only, and this page will keep saying so.
+The workflow takes the OIDC path with `--provenance` on every automatic run and fails
+closed rather than silently downgrading; a manual dispatch may explicitly set
+`use_token_fallback=true` to publish with `NPM_TOKEN` instead, which cannot produce
+provenance. Until the record is created, npm consumers get digest verification only,
+and this page will keep saying so.
 
 ## What the artifacts contain
 

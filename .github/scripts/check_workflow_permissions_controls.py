@@ -22,8 +22,10 @@ CONTROLS = [
     (
         "release job loses contents: write (the original defect)",
         "  github-release:\n    name: create GitHub release\n    needs: [publish]\n"
+        "    if: github.ref == 'refs/heads/main'\n"
         "    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n",
         "  github-release:\n    name: create GitHub release\n    needs: [publish]\n"
+        "    if: github.ref == 'refs/heads/main'\n"
         "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
         "creates or updates a tag or release",
     ),

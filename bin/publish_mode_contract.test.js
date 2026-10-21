@@ -150,20 +150,24 @@ check('the token mode fails closed when NPM_TOKEN is absent', () => {
   );
 });
 
-check('automatic version-trigger pushes use the verified token path', () => {
-  // Automatic publishing is intentional, not a runtime fallback from a failed
-  // trusted-publishing attempt. Manual dispatches still preserve the explicit
-  // OIDC/token choice.
+check('automatic runs default to OIDC; token mode is an explicit dispatch opt-in', () => {
+  // A publish must never silently downgrade its own credential (and therefore
+  // drop provenance). Token mode is selected only when the dispatcher set
+  // use_token_fallback=true; every automatic push run takes the OIDC path and
+  // fails closed if no trusted publisher is registered.
   if (/steps\.trusted_publish\.outcome/.test(text)) {
     throw new Error(
-      'a publish step keys on trusted_publish.outcome; automatic token mode must be selected before publish',
+      'a publish step keys on trusted_publish.outcome; token mode must never be a runtime fallback',
     );
   }
   assert_match(
     text,
-    /github\.event_name[\s\S]*workflow_dispatch[\s\S]*else[\s\S]*mode="token"/,
-    'automatic push releases do not select token mode',
+    /if \[ "\$USE_TOKEN_FALLBACK" = "true" \]; then[\s\S]*?mode="token"[\s\S]*?else[\s\S]*?mode="oidc"/,
+    'token mode is not gated on the explicit dispatch input with OIDC as the default',
   );
+  if (/github\.event_name[\s\S]{0,200}else[\s\S]{0,80}mode="token"/.test(text)) {
+    throw new Error('automatic push releases must not select token mode');
+  }
   assert_match(
     text,
     /use_token_fallback was requested/,
