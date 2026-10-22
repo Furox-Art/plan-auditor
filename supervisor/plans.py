@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,26 @@ MAX_PLAN_BYTES = 2_000_000
 
 class PlanNameError(ValueError):
     pass
+
+
+def _unique_plan_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in values:
+            raise ValueError(f"duplicate plan JSON key: {key}")
+        values[key] = value
+    return values
+
+
+def _reject_plan_constant(value: str) -> None:
+    raise ValueError(f"non-standard plan JSON constant: {value}")
+
+
+def _finite_plan_float(source: str) -> float:
+    number = float(source)
+    if not math.isfinite(number):
+        raise ValueError("non-finite plan JSON number")
+    return number
 
 
 class PlanSizeError(PlanNameError):
@@ -123,7 +144,12 @@ def load_plan_ref(ref: PlanRef) -> dict[str, Any]:
             "bound; shrink the plan or split it into named plans "
             f"({ref.path})"
         )
-    value = json.loads(ref.path.read_text(encoding="utf-8"))
+    value = json.loads(
+        ref.path.read_text(encoding="utf-8"),
+        object_pairs_hook=_unique_plan_keys,
+        parse_float=_finite_plan_float,
+        parse_constant=_reject_plan_constant,
+    )
     if not isinstance(value, dict):
         raise ValueError(f"plan root must be an object: {ref.path}")
     return value
