@@ -50,6 +50,14 @@ jobs:
         run: python -m twine check --strict dist/*
       - name: Assert wheel and sdist ship the documented assets
         run: python .github/scripts/check_dist_assets.py
+      # The publish job downloads this artifact instead of rebuilding, so PyPI
+      # receives exactly the bytes the preflight validated.
+      - name: Upload the tested distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
 
   wheel-preflight:
     name: release-wheel-cli-smoke (${{ matrix.os }})
@@ -110,60 +118,139 @@ jobs:
           print(f"name={data['project']['name']}")
           print(f"version={data['project']['version']}")
           PY
-      - name: Check whether version already exists on PyPI
+      - name: Download the tested distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+      - name: Check whether this version already exists on PyPI
         id: gate
-        shell: bash
-        run: |
-          if curl --retry 3 --retry-delay 2 --retry-all-errors -sfL \
-            "https://pypi.org/pypi/${{ steps.meta.outputs.name }}/${{ steps.meta.outputs.version }}/json" > /dev/null; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-      # Previously both upload attempts set continue-on-error and the outcome
-      # was judged afterwards, so a genuine upload failure could be swallowed
-      # and the job could report success with nothing published. Any failure now
-      # fails the job outright.
-      - name: Build distributions
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          python -m pip install "build==1.6.1"
-          python -m build
-      - name: Publish to PyPI with trusted publishing
-        id: trusted_publish
-        if: steps.gate.outputs.skip != 'true'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-      # No token fallback. The 2.6.3 artifacts carry a PEP 740 attestation, which
-      # only the OIDC trusted publisher can mint, so the trusted path is known to
-      # work and a long-lived PYPI_API_TOKEN has no job left to do. A failed OIDC
-      # upload must fail the release instead of quietly downgrading to a token.
-      - name: Wait for PyPI propagation
-        if: steps.gate.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
           json_url="https://pypi.org/pypi/${{ steps.meta.outputs.name }}/${{ steps.meta.outputs.version }}/json"
-          simple_url="https://pypi.org/simple/${{ steps.meta.outputs.name }}/"
-          version="${{ steps.meta.outputs.version }}"
+          complete=false
+          state="$(mktemp)"
+          present="$(mktemp)"
+          echo '[]' > "$present"
+          if curl --retry 3 --retry-delay 2 --retry-all-errors -sfL "$json_url" -o "$state"; then
+            if python - "$state" "$present" <<'PY'
+          import json, pathlib, sys
+
+          published = {
+              entry["filename"]
+              for entry in json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")).get("urls", [])
+          }
+          expected = {
+              path.name
+              for path in pathlib.Path("dist").iterdir()
+              if path.name.endswith((".whl", ".tar.gz"))
+          }
+          # A version can exist with only one of its files. Record the files that
+          # predate this run so the post-publish check does not demand that they
+          # match this run's sha256.
+          pathlib.Path(sys.argv[2]).write_text(
+              json.dumps(sorted(expected & published)), encoding="utf-8"
+          )
+          missing = sorted(expected - published)
+          if missing:
+              print("missing from PyPI: " + ", ".join(missing))
+              sys.exit(1)
+          print("PyPI already serves every expected file")
+          PY
+            then
+              complete=true
+            fi
+          fi
+          echo "skip=$complete" >> "$GITHUB_OUTPUT"
+          echo "preexisting_files=$(<"$present")" >> "$GITHUB_OUTPUT"
+          rm -f "$state" "$present"
+      # Previously both upload attempts set continue-on-error and the outcome
+      # was judged afterwards, so a genuine upload failure could be swallowed
+      # and the job could report success with nothing published. Any failure now
+      # fails the job outright.
+      - name: Publish to PyPI with trusted publishing
+        id: trusted_publish
+        if: steps.gate.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+          # A partial release uploads only the missing file; a complete release
+          # never reaches this step.
+          skip-existing: true
+      # No token fallback. The 2.6.3 artifacts carry a PEP 740 attestation, which
+      # only the OIDC trusted publisher can mint, so the trusted path is known to
+      # work and a long-lived PYPI_API_TOKEN has no job left to do. A failed OIDC
+      # upload must fail the release instead of quietly downgrading to a token.
+      - name: Verify the release is live and complete on PyPI
+        if: steps.gate.outputs.skip != 'true'
+        shell: bash
+        env:
+          PREEXISTING_FILES: ${{ steps.gate.outputs.preexisting_files }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          name = "${{ steps.meta.outputs.name }}"
+          version = "${{ steps.meta.outputs.version }}"
+          url = f"https://pypi.org/pypi/{name}/{version}/json"
+          expected = sorted(
+              path.name
+              for path in Path("dist").iterdir()
+              if path.name.endswith((".whl", ".tar.gz"))
+          )
+          assert len([item for item in expected if item.endswith(".whl")]) == 1, expected
+          assert len([item for item in expected if item.endswith(".tar.gz")]) == 1, expected
+          preexisting = set(json.loads(os.environ.get("PREEXISTING_FILES") or "[]"))
 
           # The upload action returning is not the version being readable. Poll
-          # both public indexes over five minutes; a version that never appears
-          # fails the release instead of reporting a green run for an upload
-          # nobody can install.
-          for attempt in $(seq 1 20); do
-            if curl --retry 2 --retry-delay 2 --retry-all-errors -sfL "$json_url" > /dev/null; then
-              echo "PyPI JSON endpoint sees ${version} on attempt ${attempt}."
-              exit 0
-            fi
-            if curl --retry 2 --retry-delay 2 --retry-all-errors -sfL "$simple_url" | grep -Fq "$version"; then
-              echo "PyPI simple index sees ${version} on attempt ${attempt}."
-              exit 0
-            fi
-            sleep 15
-          done
+          # the JSON endpoint over five minutes until both expected files are
+          # visible; a version that never becomes complete fails the release
+          # instead of reporting a green run for an upload nobody can install.
+          data = None
+          last_error = None
+          published = {}
+          for attempt in range(20):
+              try:
+                  with urllib.request.urlopen(url, timeout=60) as response:
+                      data = json.load(response)
+              except urllib.error.HTTPError as error:
+                  last_error = error
+                  if error.code not in (404, 410):
+                      raise
+              except OSError as error:
+                  last_error = error
+              else:
+                  published = {item["filename"]: item for item in data.get("urls", [])}
+                  if not set(expected) - set(published):
+                      break
+              time.sleep(15)
+          else:
+              missing = sorted(set(expected) - set(published)) if data else ["<version not visible>"]
+              raise SystemExit(
+                  f"PyPI does not serve every expected distribution after 5 minutes: "
+                  f"{missing} (last error: {last_error!r})"
+              )
 
-          echo "::error::PyPI accepted the upload, but neither public index serves ${version} after 5 minutes."
-          exit 1
+          for item_name in expected:
+              entry = published[item_name]
+              digest = hashlib.sha256((Path("dist") / item_name).read_bytes()).hexdigest()
+              if digest == entry["digests"]["sha256"]:
+                  print(f"  {item_name} sha256 matches this build")
+              elif item_name in preexisting:
+                  print(f"  {item_name} predates this run; its bytes come from the earlier upload")
+              else:
+                  raise SystemExit(
+                      f"sha256 mismatch for {item_name}: PyPI serves bytes this run did not build"
+                  )
+          print(f"PASS {name} {version} is live with {len(expected)} expected distributions")
+          PY
 
   # Split out of the `publish` job so that the only job holding `contents: write`
   # is the one that needs it. Runs 37075003605 and 37165300933 uploaded to PyPI
