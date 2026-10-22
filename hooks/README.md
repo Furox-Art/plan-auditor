@@ -4,7 +4,7 @@
 supervisor assessment and only returns PASS when every active plan has:
 
 - explicit requirement coverage,
-- an intact format-v3 full-contract seal,
+- an intact format-v4 full-contract seal,
 - matching supervisor profile/mode/policy contract,
 - a fresh deterministic full audit,
 - valid active + archived evidence,

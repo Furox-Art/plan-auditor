@@ -130,7 +130,7 @@ ONLINE_EXPECTATIONS = {
         200,
     ),
     "npm": (
-        f"https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@{CURRENT_VERSION}",
+        f"https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@{NPM_CURRENT_VERSION}",
         404,
     ),
 }

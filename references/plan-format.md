@@ -125,7 +125,7 @@ limit when a check legitimately needs more output.
 
 ## Full-contract sealing
 
-`plan-auditor plan verify .` creates a format-v3 seal. It binds:
+`plan-auditor plan verify .` creates a format-v4 seal. It binds:
 
 - task and requirements,
 - required tools,

@@ -71,7 +71,7 @@ For a dependent step to pass:
 4. Every output declared by the dependent step is independently checked.
 5. The current graph/check/output/coverage contract must match the audited plan
    fingerprint.
-6. The format-v3 seal must still contain all previously approved dependencies,
+6. The format-v4 seal must still contain all previously approved dependencies,
    required outputs, output checks, coverage links and step checks.
 
 A blocked prerequisite does **not** consume an implementation retry for the
