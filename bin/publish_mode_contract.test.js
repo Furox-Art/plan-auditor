@@ -199,8 +199,8 @@ check('every existing release gate survives', () => {
   assert_match(text, /npm view "plan-auditor@\$\{\{ steps\.meta\.outputs\.version \}\}"/,
     'the registry version-existence check is gone');
   assert_match(text, /check_version_lockstep\.py/, 'the version lockstep check is gone');
-  assert_match(text, /test:tarball/, 'the tarball allowlist check is gone');
-  assert_match(text, /test:installed/, 'the installed-launcher verification is gone');
+  assert_match(text, /npm run test:lifecycle/, 'the pre-publish lifecycle test is gone');
+  assert_match(text, /npm run test:gate/, 'the consolidated pre-publish gate is gone');
 });
 
 function assert_match(haystack, pattern, message) {

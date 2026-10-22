@@ -26,7 +26,7 @@
   ],
   "scripts": {
     "test": "node --check index.js && node --check bin/plan-auditor.js",
-    "test:contract": "node --check bin/launcher_contract.test.js && node bin/launcher_contract.test.js",
+    "test:contract": "node --check bin/launcher_contract.test.js && node bin/launcher_contract.test.js && node --check bin/prepublish_gate_contract.test.js && node bin/prepublish_gate_contract.test.js",
     "test:publish-modes": "node --check bin/publish_mode_contract.test.js && node bin/publish_mode_contract.test.js",
     "test:gate": "node --check bin/prepublish_gate.js && node bin/prepublish_gate.js",
     "test:lifecycle": "node --check bin/prepublish_lifecycle.test.js && node bin/prepublish_lifecycle.test.js",

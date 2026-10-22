@@ -33,8 +33,9 @@ Nothing on this site requires an LLM, a GPU, or a network connection.
 are immutable; see the README's release-status section for what each one shipped.
 
 A `2.4.2` wheel ships the Python packages `supervisor` and `scripts`, and
-additionally ships the Agent Skill assets (`SKILL.md`, `scripts/`, `references/`,
-`hooks/` and the Node launcher) namespaced under `plan_auditor_skill/`. It does
+additionally ships the Agent Skill assets (`SKILL.md`, `references/`, `hooks/`
+and the Node launcher) namespaced under `plan_auditor_skill/`; `scripts/` stays
+a top-level Python package. It does
 **not** ship `docs/` or `examples/`. CI asserts that every wheel it builds
 contains the runtime files and the skill assets, via
 `.github/scripts/check_dist_assets.py`.
