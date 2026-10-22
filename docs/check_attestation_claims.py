@@ -71,6 +71,11 @@ ROOT = Path(__file__).resolve().parents[1]
 #: Bumped together with the release.
 CURRENT_VERSION = "2.6.3"
 
+#: npm can lag PyPI: a version bump lands on PyPI first because the npm upload
+#: needs the trusted publisher and its own workflow run. Bump this when npm
+#: catches up, or the docs and this pin drift apart in the other direction.
+NPM_CURRENT_VERSION = "2.6.2"
+
 #: Documents that state current facts. Strict rules apply to their prose.
 CURRENT_FACT_DOCS = ("README.md", "SECURITY.md")
 CURRENT_FACT_GLOBS = ("docs/**/*.md", "SKILL.md", "CONTRIBUTING.md")
@@ -259,6 +264,11 @@ def _signature_problems(path: Path) -> list[str]:
 def _version_problems(path: Path) -> list[str]:
     """Flag a *stale* version only where that version is the one called current.
 
+    The rule is channel-scoped. PyPI and npm publish independently, so npm can
+    legitimately sit one release behind: ``2.6.2`` is current on npm while
+    ``2.6.3`` is current on PyPI. A sentence that names no channel is held to
+    the PyPI pin, which is the version the tree ships.
+
     Deliberately sentence-scoped: one table row can call `2.4.3` current and name
     `2.4.0` and `2.4.1` as defective in the same breath, and the defective ones are
     not claims to be current.
@@ -277,12 +287,19 @@ def _version_problems(path: Path) -> list[str]:
                     continue
                 if re.search(r"\b(?:was|were|superseded|no longer|not the)\b", sentence, re.I):
                     continue
+                names_npm = bool(re.search(r"\bnpm\b", sentence, re.I))
+                names_pypi = bool(re.search(r"\bpypi\b", sentence, re.I))
+                allowed = set()
+                if names_pypi or not names_npm:
+                    allowed.add(CURRENT_VERSION)
+                if names_npm:
+                    allowed.add(NPM_CURRENT_VERSION)
                 for raw in re.findall(r"`(\d+\.\d+\.\d+)`|\b(\d+\.\d+\.\d+)\b", sentence):
                     found = raw[0] or raw[1]
-                    if found and found != CURRENT_VERSION:
+                    if found and found not in allowed:
                         problems.append(
                             f"{rel}:{index}: calls {found} the current release; the current "
-                            f"release is {CURRENT_VERSION}: {sentence.strip()}"
+                            f"release is {', '.join(sorted(allowed))}: {sentence.strip()}"
                         )
     return sorted(set(problems))
 
@@ -374,6 +391,10 @@ NEGATIVE_CONTROLS: tuple[tuple[str, str], ...] = (
         "`2.4.2` is the current release on both registries.\n",
     ),
     (
+        "PyPI pin used for the npm channel",
+        "npm `9.9.9` is the current release.\n",
+    ),
+    (
         "vague gesture, no definite status",
         "npm and PyPI attestation status is complicated.\n",
     ),
@@ -386,6 +407,8 @@ NEGATIVE_CONTROLS: tuple[tuple[str, str], ...] = (
 POSITIVE_CONTROL = (
     "PyPI publishes every artifact with a PEP 740 provenance attestation; npm has no\n"
     "provenance attestation and its attestations endpoint returns `404` for one.\n"
+    f"npm `{NPM_CURRENT_VERSION}` is the current release.\n"
+    f"PyPI `{CURRENT_VERSION}` is the current release.\n"
 )
 
 #: Must be *skipped*, not flagged: same word, different meaning.
