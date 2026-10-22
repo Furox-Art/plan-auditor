@@ -262,5 +262,5 @@ so the Markdown is known to build, but nothing serves it; build it with
   tarball against `dist.integrity`. PyPI carries a PEP 740 provenance attestation.
 - No comparison against other tools has been measured, no telemetry is collected,
   and no download or usage figure is printed anywhere in this repository.
-- Maintained by one person, pre-1.0, with no external contributors yet. That means
+- Maintained by one person, with no external contributors yet. That means
   slow review, not unwanted contributions.

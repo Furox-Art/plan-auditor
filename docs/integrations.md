@@ -55,7 +55,7 @@ Exit codes:
 - `1` — deterministic/blocking FAIL
 - `3` — UNKNOWN; completion is withheld
 
-A PASS requires all active plans to satisfy requirement coverage, format-v3
+A PASS requires all active plans to satisfy requirement coverage, format-v4
 full-contract seals, fresh full audits, evidence/registry integrity and policies.
 
 ## Command Code compatibility Stop hook
