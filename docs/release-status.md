@@ -6,9 +6,9 @@ rather than against this repository, and it is the page to re-read before trusti
 version number.
 
 The short version, kept in the README as well: **`2.6.3` is the current release on
-PyPI. npm still serves `2.6.2`.** The npm publish step for `2.6.3` fails with `E404`
-until a trusted publisher or a publish-scoped token is configured; the quick start in
-the README describes the published packages rather than only a checkout.
+both PyPI and npm.** The npm trusted publisher is now registered, so automatic
+publishes take the OIDC path with `--provenance`; the quick start in the README
+describes the published packages rather than only a checkout.
 
 If this page and a registry ever disagree, the registry is right and this page is
 stale.
@@ -57,6 +57,10 @@ Both rows were measured against `2.4.3`.
 | PyPI | **yes** | `https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance` | `200`. in-toto v1 statement, predicate type `https://docs.pypi.org/attestations/publish/v1`, publisher `kind=GitHub`, `repository=Furox-Art/plan-auditor`, `workflow=release.yml`, `environment=pypi`. Subject `sha256` equals the digest PyPI serves. |
 | npm | **no** | `https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3` | `404`. No `provenance` field and no `dist.attestations` in the packument. `dist.signatures` **is** present, and is the transport signature described above. |
 
+For the current release, `2.6.3`, both channels return `200`: PyPI serves the PEP 740
+statement and npm serves a Sigstore statement whose predicate type is
+`https://slsa.dev/provenance/v1`.
+
 ### The URL shape matters when you re-check this
 
 PyPI serves attestations **per file**. The path ends in `/<filename>/provenance`.
@@ -88,25 +92,17 @@ npm view plan-auditor@2.4.3 dist.integrity
 npm view plan-auditor@2.4.3 dist.signatures
 ```
 
-## What would give npm provenance
+## npm provenance is enabled
 
-**Pending.** npm is weaker here for exactly one reason: this package has no trusted
-publisher registered on npmjs.com, so an automatic release fails with `E404` instead
-of silently publishing without provenance. Nothing in this repository needs to change;
-one record on npmjs.com does:
+The trusted publisher record now exists on npmjs.com, so automatic releases take the
+OIDC path with `--provenance` and npm serves a Sigstore build attestation: the
+attestations endpoint returns `200` for `2.6.3` with predicate type
+`https://slsa.dev/provenance/v1`. Versions published before the record was created,
+including `2.4.3` measured above, have no attestation; their `404` is history, not a
+current limitation.
 
-| Field | Value |
-|---|---|
-| Owner | `Furox-Art` |
-| Package | `plan-auditor` |
-| Workflow filename | `npm-publish.yml` |
-| Environment | the environment the publish job declares |
-
-The workflow takes the OIDC path with `--provenance` on every automatic run and fails
-closed rather than silently downgrading; a manual dispatch may explicitly set
-`use_token_fallback=true` to publish with `NPM_TOKEN` instead, which cannot produce
-provenance. Until the record is created, npm consumers get digest verification only,
-and this page will keep saying so.
+A manual dispatch may still explicitly set `use_token_fallback=true` to publish with
+`NPM_TOKEN` instead, which cannot produce provenance.
 
 ## What the artifacts contain
 

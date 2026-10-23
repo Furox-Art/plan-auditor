@@ -25,13 +25,14 @@ CITATION = ROOT / "CITATION.cff"
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 # Supply-chain signals the project never configures, so the docs must never imply
-# them. ``provenance`` is deliberately not here: it is handled separately by
-# ``test_readme_has_no_unverifiable_trust_badges``, because the two registries
-# differ and the README has to be able to say which one attests and which does not.
+# them. ``provenance`` and ``slsa`` are deliberately not here: npm publishes a
+# Sigstore SLSA provenance attestation for the current release, so both words name
+# a real signal. They are handled separately by
+# ``test_readme_has_no_unverifiable_trust_badges``, which requires every such claim
+# to name a registry.
 NEVER_CLAIMED_SIGNALS = [
     "scorecard",
     "openssf",
-    "slsa",
 ]
 
 UNVERIFIED_ADOPTION = [
@@ -197,15 +198,13 @@ def test_readme_points_at_the_pypi_project_page_for_downloads() -> None:
 def test_readme_has_no_unverifiable_trust_badges() -> None:
     """No supply-chain signal may be claimed unless it is real.
 
-    ``scorecard``, ``openssf`` and ``slsa`` stay banned outright: the project
-    configures no such badge or level, so any mention would be a claim.
+    ``scorecard`` and ``openssf`` stay banned outright: the project configures
+    no such badge or level, so any mention would be a claim.
 
-    ``provenance`` is different, and is now scoped rather than banned. The two
-    registries genuinely differ -- PyPI publishes through trusted publishing and
-    serves a PEP 740 attestation, while npm ``2.4.2`` has none -- so the README
-    has to be able to say so. Every mention must therefore name a registry or
-    state an absence. That keeps the original intent (never imply a signal you do
-    not have) and makes it checkable per sentence instead of by word count.
+    ``provenance`` is scoped rather than banned. Both registries now attest --
+    PyPI serves a PEP 740 statement and npm serves Sigstore SLSA provenance for
+    ``2.6.3`` -- but the attestations are per registry and per version, so every
+    mention must still name a registry (or state an absence) to be checkable.
     """
     text = _read(README)
     lowered = text.lower()
@@ -219,23 +218,28 @@ def test_readme_has_no_unverifiable_trust_badges() -> None:
         r"pypi|npm|not\b|no\b|without|absent|absence|404|cannot|mint",
         re.I,
     )
-    offenders = [
-        f"  line {number}: {line.strip()}"
-        for number, line in enumerate(text.splitlines(), 1)
-        if "provenance" in line.lower() and not scoped.search(line)
-    ]
+    # Markdown hard-wraps at ~80 columns, so a sentence that names a registry and
+    # then mentions provenance can straddle two physical lines. Judge sentences in
+    # their paragraph, not lines, or the check becomes a formatting rule.
+    offenders = []
+    for block in re.split(r"\n\s*\n", text):
+        normalised = " ".join(block.split())
+        for sentence in re.split(r"(?<=[.!?])\s+", normalised):
+            if "provenance" in sentence.lower() and not scoped.search(sentence):
+                offenders.append(f"  {sentence.strip()}")
     assert not offenders, (
         "every README mention of provenance must name a registry or state an "
         "absence; these do neither:\n" + "\n".join(offenders)
     )
 
 
-def test_readme_states_the_npm_attestation_gap() -> None:
-    """The npm attestation gap is a documented fact, not an omission.
+def test_readme_states_the_npm_attestation_status() -> None:
+    """The README must state npm's attestation status explicitly.
 
-    Guarding the negative claim in both directions: the README must say npm has
-    no provenance attestation, so nobody reads the PyPI attestation as covering
-    both registries.
+    For the current release npm serves a Sigstore SLSA provenance attestation.
+    The README must say so per registry rather than letting the PyPI attestation
+    read as covering both, and must keep saying that ``dist.signatures`` is a
+    transport signature, not build provenance.
     """
     lowered = _read(README).lower()
     assert "npm" in lowered
@@ -244,9 +248,20 @@ def test_readme_states_the_npm_attestation_gap() -> None:
         lowered,
         re.S,
     ), "README must state npm's attestation status explicitly"
-    assert re.search(r"\b404\b|no provenance|not attested|without.{0,40}attestation", lowered), (
-        "README must state that npm 2.4.2 carries no provenance attestation"
+    assert re.search(r"npm[^.]{0,200}?(?:sigstore|slsa)", lowered, re.S), (
+        "README must name the npm attestation mechanism (Sigstore SLSA provenance)"
     )
+    assert not re.search(
+        r"npm[^.]{0,80}(?:has|carries|serves)[^.]{0,40}no[^.]{0,40}(?:provenance|attestation)",
+        lowered,
+    ), "README must not claim npm has no attestation now that 2.6.3 is attested"
+    signature_lines = [
+        line for line in lowered.splitlines() if "dist.signatures" in line
+    ]
+    assert signature_lines, "README must mention npm's dist.signatures block"
+    assert all(
+        re.search(r"\bnot\b|rather than|never", line) for line in signature_lines
+    ), "README must say dist.signatures is not provenance"
 
 
 @pytest.mark.parametrize("source", _markdown_files(), ids=lambda p: p.name)
