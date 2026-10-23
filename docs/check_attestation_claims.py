@@ -19,7 +19,7 @@ The measured state of this project, re-checkable with ``--online``:
 Channel       Build attested? Endpoint
 ============  ===============  ==========================================
 PyPI          yes             ``/integrity/<proj>/<ver>/<file>/provenance``
-npm           no              ``/-/npm/v1/attestations/<pkg>@<ver>`` -> 404
+npm           yes             ``/-/npm/v1/attestations/<pkg>@<ver>`` -> 200
 ============  ===============  ==========================================
 
 Rules enforced, on prose in the documents that state *current* facts:
@@ -72,9 +72,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CURRENT_VERSION = "2.6.3"
 
 #: npm can lag PyPI: a version bump lands on PyPI first because the npm upload
-#: needs the trusted publisher and its own workflow run. Bump this when npm
+#: runs in its own workflow. The two are equal as of 2.6.3; bump this when npm
 #: catches up, or the docs and this pin drift apart in the other direction.
-NPM_CURRENT_VERSION = "2.6.2"
+NPM_CURRENT_VERSION = "2.6.3"
 
 #: Documents that state current facts. Strict rules apply to their prose.
 CURRENT_FACT_DOCS = ("README.md", "SECURITY.md")
@@ -131,7 +131,7 @@ ONLINE_EXPECTATIONS = {
     ),
     "npm": (
         f"https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@{NPM_CURRENT_VERSION}",
-        404,
+        200,
     ),
 }
 
@@ -265,9 +265,9 @@ def _version_problems(path: Path) -> list[str]:
     """Flag a *stale* version only where that version is the one called current.
 
     The rule is channel-scoped. PyPI and npm publish independently, so npm can
-    legitimately sit one release behind: ``2.6.2`` is current on npm while
-    ``2.6.3`` is current on PyPI. A sentence that names no channel is held to
-    the PyPI pin, which is the version the tree ships.
+    legitimately sit one release behind, and each channel has its own pin. A
+    sentence that names no channel is held to the PyPI pin, which is the version
+    the tree ships.
 
     Deliberately sentence-scoped: one table row can call `2.4.3` current and name
     `2.4.0` and `2.4.1` as defective in the same breath, and the defective ones are
@@ -405,8 +405,8 @@ NEGATIVE_CONTROLS: tuple[tuple[str, str], ...] = (
 )
 
 POSITIVE_CONTROL = (
-    "PyPI publishes every artifact with a PEP 740 provenance attestation; npm has no\n"
-    "provenance attestation and its attestations endpoint returns `404` for one.\n"
+    "PyPI publishes every artifact with a PEP 740 provenance attestation; npm publishes\n"
+    f"a Sigstore build attestation for `{NPM_CURRENT_VERSION}`.\n"
     f"npm `{NPM_CURRENT_VERSION}` is the current release.\n"
     f"PyPI `{CURRENT_VERSION}` is the current release.\n"
 )
