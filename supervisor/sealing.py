@@ -321,10 +321,31 @@ def _validate_seal_self_consistency(seal: Seal) -> None:
         raise SealIntegrityError("plan seal criteria_count mismatch")
 
 
+def _unique_seal_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in values:
+            raise ValueError(f"duplicate seal JSON key: {key}")
+        values[key] = value
+    return values
+
+
+def _reject_seal_constant(value: str) -> None:
+    raise ValueError(f"non-standard seal JSON constant: {value}")
+
+
+def _parse_seal_json(text: str) -> Any:
+    return json.loads(
+        text,
+        object_pairs_hook=_unique_seal_keys,
+        parse_constant=_reject_seal_constant,
+    )
+
+
 def load_seal(path: str) -> Optional[Seal]:
     target = Path(path)
     try:
-        data = json.loads(target.read_text(encoding="utf-8"))
+        data = _parse_seal_json(target.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
@@ -353,10 +374,22 @@ def _write_seal_payload(payload: Dict[str, Any], path: Path, key: Optional[KeyMa
         value["auth"] = make_auth(key, SEAL_DOMAIN, payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    if tmp.exists() and tmp.is_symlink():
-        raise SealIntegrityError(f"refusing symlinked seal temp path: {tmp}")
-    tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(tmp, flags, 0o600)
+    except FileExistsError as exc:
+        if tmp.is_symlink():
+            raise SealIntegrityError(f"refusing symlinked seal temp path: {tmp}") from exc
+        raise SealIntegrityError(f"seal temp path already exists: {tmp}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, indent=2, ensure_ascii=False))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def save_seal(seal: Seal, path: str) -> None:
@@ -389,8 +422,8 @@ def initialize_seal_auth(root: str | Path, key: KeyMaterial) -> None:
             candidates.append(path)
     for path in candidates:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            data = _parse_seal_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
             raise SealIntegrityError(f"cannot authenticate invalid seal {path.name}: {exc}") from exc
         if not isinstance(data, dict):
             raise SealIntegrityError(f"cannot authenticate invalid seal {path.name}")

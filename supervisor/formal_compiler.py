@@ -12,6 +12,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -474,13 +475,22 @@ def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
         raise ValueError(f"refusing to write through symlink: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".formalize.tmp")
-    if tmp.exists() and tmp.is_symlink():
-        raise ValueError(f"refusing symlinked temporary plan path: {tmp}")
-    tmp.write_text(
-        json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    tmp.replace(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(tmp, flags, 0o600)
+    except FileExistsError as exc:
+        if tmp.is_symlink():
+            raise ValueError(f"refusing symlinked temporary plan path: {tmp}") from exc
+        raise ValueError(f"temporary plan path already exists: {tmp}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _compile_ref(
