@@ -9,7 +9,7 @@ from scripts.plan_graph import validate_output_links
 
 
 def TestOneInput(data: bytes) -> None:
-    fdp = atheris.FuzzDataProvider(data)
+    fdp = atheris.FuzzedDataProvider(data)
     document = fdp.ConsumeUnicodeNoSurrogates(4096)
     try:
         plan = json.loads(document)
