@@ -41,8 +41,8 @@ jobs:
           pip install .
       - name: Run determinism matrix
         run: >
-          python scripts/determinism_matrix.py run
-          --workload scripts/determinism_workload.py
+          python tests/tools/determinism_matrix.py run
+          --workload tests/tools/determinism_workload.py
           --out determinism-manifest-${{ matrix.os }}.json
           --seeds 0 12345 random
           --threads 1 4
@@ -88,7 +88,7 @@ jobs:
               left=$(basename "${files[$i]}" .json)
               right=$(basename "${files[$j]}" .json)
               echo "=== ${left} vs ${right} ==="
-              python scripts/determinism_matrix.py compare \
+              python tests/tools/determinism_matrix.py compare \
                 "${files[$i]}" "${files[$j]}" > "compare-${left}-${right}.json"
             done
           done

@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ENGINE = REPO_ROOT / "scripts" / "determinism_matrix.py"
-WORKLOAD = REPO_ROOT / "scripts" / "determinism_workload.py"
+ENGINE = REPO_ROOT / "tests" / "tools" / "determinism_matrix.py"
+WORKLOAD = REPO_ROOT / "tests" / "tools" / "determinism_workload.py"
 
 
 def _run_engine(*args: object) -> subprocess.CompletedProcess[str]:
