@@ -18,7 +18,9 @@ def main() -> None:
 
     from scripts import audit_check as ac
     from scripts.contract import canonical_digest, canonical_json, plan_hash
-    from supervisor import watchdog
+    from supervisor import contracts, watchdog
+    from supervisor.config import Config
+    from supervisor.policies import load_policy_rules_from_dir
     from supervisor.workspace import GitState, WorkspaceState, diff_workspaces
 
     # audit_check predates strict typing; bind the two entry points through a
@@ -100,6 +102,42 @@ def main() -> None:
     if tools_changed != [["aaa", [False, True]], ["bbb", [None, True]], ["zzz", [True, False]]]:
         raise SystemExit(f"workspace tool order is not deterministic: {tools_changed!r}")
 
+    # Policy files are hashed and loaded in directory order. Path ordering is
+    # case-insensitive on Windows, so a mixed-case directory exercises the raw
+    # name sort that keeps the fingerprint and rule order equal across OSes.
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace = Path(tmp)
+        directory = workspace / "policies"
+        directory.mkdir()
+        for name, rule_id in (("Zulu.json", "zulu-rule"), ("alpha.json", "alpha-rule")):
+            (directory / name).write_text(
+                json.dumps(
+                    {
+                        "rules": [
+                            {
+                                "id": rule_id,
+                                "kind": "require_truthy",
+                                "field": "status",
+                                "level": 1,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+        policy_errors: list[str] = []
+        policy_rules = [
+            rule.rule_id
+            for rule in load_policy_rules_from_dir(str(directory), errors=policy_errors)
+        ]
+        policy_sha = contracts.policy_fingerprint(
+            workspace, Config(workspace_root=str(workspace), policies_dir="policies")
+        )
+    if policy_errors:
+        raise SystemExit(f"policy files did not load: {policy_errors!r}")
+    if policy_rules != ["zulu-rule", "alpha-rule"]:
+        raise SystemExit(f"policy rule order is not deterministic: {policy_rules!r}")
+
     payload: dict[str, Any] = {
         "plan_hash": plan_hash(plan),
         "canonical": canonical_json(unordered),
@@ -107,6 +145,7 @@ def main() -> None:
         "evidence_hashes": hashes,
         "verify": {"ok": ok, "count": count, "problem": problem},
         "supervisor": {"events": supervisor_events, "tools_changed": tools_changed},
+        "policy": {"fingerprint": policy_sha, "rules": policy_rules},
     }
     if not payload["verify"]["ok"] or payload["verify"]["count"] != 3:
         raise SystemExit("evidence chain did not verify; the workload is vacuous")

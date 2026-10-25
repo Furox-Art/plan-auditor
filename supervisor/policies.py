@@ -330,7 +330,9 @@ def load_policy_rules_from_dir(dirpath: str, errors: Optional[List[str]] = None)
         return []
 
     specs: List[tuple[Path, Dict[str, Any]]] = []
-    for path in sorted(root.iterdir()):
+    # Sort by raw name: Path ordering is case-insensitive on Windows, so rule
+    # load order (and thus tied-priority resolution) would otherwise differ per OS.
+    for path in sorted(root.iterdir(), key=lambda entry: entry.name):
         if path.suffix.lower() not in {".json", ".toml"}:
             continue
         if path.is_symlink():

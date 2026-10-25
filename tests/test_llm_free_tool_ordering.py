@@ -1,20 +1,28 @@
-"""Hash-seed invariance for the LLM-free supervisor tools' serialised order.
+"""Hash-seed and OS-path-order invariance for the LLM-free supervisor tools.
 
 The watchdog publishes filesystem/git events and the workspace diff publishes
 tool transitions. Both are built from sets, so their order previously followed
-CPython's string hash randomisation. The same bytes are appended to evidence
-logs and compared by the determinism matrix, so ordering must not move between
-two interpreters that differ only by ``PYTHONHASHSEED``.
+CPython's string hash randomisation. Policy files, named plans and seals are
+sorted through ``Path`` objects, whose ordering is case-insensitive on Windows
+and case-sensitive on POSIX, so mixed-case names moved between OSes. The same
+bytes are appended to evidence logs and compared by the determinism matrix, so
+ordering must not move between two interpreters that differ only by
+``PYTHONHASHSEED``, nor between Windows and Linux.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
 from functools import cache
 from pathlib import Path
+
+from supervisor import contracts, plans
+from supervisor.config import Config
+from supervisor.policies import load_policy_rules_from_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -121,3 +129,50 @@ def test_workspace_tool_transitions_are_sorted_and_hash_seed_invariant() -> None
         ["bbb", [None, True]],
         ["zzz", [True, False]],
     ]
+
+
+def _write_policy(directory: Path, name: str, rule_id: str) -> None:
+    (directory / name).write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {"id": rule_id, "kind": "require_truthy", "field": "status", "level": 1}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_policy_fingerprint_orders_mixed_case_files_by_raw_name(tmp_path: Path) -> None:
+    policies = tmp_path / "policies"
+    policies.mkdir()
+    _write_policy(policies, "Zulu.json", "zulu")
+    _write_policy(policies, "alpha.json", "alpha")
+    entries = [
+        {
+            "path": f"policies/{name}",
+            "sha256": hashlib.sha256((policies / name).read_bytes()).hexdigest(),
+        }
+        for name in ("Zulu.json", "alpha.json")
+    ]
+    expected = hashlib.sha256(contracts._canonical(entries)).hexdigest()
+    cfg = Config(workspace_root=str(tmp_path), policies_dir="policies")
+    assert contracts.policy_fingerprint(tmp_path, cfg) == expected
+
+
+def test_policy_rules_and_named_plans_use_raw_name_order(tmp_path: Path) -> None:
+    policies = tmp_path / "policies"
+    policies.mkdir()
+    _write_policy(policies, "Zulu.json", "zulu-rule")
+    _write_policy(policies, "alpha.json", "alpha-rule")
+    errors: list[str] = []
+    rules = load_policy_rules_from_dir(str(policies), errors=errors)
+    assert errors == []
+    assert [rule.rule_id for rule in rules] == ["zulu-rule", "alpha-rule"]
+
+    plans_dir = tmp_path / ".plan-auditor" / "plans"
+    plans_dir.mkdir(parents=True)
+    for name in ("Zulu.json", "alpha.json"):
+        (plans_dir / name).write_text("{}", encoding="utf-8")
+    assert [ref.name for ref in plans.iter_plan_refs(tmp_path)] == ["Zulu", "alpha"]

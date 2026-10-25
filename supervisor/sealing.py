@@ -414,7 +414,9 @@ def initialize_seal_auth(root: str | Path, key: KeyMaterial) -> None:
     if default.is_file():
         candidates.append(default)
     if seals.is_dir():
-        for path in sorted(seals.iterdir()):
+        # Sort by raw name: Path ordering is case-insensitive on Windows, so
+        # seal authentication order would otherwise differ per OS.
+        for path in sorted(seals.iterdir(), key=lambda entry: entry.name):
             if path.suffix.lower() != ".json":
                 continue
             if path.is_symlink() or not path.is_file():
