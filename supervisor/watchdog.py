@@ -31,14 +31,14 @@ class WatchResult:
 def _snapshot_files(root: str) -> Dict[str, float]:
     state: Dict[str, float] = {}
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
+        dirnames[:] = sorted(
             name for name in dirnames
             if name not in {".plan-auditor", ".git", "__pycache__", ".pytest_cache"}
-        ]
-        for fn in filenames:
+        )
+        for fn in sorted(filenames):
             p = os.path.join(dirpath, fn)
             try:
-                rel = os.path.relpath(p, root)
+                rel = os.path.relpath(p, root).replace(os.sep, "/")
                 state[rel] = os.path.getmtime(p)
             except OSError:
                 continue
@@ -87,15 +87,15 @@ class Watchdog:
             if path in self._baseline and mtime != self._baseline[path]:
                 changed.add(path)
 
-        for p in created:
+        for p in sorted(created):
             events.append(WatchEvent(ts=now, kind="fs_create", path=p))
-        for p in deleted:
+        for p in sorted(deleted):
             events.append(WatchEvent(ts=now, kind="fs_delete", path=p))
-        for p in changed:
+        for p in sorted(changed):
             events.append(WatchEvent(ts=now, kind="fs_modify", path=p))
 
         git_changed = _git_changed_files(self.root)
-        for p in git_changed - created - deleted - changed:
+        for p in sorted(git_changed - created - deleted - changed):
             events.append(WatchEvent(ts=now, kind="git_change", path=p))
             changed.add(p)
 
