@@ -39,7 +39,9 @@ def policy_fingerprint(root: str | Path, cfg: Config) -> str:
         if canonical_directory in seen:
             continue
         seen.add(canonical_directory)
-        for path in sorted(directory.iterdir()):
+        # Sort by raw name: Path ordering is case-insensitive on Windows, so
+        # mixed-case filenames would otherwise hash in a different order per OS.
+        for path in sorted(directory.iterdir(), key=lambda entry: entry.name):
             if path.suffix.lower() not in {".json", ".toml"}:
                 continue
             if path.is_symlink():

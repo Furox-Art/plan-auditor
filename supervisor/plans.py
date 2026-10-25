@@ -114,7 +114,9 @@ def iter_plan_refs(root: str | Path) -> Iterator[PlanRef]:
     if not directory.is_dir():
         raise PlanNameError(f"named plan directory is not a directory: {directory}")
 
-    for path in sorted(directory.iterdir()):
+    # Sort by raw name: Path ordering is case-insensitive on Windows, so named
+    # plans would otherwise be yielded in a different order per OS.
+    for path in sorted(directory.iterdir(), key=lambda entry: entry.name):
         if path.suffix.lower() != ".json":
             continue
         if path.is_symlink():
