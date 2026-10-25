@@ -152,7 +152,7 @@ def diff_workspaces(before: WorkspaceState, after: WorkspaceState) -> Dict:
         "branch_changed": before.git.branch != after.git.branch,
         "tools_changed": {
             key: (before.available_tools.get(key), after.available_tools.get(key))
-            for key in set(before.available_tools) | set(after.available_tools)
+            for key in sorted(set(before.available_tools) | set(after.available_tools))
             if before.available_tools.get(key) != after.available_tools.get(key)
         },
     }
