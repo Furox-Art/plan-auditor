@@ -20,6 +20,7 @@ def main() -> None:
     from scripts.contract import canonical_digest, canonical_json, plan_hash
     from supervisor import contracts, watchdog
     from supervisor.config import Config
+    from supervisor.plans import all_plan_refs, load_plan_ref
     from supervisor.policies import load_policy_rules_from_dir
     from supervisor.workspace import GitState, WorkspaceState, diff_workspaces
 
@@ -138,6 +139,33 @@ def main() -> None:
     if policy_rules != ["zulu-rule", "alpha-rule"]:
         raise SystemExit(f"policy rule order is not deterministic: {policy_rules!r}")
 
+    # Named plans are enumerated in raw-name order, which aggregate completion
+    # reads and seals. Path ordering is case-insensitive on Windows, so a
+    # mixed-case plan directory pins the order the refs are yielded in.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        directory = root / ".plan-auditor" / "plans"
+        directory.mkdir(parents=True)
+        for name in ("Zulu", "alpha"):
+            (directory / f"{name}.json").write_text(
+                json.dumps(
+                    {
+                        "task": f"plan-{name}",
+                        "requirements": [name],
+                        "steps": [{"id": 1, "title": name, "status": "pending"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        plan_refs = [[ref.key, plan_hash(load_plan_ref(ref))] for ref in all_plan_refs(root)]
+        script_plan_names = [name for name, _ in ac.all_plan_paths(str(root))]
+    if [key for key, _ in plan_refs] != ["Zulu", "alpha"]:
+        raise SystemExit(f"named plan order is not deterministic: {plan_refs!r}")
+    if script_plan_names != [key for key, _ in plan_refs]:
+        raise SystemExit(
+            f"audit_check and supervisor disagree on plan order: {script_plan_names!r}"
+        )
+
     payload: dict[str, Any] = {
         "plan_hash": plan_hash(plan),
         "canonical": canonical_json(unordered),
@@ -146,6 +174,7 @@ def main() -> None:
         "verify": {"ok": ok, "count": count, "problem": problem},
         "supervisor": {"events": supervisor_events, "tools_changed": tools_changed},
         "policy": {"fingerprint": policy_sha, "rules": policy_rules},
+        "plans": plan_refs,
     }
     if not payload["verify"]["ok"] or payload["verify"]["count"] != 3:
         raise SystemExit("evidence chain did not verify; the workload is vacuous")
