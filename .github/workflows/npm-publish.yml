@@ -94,6 +94,10 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The publish guard below walks back to the commit that introduced
+          # the version being published; a depth-1 clone has no such history.
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
@@ -190,6 +194,76 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+      # npm 2.6.3 is the proof this check is needed. The version was tagged on
+      # 2026-10-21 and PyPI 2.6.3 was built from that tag, but the npm tarball
+      # was published from a later main commit (30408d8): sealing.py carried #70
+      # and #62 changes and the README described a 2.6.2-only npm state, so 13 of
+      # the 70 packed files differed from the release. npm versions are
+      # immutable, so the check runs before any upload: every packed file must
+      # match the commit that introduced this version. It runs only when the gate
+      # found something to publish, so already-published versions still skip.
+      - name: Refuse to publish content newer than the version bump
+        if: steps.gate.outputs.skip != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          version = os.environ["VERSION"]
+
+          def run(*args):
+              return subprocess.run(args, capture_output=True)
+
+          def version_at(rev):
+              raw = run("git", "show", f"{rev}:package.json")
+              if raw.returncode != 0:
+                  return None
+              try:
+                  return json.loads(raw.stdout.decode("utf-8"))["version"]
+              except (UnicodeDecodeError, ValueError, KeyError, TypeError):
+                  return None
+
+          head = run("git", "rev-parse", "HEAD").stdout.decode().strip()
+          if version_at(head) != version:
+              raise SystemExit(f"HEAD does not declare package.json version {version}")
+
+          release = None
+          for rev in run("git", "rev-list", "--first-parent", "HEAD").stdout.decode().split():
+              if version_at(rev) != version:
+                  break
+              release = rev
+          if release is None:
+              raise SystemExit(f"cannot find the commit that introduced version {version}")
+          if release == head:
+              print(f"PASS: publishing {version} from its own version-bump commit {head[:9]}")
+              raise SystemExit(0)
+
+          packed = json.loads(
+              run("npm", "pack", "--dry-run", "--json").stdout.decode("utf-8")
+          )[0]["files"]
+          differing = []
+          for item in packed:
+              path = item["path"]
+              expected = run("git", "show", f"{release}:{path}")
+              actual = run("git", "show", f"HEAD:{path}")
+              if (
+                  expected.returncode != 0
+                  or actual.returncode != 0
+                  or expected.stdout != actual.stdout
+              ):
+                  differing.append(path)
+          if differing:
+              raise SystemExit(
+                  f"refusing to publish {version} from {head[:9]}: packed files differ from "
+                  f"the version-bump commit {release[:9]} ({', '.join(differing)}). "
+                  f"Bump the version and release the new content instead."
+              )
+          print(f"PASS: packed content matches the version-bump commit {release[:9]}")
+          PY
       # Publishes from the checked-out source, not from a locally installed copy,
       # so the tarball is built from exactly the reviewed commit. --provenance
       # binds the upload to this workflow run via the OIDC token minted above.
