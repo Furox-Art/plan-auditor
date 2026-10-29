@@ -1,15 +1,16 @@
 {
-  "lines": 266,
+  "lines": 281,
+  "words": 1728,
   "sections": {
-    "Documentation": 34,
-    "Honest limits": 17,
-    "How it works": 20,
-    "Install": 17,
-    "Quick start (verified, 5 minutes)": 112,
     "The problem": 6,
     "The solution": 21,
+    "Who it is for": 6,
+    "Install": 17,
+    "Quick start (verified, 5 minutes)": 112,
+    "How it works": 20,
     "Use it as an Agent Skill": 10,
-    "Who it is for": 6
-  },
-  "words": 1613
+    "Documentation": 34,
+    "Honest limits": 17,
+    "Related projects": 14
+  }
 }
