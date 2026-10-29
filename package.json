@@ -46,7 +46,13 @@
     "ci",
     "formal-verification",
     "supervisor",
-    "cli"
+    "cli",
+    "evidence",
+    "audit-log",
+    "tamper-evident",
+    "completion-gate",
+    "pddl",
+    "strips"
   ],
   "author": "Furox-Art",
   "license": "MIT",
