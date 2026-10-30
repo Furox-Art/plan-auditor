@@ -74,8 +74,9 @@ exists on npmjs.com with
 | Workflow filename | `npm-publish.yml` |
 | Environment | `npm` |
 
-so automatic publishes take the OIDC path with `--provenance`. `2.6.3` is the first
-release published through it; versions pushed by token before that stay unattested.
+so automatic npm publishes take the OIDC path with `--provenance`. npm `2.6.3` is
+the first release published through it; versions pushed by token before that stay
+unattested.
 
 When reporting a problem, say which registry and which verification you used.
 
