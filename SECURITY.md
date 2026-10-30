@@ -28,51 +28,55 @@ ends up proving less than it looks:
 | npm `dist.signatures` | The **registry** signed the packument entry, so the metadata was not altered in transit. A transport signature, **not** build provenance. | `npm view <pkg> dist.signatures` |
 | Build attestation | A CI run built this artifact from a named workflow, repo and commit, and a transparency log has the statement. | see per channel below |
 
-The two channels differ, so check them differently. Both were measured on `2.4.3`:
+The two channels now attest the current release, but their histories differ. The checks
+below use `2.6.3`, the latest on both registries; `docs/release-status.md` keeps the
+`2.4.3` measurements for that release.
 
-- **PyPI — attested.** Publishing goes through OIDC trusted publishing, so every `2.4.3`
-  artifact carries a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation
+- **PyPI — attested.** Publishing goes through OIDC trusted publishing, so the `2.6.3`
+  artifacts carry a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation
   with predicate type `https://docs.pypi.org/attestations/publish/v1`, bound to the
   artifact's SHA-256. Fetch and check it yourself:
 
   ```bash
-  curl -s https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance
+  curl -s https://pypi.org/integrity/plan-auditor/2.6.3/plan_auditor-2.6.3-py3-none-any.whl/provenance
   # statement subject sha256 must equal the digest PyPI serves for the file:
-  curl -s https://pypi.org/pypi/plan-auditor/2.4.3/json | python -c "import json,sys;print(json.load(sys.stdin)['urls'][0]['digests']['sha256'])"
+  curl -s https://pypi.org/pypi/plan-auditor/2.6.3/json | python -c "import json,sys;print(json.load(sys.stdin)['urls'][0]['digests']['sha256'])"
   ```
 
   Note the URL shape: PyPI serves attestations **per file**, so the path ends in
-  `/<filename>/provenance`. `https://pypi.org/integrity/plan-auditor/2.4.3/` is not an
+  `/<filename>/provenance`. `https://pypi.org/integrity/plan-auditor/2.6.3/` is not an
   endpoint and returns `404` — that 404 means "no such URL", not "no attestation".
 
-- **npm — not attested.** `2.4.3` was published in token mode, and a registry token cannot
-  mint an attestation. The attestations endpoint returns `404`:
+- **npm — attested from `2.6.3`.** The trusted publisher is registered, and the
+  attestations endpoint serves both the npm publish attestation and a SLSA provenance
+  bundle for `2.6.3`. `2.6.2` and every earlier npm release were published in token
+  mode, and a registry token cannot mint an attestation; their `404` is history and
+  cannot be backfilled. For those versions, verify by digest and treat that as
+  integrity only:
 
   ```bash
   curl -s -o /dev/null -w '%{http_code}\n' \
-    https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3   # -> 404
+    https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.6.3   # -> 200
+  curl -s -o /dev/null -w '%{http_code}\n' \
+    https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3   # -> 404, token-era
+  npm view plan-auditor@2.6.3 dist.integrity dist.shasum
   ```
 
-  So verify the npm artifact by digest instead, and treat that as integrity only:
+### npm provenance is enabled
 
-  ```bash
-  npm view plan-auditor@2.4.3 dist.integrity
-  ```
-
-### What would give npm provenance
-
-This is **pending**, and is the only reason npm is weaker than PyPI here. It needs one
-thing on npmjs.com and nothing in this repository: a trusted publisher with
+This used to be the one place where npm was weaker than PyPI. The registration now
+exists on npmjs.com with
 
 | Field | Value |
 |---|---|
 | Owner | `Furox-Art` |
 | Package | `plan-auditor` |
 | Workflow filename | `npm-publish.yml` |
-| Environment | the one this workflow publishes under |
+| Environment | `npm` |
 
-Once that exists, the OIDC path publishes with `--provenance` and an attestation appears.
-Until then the npm package is verifiable by digest only, and this document will say so.
+so automatic npm publishes take the OIDC path with `--provenance`. npm `2.6.3` is
+the first release published through it; versions pushed by token before that stay
+unattested.
 
 When reporting a problem, say which registry and which verification you used.
 
