@@ -142,12 +142,18 @@ def contract_plan(plan: dict[str, Any]) -> dict[str, Any]:
         if isinstance(sid, int) and sid in dependencies:
             contracted["depends_on"] = copy.deepcopy(dependencies[sid])
         steps.append(contracted)
-    return {
+    contracted = {
         "task": copy.deepcopy(plan.get("task")),
         "requirements": copy.deepcopy(plan.get("requirements")),
         "required_tools": copy.deepcopy(plan.get("required_tools", [])),
         "steps": steps,
     }
+    # Conditional so every plan sealed before this field existed keeps its exact
+    # byte-level contract hash. Once declared, the outbound-traffic scope is part
+    # of the sealed contract and cannot be widened without a new approval.
+    if "traffic" in plan:
+        contracted["traffic"] = copy.deepcopy(plan.get("traffic"))
+    return contracted
 
 
 def canonical_plan(plan: dict[str, Any]) -> str:

@@ -53,6 +53,12 @@ class SealIntegrityError(RuntimeError):
     pass
 
 
+#: Distinguishes "this seal predates the traffic contract" from an explicit
+#: ``traffic: null``. Adding the key to every payload would change the HMAC of
+#: every existing seal, so absence must stay byte-identical.
+_ABSENT = object()
+
+
 @dataclass
 class Seal:
     plan_id: str
@@ -64,11 +70,12 @@ class Seal:
     requirements: Any = None
     required_tools: Any = None
     environment: Dict[str, Any] | None = None
+    traffic: Any = _ABSENT
     format_version: int = SEAL_FORMAT_VERSION
     auth: Optional[Dict[str, str]] = None
 
     def payload(self) -> Dict[str, Any]:
-        return {
+        value = {
             "format_version": self.format_version,
             "plan_id": self.plan_id,
             "sealed_at": self.sealed_at,
@@ -80,6 +87,9 @@ class Seal:
             "environment": copy.deepcopy(self.environment or {}),
             "steps": copy.deepcopy(self.steps),
         }
+        if self.traffic is not _ABSENT:
+            value["traffic"] = copy.deepcopy(self.traffic)
+        return value
 
     def to_dict(self) -> Dict[str, Any]:
         value = self.payload()
@@ -88,12 +98,15 @@ class Seal:
         return value
 
     def as_plan(self) -> Dict[str, Any]:
-        return {
+        plan = {
             "task": copy.deepcopy(self.task),
             "requirements": copy.deepcopy(self.requirements),
             "required_tools": copy.deepcopy(self.required_tools or []),
             "steps": copy.deepcopy(self.steps),
         }
+        if self.traffic is not _ABSENT:
+            plan["traffic"] = copy.deepcopy(self.traffic)
+        return plan
 
 
 def _criteria_count(plan: Dict[str, Any]) -> int:
@@ -120,6 +133,9 @@ def seal_plan(plan: Dict, plan_id: str, sealed_at: str,
         requirements=copy.deepcopy(contracted.get("requirements")),
         required_tools=copy.deepcopy(contracted.get("required_tools", [])),
         environment=copy.deepcopy(environment or {}),
+        traffic=(
+            copy.deepcopy(contracted["traffic"]) if "traffic" in contracted else _ABSENT
+        ),
         steps=copy.deepcopy(contracted.get("steps", [])),
     )
 
@@ -254,7 +270,27 @@ def check_monotonic(before: Dict, after: Dict) -> MonotonicCheck:
             "sealed required-tool scope changed; adding/removing tools requires host approval"
         )
 
+    if _traffic_scope(before.get("traffic")) != _traffic_scope(after.get("traffic")):
+        violations.append(
+            "sealed outbound-traffic scope changed; allowed hosts require host approval"
+        )
+
     return MonotonicCheck(ok=not violations, violations=violations, improvements=improvements)
+
+
+def _traffic_scope(value: Any) -> Any:
+    """Normalize host order/case so only a real scope change is a violation."""
+    if not isinstance(value, dict):
+        return value
+    hosts = value.get("allowed_hosts")
+    if isinstance(hosts, list):
+        return {
+            **value,
+            "allowed_hosts": sorted(
+                {str(host).strip().lower() for host in hosts if isinstance(host, str)}
+            ),
+        }
+    return value
 
 
 def check_environment(seal: Seal, current: Dict[str, Any]) -> MonotonicCheck:
@@ -301,6 +337,7 @@ def _parse_seal_data(data: Dict[str, Any]) -> Seal:
         requirements=copy.deepcopy(data.get("requirements")),
         required_tools=copy.deepcopy(data.get("required_tools", [])),
         environment=copy.deepcopy(data.get("environment", {})),
+        traffic=copy.deepcopy(data["traffic"]) if "traffic" in data else _ABSENT,
         steps=copy.deepcopy(data.get("steps", [])),
         format_version=format_version,
         auth=copy.deepcopy(data.get("auth")) if isinstance(data.get("auth"), dict) else None,

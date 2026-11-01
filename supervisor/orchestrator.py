@@ -50,6 +50,7 @@ from .sealing import (
     check_monotonic,
     load_seal,
 )
+from .traffic import evaluate_traffic
 from .workspace import capture_workspace, tool_available
 
 
@@ -367,6 +368,7 @@ def _evaluate_plan(
     pending = [int(step.get("id")) for step in plan.get("steps", [])
                if isinstance(step, dict) and isinstance(step.get("id"), int)
                and step.get("status") != "verified"]
+    traffic = evaluate_traffic(root, plan, ref.key)
 
     adversarial = AdversarialReport()
     if cfg.profile == Profile.STRICT:
@@ -397,7 +399,7 @@ def _evaluate_plan(
     # as a completed audit.
     deterministic_passed = (
         plan_ok and proof.valid and evidence_valid and evidence_authenticated
-        and seal_ok and cfg.valid and not policy_errors
+        and seal_ok and cfg.valid and not policy_errors and traffic.ok
     )
     gate = CompletionGate(engine)
     report = gate.evaluate(
@@ -406,6 +408,7 @@ def _evaluate_plan(
         workspace_context=context,
         seal_check=seal_check,
         adversarial_findings=adversarial.findings,
+        traffic_check=traffic,
     )
     if not evidence_authenticated:
         problem = f"evidence is not authenticated: {evidence_authentication_problem}"
@@ -459,6 +462,7 @@ def _evaluate_plan(
             "archive": archive_result,
         },
         "fresh_audit": proof.as_dict(),
+        "traffic": traffic.as_dict(),
         "adversarial": {
             "used_llm": adversarial.used_llm,
             "findings": [
@@ -618,6 +622,6 @@ def evaluate_workspace(workspace: str, profile: str | None = None,
     primary = plans.get("default") or (next(iter(plans.values())) if len(plans) == 1 else None)
     if primary:
         for key in ("schema_errors", "requirements", "coverage", "plan", "seal",
-                    "fresh_audit", "adversarial", "goals", "lifecycle", "gate"):
+                    "fresh_audit", "traffic", "adversarial", "goals", "lifecycle", "gate"):
             result[key] = primary.get(key)
     return result
