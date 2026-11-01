@@ -141,6 +141,7 @@ class _FakeCA:
             try:
                 path.unlink()
             except OSError:
+                # The fake CA may already be partially removed.
                 pass
 
 
@@ -586,14 +587,14 @@ class TestStartTraffic:
         target = root / ".plan-auditor" / "plan.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps({"task": "no traffic"}), encoding="utf-8")
-        monkeypatch.setattr(sup, "CertificateAuthority", lambda root: _FakeCA(root))
+        monkeypatch.setattr(sup, "CertificateAuthority", _FakeCA)
         with pytest.raises(ValueError, match="does not declare a traffic contract"):
             start_traffic(root, None, {"task": "no traffic"})
 
     def test_rejects_an_out_of_range_port(self, tmp_path, monkeypatch):
         root = _workspace(tmp_path)
         plan = _write_plan(root)
-        monkeypatch.setattr(sup, "CertificateAuthority", lambda root: _FakeCA(root))
+        monkeypatch.setattr(sup, "CertificateAuthority", _FakeCA)
         with pytest.raises(ValueError, match="port out of range"):
             start_traffic(root, None, plan, port=70000)
 
@@ -1304,6 +1305,7 @@ def _send_through_proxy(
         head += chunk
     assert b" 200 " in head, head
     context = ssl.create_default_context(cafile=str(ca_cert))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     tls = context.wrap_socket(raw, server_hostname=host)
     try:
         request = (

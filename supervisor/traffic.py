@@ -362,6 +362,7 @@ def start_traffic(
     try:
         stop_path(root_path, key).unlink()
     except OSError:
+        # A missing stop marker is the normal start state.
         pass
     write_state(
         root_path,
@@ -472,6 +473,7 @@ def stop_traffic(
             try:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
+                # The daemon already exited between the wait and the signal.
                 pass
             state = _wait_stopped(root_path, key, pid, 2.0)
             if state is None:
@@ -502,6 +504,8 @@ def stop_traffic(
         try:
             trust_path(root_path).unlink()
         except OSError:
+            # The marker is already gone; the store removal above is what
+            # matters and it has succeeded.
             pass
     ca.remove()
     if ca.cert_path.exists() or ca.key_path.exists():
@@ -592,6 +596,7 @@ def remove_ca(root: str | Path) -> dict[str, Any]:
         try:
             trust_path(root_path).unlink()
         except OSError:
+            # The marker is already gone; see the removal path above.
             pass
     if ca.root.exists():
         ca.remove()

@@ -790,6 +790,8 @@ def _write_private(path: Path, text: str) -> None:
     try:
         os.chmod(path, 0o600)
     except OSError:
+        # Windows has no POSIX mode bits; the file still lives under the
+        # user's control-plane directory.
         pass
 
 
@@ -801,8 +803,8 @@ def _pem_der(path: Path) -> bytes:
         raise CertificateError(f"cannot read certificate {path}: {exc}") from exc
 
 
-def certificate_fingerprint(cert_path: str | Path, algorithm: str = "sha256") -> str:
-    return hashlib.new(algorithm, _pem_der(Path(cert_path))).hexdigest().upper()
+def certificate_fingerprint(cert_path: str | Path) -> str:
+    return hashlib.sha256(_pem_der(Path(cert_path))).hexdigest().upper()
 
 
 class CertificateAuthority:
@@ -864,6 +866,7 @@ class CertificateAuthority:
         try:
             os.chmod(self.key_path, 0o600)
         except OSError:
+            # Windows has no POSIX mode bits; see _write_private.
             pass
 
     def _verify(self, cert_path: Path, *, what: str) -> None:
@@ -874,10 +877,7 @@ class CertificateAuthority:
         )
 
     def fingerprint(self) -> str:
-        return certificate_fingerprint(self.cert_path, "sha256")
-
-    def thumbprint_sha1(self) -> str:
-        return certificate_fingerprint(self.cert_path, "sha1")
+        return certificate_fingerprint(self.cert_path)
 
     def issue(self, host: str) -> IssuedCertificate:
         host = host.strip().strip("[]")
@@ -903,6 +903,7 @@ class CertificateAuthority:
                 try:
                     os.chmod(key_path, 0o600)
                 except OSError:
+                    # Windows has no POSIX mode bits; see _write_private.
                     pass
 
             san = self._san(host)
@@ -965,6 +966,8 @@ class CertificateAuthority:
             try:
                 self.root.rmdir()
             except OSError:
+                # Another writer may still hold a file open; removal is
+                # best-effort and the caller re-checks existence.
                 pass
 
 
@@ -990,7 +993,7 @@ def install_trust(
     platform = platform or sys.platform
     run = runner or _default_runner
     if platform.startswith("win"):
-        thumb = ca.thumbprint_sha1() if ca is not None else certificate_fingerprint(cert, "sha1")
+        thumb = ca.fingerprint() if ca is not None else certificate_fingerprint(cert)
         added = run(["certutil", "-addstore", "-user", "Root", str(cert)])
         if added.returncode != 0:
             return False, f"certutil addstore failed: {_detail(added)}"
@@ -1043,7 +1046,7 @@ def uninstall_trust(
     platform = platform or sys.platform
     run = runner or _default_runner
     if platform.startswith("win"):
-        thumb = ca.thumbprint_sha1() if ca is not None else certificate_fingerprint(cert, "sha1")
+        thumb = ca.fingerprint() if ca is not None else certificate_fingerprint(cert)
         deleted = run(["certutil", "-delstore", "-user", "Root", thumb])
         if deleted.returncode != 0:
             return False, f"certutil delstore failed: {_detail(deleted)}"
@@ -1259,6 +1262,7 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             host, port = _split_authority(parts[1])
             issued = owner.ca.issue(host)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(str(issued.cert_path), str(issued.key_path))
             self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             with context.wrap_socket(self.request, server_side=True) as tls:
@@ -1403,6 +1407,7 @@ class TrafficProxy:
         context = ssl.create_default_context(
             cafile=str(self.upstream_ca) if self.upstream_ca is not None else None
         )
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         raw_socket = socket.create_connection((connect_host, connect_port), timeout=20)
         upstream = context.wrap_socket(raw_socket, server_hostname=request.host)
         connection = http.client.HTTPConnection(request.host, request.port, timeout=20)
@@ -1517,6 +1522,7 @@ def run_daemon(
         try:
             signal.signal(sig, _handle_signal)
         except (ValueError, OSError):
+            # A platform without this signal still has the stop file.
             pass
     _set_workspace(root, safe_plan)
     try:
