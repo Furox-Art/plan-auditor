@@ -96,6 +96,14 @@ def _build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser("audit", help="run integrated final gate across active plans")
     audit.add_argument("dir", nargs="?", default=".")
     audit.add_argument("--plan", help="execute one named plan audit; overall gate still checks all active plans")
+    traffic = sub.add_parser("traffic", help="local outbound HTTPS traffic evidence")
+    traffic.add_argument("dir", nargs="?", default=".")
+    traffic.add_argument("--plan", help="named plan; default plan when omitted")
+    traffic_action = traffic.add_mutually_exclusive_group()
+    for flag in ("start", "stop", "status", "report", "verify", "install-ca", "remove-ca"):
+        traffic_action.add_argument(f"--{flag}", action="store_true")
+    traffic.add_argument("--port", type=int, default=0)
+    traffic.add_argument("--timeout", type=float, default=30.0)
     doctor = sub.add_parser("doctor", help="environment and supervisor capability report")
     doctor.add_argument("dir", nargs="?", default=".")
 
@@ -475,6 +483,30 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
             "criteria_count": new_seal.criteria_count, "plan_hash": new_seal.plan_hash,
             "environment": env,
         }
+        from scripts.traffic import traffic_contract
+        try:
+            declared_traffic = traffic_contract(plan)
+        except ValueError as exc:
+            output["traffic_watch"] = {"status": "invalid", "error": str(exc)}
+            final_rc = max(final_rc, 2)
+        else:
+            if declared_traffic is not None:
+                # Sealing is the moment observation starts: the agent's later
+                # session is what the third completion evidence will cover.
+                from .traffic import start_traffic
+                try:
+                    watch = start_traffic(root, ref.key, plan)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    output["traffic_watch"] = {"status": "error", "error": str(exc)}
+                    final_rc = max(final_rc, 2)
+                else:
+                    output["traffic_watch"] = {
+                        "status": "running",
+                        "port": watch.get("port"),
+                        "session_id": watch.get("session_id"),
+                        "proxy_url": watch.get("proxy_url"),
+                        "trust_installed": watch.get("trust_installed"),
+                    }
         outputs[ref.key] = output
 
     _json({"plans": outputs, "outcome": "PASS" if final_rc == 0 else "FAIL"})
@@ -612,6 +644,64 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return ExitCode.VERIFICATION_PASSED
 
 
+def cmd_traffic(args: argparse.Namespace) -> int:
+    from .traffic import (
+        build_traffic_report,
+        install_ca,
+        remove_ca,
+        report_exit_code,
+        selected_plan,
+        start_traffic,
+        stop_traffic,
+        traffic_status,
+    )
+
+    root = _root(args.dir)
+    action = "status"
+    for name in ("start", "stop", "status", "report", "verify", "install-ca", "remove-ca"):
+        if getattr(args, name.replace("-", "_")):
+            action = name
+            break
+    try:
+        if action == "install-ca":
+            _json(install_ca(root))
+            return ExitCode.VERIFICATION_PASSED
+        if action == "remove-ca":
+            _json(remove_ca(root))
+            return ExitCode.VERIFICATION_PASSED
+        if action == "start":
+            key, plan = selected_plan(root, args.plan)
+            _json(start_traffic(root, key, plan, port=args.port, timeout=args.timeout))
+            return ExitCode.VERIFICATION_PASSED
+        if action == "stop":
+            _json(stop_traffic(root, args.plan, timeout=args.timeout))
+            return ExitCode.VERIFICATION_PASSED
+        if action == "status":
+            _json(traffic_status(root, args.plan))
+            return ExitCode.VERIFICATION_PASSED
+        report = build_traffic_report(root, args.plan)
+        if action == "verify":
+            _json({
+                "verified": report.get("ok") is True,
+                "plan": report.get("plan"),
+                "outcome": report.get("outcome"),
+                "reason": report.get("reason"),
+                "requests": report.get("requests", 0),
+                "classes": report.get("classes", {}),
+                "violations": report.get("violations", []),
+                "chain": report.get("chain", {}),
+            })
+        else:
+            _json(report)
+        return report_exit_code(str(report.get("outcome", "UNVERIFIED")))
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return ExitCode.VERIFICATION_FAILED
+    except (OSError, ValueError, RuntimeError) as exc:
+        _json({"outcome": "FAIL", "error": str(exc)})
+        return ExitCode.REQUEST_REFUSED
+
+
 def _iter_plan_files(root: Path) -> list[Path]:
     from .plans import all_plan_refs
     return [ref.path for ref in all_plan_refs(root)]
@@ -723,6 +813,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_agents(args)
     if args.cmd == "audit":
         return cmd_audit(args)
+    if args.cmd == "traffic":
+        return cmd_traffic(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
     return ExitCode.VERIFICATION_FAILED

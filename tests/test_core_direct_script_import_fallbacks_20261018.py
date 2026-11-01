@@ -19,6 +19,7 @@ def test_direct_file_execution_uses_validated_unprefixed_fallbacks(monkeypatch):
         "scripts.exec_trust",
         "scripts.integrity",
         "scripts.plan_graph",
+        "scripts.traffic",
     }
     observed = []
 
@@ -33,5 +34,6 @@ def test_direct_file_execution_uses_validated_unprefixed_fallbacks(monkeypatch):
     assert "scripts.check_isolation" in observed
     assert "scripts.integrity" in observed
     assert "scripts.plan_graph" in observed
+    assert "scripts.traffic" in observed
     assert callable(result["verify_chain"])
     assert callable(result["validate_plan"])

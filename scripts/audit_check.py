@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover - type checkers see the single package imp
     from scripts.check_isolation import check_launch_options
     from scripts.contract import PlanTrustError
     from scripts.exec_trust import require_plan_trust
+    from scripts.traffic import validate_traffic_contract
 else:
     # Direct-script execution puts ``scripts/`` itself on sys.path, so these are
     # importable unprefixed. The runtime fallback is required; the TYPE_CHECKING
@@ -46,6 +47,10 @@ else:
         from check_isolation import check_launch_options
         from contract import PlanTrustError
         from exec_trust import require_plan_trust
+    try:
+        from scripts.traffic import validate_traffic_contract
+    except ImportError:
+        from traffic import validate_traffic_contract
 
 try:
     from scripts.integrity import (
@@ -249,6 +254,10 @@ def plan_contract_fingerprint(plan):
             if isinstance(step, dict)
         ],
     }
+    # Conditional for the same reason as ``contract_plan``: a plan without the
+    # field must keep the fingerprint every existing audit marker was bound to.
+    if "traffic" in plan:
+        contract["traffic"] = plan.get("traffic")
     return hashlib.sha256(canonical(contract).encode("utf-8")).hexdigest()
 
 
@@ -372,9 +381,9 @@ def save_plan(base, plan, name=None):
 
 
 def validate_plan(data):
-    errs = []
+    errs: list[str] = []
 
-    def add(message):
+    def add(message: str) -> None:
         if message not in errs:
             errs.append(message)
 
@@ -482,6 +491,9 @@ def validate_plan(data):
             or any(not isinstance(item, str) or not item.strip() for item in raw_tools)
         ):
             add("required_tools: must be a non-empty list of strings")
+    if "traffic" in data:
+        for problem in validate_traffic_contract(data.get("traffic")):
+            add(f"traffic: {problem}")
     if "requirements" in data:
         requirements = data.get("requirements")
         if not isinstance(requirements, list) or not requirements:
