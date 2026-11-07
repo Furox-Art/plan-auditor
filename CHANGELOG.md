@@ -2,6 +2,13 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## 2.6.4 — 2026-11-07
+
+- Python 3.10 support dropped: `requires-python` is now `>=3.11`, the 3.10
+  classifier and the `python-compat` matrix entry are gone, and the ruff
+  `target-version` follows (`py311`). No code change; the portfolio is
+  consolidating on a single support floor and 3.10 is out of upstream support.
+
 ## 2.6.3 — 2026-10-21
 
 This entry summarises the 53 commits since 2.6.2, including the six commits
