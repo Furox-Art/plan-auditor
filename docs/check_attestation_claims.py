@@ -69,12 +69,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Bumped together with the release.
-CURRENT_VERSION = "2.6.3"
+CURRENT_VERSION = "2.6.5"
 
 #: npm can lag PyPI: a version bump lands on PyPI first because the npm upload
 #: runs in its own workflow. The two are equal as of 2.6.3; bump this when npm
 #: catches up, or the docs and this pin drift apart in the other direction.
-NPM_CURRENT_VERSION = "2.6.3"
+NPM_CURRENT_VERSION = "2.6.5"
 
 #: Documents that state current facts. Strict rules apply to their prose.
 CURRENT_FACT_DOCS = ("README.md", "SECURITY.md")

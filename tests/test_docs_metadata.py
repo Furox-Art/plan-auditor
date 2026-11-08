@@ -386,7 +386,7 @@ def test_pyproject_metadata_is_complete_and_consistent() -> None:
     assert "License :: OSI Approved :: MIT License" in classifiers
     assert "Development Status :: 4 - Beta" in classifiers
     assert "Topic :: Software Development :: Quality Assurance" in classifiers
-    for minor in ("3.10", "3.11", "3.12", "3.13"):
+    for minor in ("3.11", "3.12", "3.13"):
         assert f"Programming Language :: Python :: {minor}" in classifiers
     assert not any(c.startswith("License ::") and "MIT" not in c for c in classifiers)
 

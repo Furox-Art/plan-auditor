@@ -5,7 +5,7 @@ attested on each registry. Everything here was measured against the live registr
 rather than against this repository, and it is the page to re-read before trusting a
 version number.
 
-The short version, kept in the README as well: **`2.6.3` is the current release on
+The short version, kept in the README as well: **`2.6.5` is the current release on
 both PyPI and npm.** The npm trusted publisher is now registered, so automatic
 publishes take the OIDC path with `--provenance`; the quick start in the README
 describes the published packages rather than only a checkout.
@@ -25,7 +25,7 @@ current release. Substitute the current version in the commands under
 | npm (`latest`) | `2.4.3` | 2026-10-04 | Byte-identical to `npm pack` of the `main` tip (`45fd5ee`): `shasum` `f220d14e987008d7177c7ac2a19da4da63ee082c` and integrity `sha512-XYRobvGvmzBlv/VfLDD96W08XP0OPzeVXs2qMVDFnRzb8kgbWuu3IW1Q3MbEiF2Q67JKyW0ikFgn8zXYSVvBLg==` both reproduce from a clean checkout. 63 files, 617 609 bytes unpacked. |
 | PyPI | `2.4.3` | 2026-10-04 | Carries a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation on both files. Wheel SHA-256 `c4fdfddd9c12001d1fb76c3d48962a0cc3de07427bbcc6422a8bf04ad1b77c47`, sdist SHA-256 `29ae465bfc008687cd6ae5ad01fe49f154276441fedcbc120ed803fc446ce2fb`. |
 
-## `2.4.0` and `2.4.1` were defective; `2.4.2` fixed them; `2.6.3` is the current release
+## `2.4.0` and `2.4.1` were defective; `2.4.2` fixed them; `2.6.5` is the current release
 
 | Version | Defect |
 |---|---|
@@ -57,7 +57,7 @@ Both rows were measured against `2.4.3`.
 | PyPI | **yes** | `https://pypi.org/integrity/plan-auditor/2.4.3/plan_auditor-2.4.3-py3-none-any.whl/provenance` | `200`. in-toto v1 statement, predicate type `https://docs.pypi.org/attestations/publish/v1`, publisher `kind=GitHub`, `repository=Furox-Art/plan-auditor`, `workflow=release.yml`, `environment=pypi`. Subject `sha256` equals the digest PyPI serves. |
 | npm | **no** | `https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3` | `404`. No `provenance` field and no `dist.attestations` in the packument. `dist.signatures` **is** present, and is the transport signature described above. |
 
-For the current release, `2.6.3`, both channels return `200`: PyPI serves the PEP 740
+For the current release, `2.6.5`, both channels return `200`: PyPI serves the PEP 740
 statement and npm serves a Sigstore statement whose predicate type is
 `https://slsa.dev/provenance/v1`.
 
@@ -96,7 +96,7 @@ npm view plan-auditor@2.4.3 dist.signatures
 
 The trusted publisher record now exists on npmjs.com, so automatic releases take the
 OIDC path with `--provenance` and npm serves a Sigstore build attestation: the
-attestations endpoint returns `200` for `2.6.3` with predicate type
+attestations endpoint returns `200` for `2.6.5` with predicate type
 `https://slsa.dev/provenance/v1`. Versions published before the record was created,
 including `2.4.3` measured above, have no attestation; their `404` is history, not a
 current limitation.

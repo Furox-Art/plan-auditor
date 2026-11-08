@@ -256,7 +256,9 @@ def _install_frozen_clock(monkeypatch) -> dict:
     monkeypatch.setattr(
         core,
         "datetime",
-        types.SimpleNamespace(datetime=_FrozenDatetime, timezone=datetime.timezone),
+        types.SimpleNamespace(
+            datetime=_FrozenDatetime, timezone=datetime.timezone, UTC=datetime.UTC
+        ),
     )
     return state
 

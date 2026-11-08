@@ -2,6 +2,19 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## 2.6.5 — 2026-11-08
+
+- The 2.6.4 tree failed every release gate for reasons the bump itself created:
+  `SKILL.md` still said 2.6.3 (version lockstep), README/SECURITY/docs still
+  called 2.6.3 the current release, the metadata test still expected the 3.10
+  classifier the support-floor bump removed, and `py311` turned 19 `UP017` plus
+  3 `UP042` findings into new ratchet debt. All four are fixed here; the shipped
+  version moves to 2.6.5 so the npm publish guard sees a version-bump commit
+  with content it can prove.
+- `tests/test_deterministic_hardening.py` fakes the `datetime` module; its
+  namespace now carries `UTC`, which the `datetime.UTC` alias in
+  `scripts/audit_check.py` needs.
+
 ## 2.6.4 — 2026-11-07
 
 - Python 3.10 support dropped: `requires-python` is now `>=3.11`, the 3.10

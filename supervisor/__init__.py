@@ -1,5 +1,5 @@
 """Plan Auditor — AI Agent Verification Supervisor."""
-__version__ = "2.6.4"
+__version__ = "2.6.5"
 
 # The registry hardeners are monkey-patched onto the runtime classes. That is
 # load-bearing: the registry integrity chain and the PID-aware write lock only

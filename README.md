@@ -62,7 +62,7 @@ launcher for the same CLI and needs Python on `PATH`. The examples call the inte
 In CI, add `- uses: Furox-Art/plan-auditor@main` with `path: .` — see
 [integrations](https://github.com/Furox-Art/plan-auditor/blob/main/docs/integrations.md).
 
-**Release status:** `2.6.3` is the current release on both PyPI and npm. PyPI artifacts
+**Release status:** `2.6.5` is the current release on both PyPI and npm. PyPI artifacts
 are attested under PEP 740 and npm tarballs are attested with Sigstore SLSA provenance
 through the trusted publisher. Per-channel measurements are in
 [docs/release-status.md](https://github.com/Furox-Art/plan-auditor/blob/main/docs/release-status.md).
@@ -255,7 +255,7 @@ so the Markdown is known to build, but nothing serves it; build it with
   as the secrecy of the key.
 - It verifies that *declared, checkable* requirements were met. Domain meaning that
   cannot be a deterministic check is reviewed by a human, not guessed.
-- The npm package needs Python on `PATH`. Since `2.6.3`, npm tarballs carry a
+- The npm package needs Python on `PATH`. Since `2.6.5`, npm tarballs carry a
   Sigstore SLSA provenance attestation published through the trusted publisher.
   Its `dist.signatures` block is still **not** provenance; npm signs it as a
   registry transport signature, so verify the tarball against `dist.integrity`.

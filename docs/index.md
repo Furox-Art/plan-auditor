@@ -27,7 +27,7 @@ Nothing on this site requires an LLM, a GPU, or a network connection.
 
 ## Release status, stated once
 
-`2.6.3` is the current release on both PyPI and npm, and this site describes that
+`2.6.5` is the current release on both PyPI and npm, and this site describes that
 release. PyPI artifacts carry PEP 740 provenance; npm tarballs carry Sigstore SLSA
 provenance through the trusted publisher.
 `2.4.0` and `2.4.1` were defective and cannot be withdrawn, because npm versions

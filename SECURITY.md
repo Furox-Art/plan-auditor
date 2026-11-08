@@ -8,9 +8,9 @@ explicitly out of scope.
 
 | Version | Supported | Notes |
 |---|---|---|
-| `>= 2.4.2` on npm | Yes | `2.6.3` is the current npm release, attested with Sigstore SLSA provenance through the trusted publisher. `2.4.0` shipped a syntax error in the `bin` launcher and `2.4.1` shipped a launcher that resolved a relative workspace path against the installed package directory. Both are defective and cannot be withdrawn, because npm versions are immutable. |
+| `>= 2.4.2` on npm | Yes | `2.6.5` is the current npm release, attested with Sigstore SLSA provenance through the trusted publisher. `2.4.0` shipped a syntax error in the `bin` launcher and `2.4.1` shipped a launcher that resolved a relative workspace path against the installed package directory. Both are defective and cannot be withdrawn, because npm versions are immutable. |
 | `2.4.0`, `2.4.1` on npm | No | Defective releases. Do not install them. |
-| `>= 2.4.2` on PyPI | Yes | `2.6.3` is the current release, published with a PEP 740 provenance attestation. |
+| `>= 2.4.2` on PyPI | Yes | `2.6.5` is the current release, published with a PEP 740 provenance attestation. |
 | `2.4.0`, `2.4.1` on PyPI | No | Superseded by `2.4.2`. |
 | `<= 2.3.0` | No | No fixes. Reproduce on `main` and open an issue if the problem still reproduces. |
 
@@ -29,37 +29,37 @@ ends up proving less than it looks:
 | Build attestation | A CI run built this artifact from a named workflow, repo and commit, and a transparency log has the statement. | see per channel below |
 
 The two channels now attest the current release, but their histories differ. The checks
-below use `2.6.3`, the latest on both registries; `docs/release-status.md` keeps the
+below use `2.6.5`, the latest on both registries; `docs/release-status.md` keeps the
 `2.4.3` measurements for that release.
 
-- **PyPI — attested.** Publishing goes through OIDC trusted publishing, so the `2.6.3`
+- **PyPI — attested.** Publishing goes through OIDC trusted publishing, so the `2.6.5`
   artifacts carry a [PEP 740](https://peps.python.org/pep-0740/) provenance attestation
   with predicate type `https://docs.pypi.org/attestations/publish/v1`, bound to the
   artifact's SHA-256. Fetch and check it yourself:
 
   ```bash
-  curl -s https://pypi.org/integrity/plan-auditor/2.6.3/plan_auditor-2.6.3-py3-none-any.whl/provenance
+  curl -s https://pypi.org/integrity/plan-auditor/2.6.5/plan_auditor-2.6.5-py3-none-any.whl/provenance
   # statement subject sha256 must equal the digest PyPI serves for the file:
-  curl -s https://pypi.org/pypi/plan-auditor/2.6.3/json | python -c "import json,sys;print(json.load(sys.stdin)['urls'][0]['digests']['sha256'])"
+  curl -s https://pypi.org/pypi/plan-auditor/2.6.5/json | python -c "import json,sys;print(json.load(sys.stdin)['urls'][0]['digests']['sha256'])"
   ```
 
   Note the URL shape: PyPI serves attestations **per file**, so the path ends in
-  `/<filename>/provenance`. `https://pypi.org/integrity/plan-auditor/2.6.3/` is not an
+  `/<filename>/provenance`. `https://pypi.org/integrity/plan-auditor/2.6.5/` is not an
   endpoint and returns `404` — that 404 means "no such URL", not "no attestation".
 
 - **npm — attested from `2.6.3`.** The trusted publisher is registered, and the
   attestations endpoint serves both the npm publish attestation and a SLSA provenance
-  bundle for `2.6.3`. `2.6.2` and every earlier npm release were published in token
+  bundle for `2.6.5`. `2.6.2` and every earlier npm release were published in token
   mode, and a registry token cannot mint an attestation; their `404` is history and
   cannot be backfilled. For those versions, verify by digest and treat that as
   integrity only:
 
   ```bash
   curl -s -o /dev/null -w '%{http_code}\n' \
-    https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.6.3   # -> 200
+    https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.6.5   # -> 200
   curl -s -o /dev/null -w '%{http_code}\n' \
     https://registry.npmjs.org/-/npm/v1/attestations/plan-auditor@2.4.3   # -> 404, token-era
-  npm view plan-auditor@2.6.3 dist.integrity dist.shasum
+  npm view plan-auditor@2.6.5 dist.integrity dist.shasum
   ```
 
 ### npm provenance is enabled
