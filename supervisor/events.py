@@ -8,13 +8,13 @@ requirement reasoning. It only detects, routes, and triggers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Pattern
 import re
 
 
-class Trigger(str, Enum):
+class Trigger(StrEnum):
     FINAL_AUDIT = "final_audit"
     PLAN_INTEGRITY = "plan_integrity"
     RETRY_OR_ESCALATION = "retry_or_escalation"

@@ -326,7 +326,7 @@ class TestPathsAndState:
         assert pid_is_alive(1234) is True
 
     def test_session_id_is_deterministic(self):
-        moment = datetime.datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc)
+        moment = datetime.datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=datetime.UTC)
         assert build_session_id(moment, 7) == "traffic-20260102T030405000006Z-7"
         generated = build_session_id()
         assert generated.startswith("traffic-")

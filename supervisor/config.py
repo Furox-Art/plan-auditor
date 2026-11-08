@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Dict, List
 
 from .control_plane import ControlPlanePathError, confined_workspace_path
 
 
-class Profile(str, Enum):
+class Profile(StrEnum):
     LIGHT = "light"
     STANDARD = "standard"
     STRICT = "strict"

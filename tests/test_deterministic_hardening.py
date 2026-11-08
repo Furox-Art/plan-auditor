@@ -245,7 +245,7 @@ def test_successful_checks_keep_their_output_tail(tmp_path: Path):
 
 
 def _install_frozen_clock(monkeypatch) -> dict:
-    state = {"now": datetime.datetime(2026, 9, 5, 12, 0, 0, 111111, tzinfo=datetime.timezone.utc)}
+    state = {"now": datetime.datetime(2026, 9, 5, 12, 0, 0, 111111, tzinfo=datetime.UTC)}
 
     class _FrozenDatetime(datetime.datetime):
         @classmethod
@@ -272,7 +272,7 @@ def test_rotation_names_stay_ordered_across_a_clock_rollback(tmp_path: Path, mon
 
     core.append_evidence(base, dict(payload))
     core.append_evidence(base, dict(payload))
-    clock["now"] = datetime.datetime(2025, 1, 1, 0, 0, 0, 222222, tzinfo=datetime.timezone.utc)
+    clock["now"] = datetime.datetime(2025, 1, 1, 0, 0, 0, 222222, tzinfo=datetime.UTC)
     core.append_evidence(base, dict(payload))
 
     archive_dir = tmp_path / ".plan-auditor" / "archive"
@@ -293,7 +293,7 @@ def test_snapshot_names_stay_ordered_across_a_clock_rollback(tmp_path: Path, mon
     clock = _install_frozen_clock(monkeypatch)
 
     core.make_snapshot(base, {})
-    clock["now"] = datetime.datetime(2025, 1, 1, 0, 0, 0, 222222, tzinfo=datetime.timezone.utc)
+    clock["now"] = datetime.datetime(2025, 1, 1, 0, 0, 0, 222222, tzinfo=datetime.UTC)
     second = core.make_snapshot(base, {})
 
     names = sorted(os.listdir(core.snapshots_dir(base)))

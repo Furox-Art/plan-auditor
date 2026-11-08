@@ -608,7 +608,7 @@ def remove_ca(root: str | Path) -> dict[str, Any]:
 def _now() -> str:
     import datetime as _dt
 
-    return _dt.datetime.now(_dt.timezone.utc).isoformat()
+    return _dt.datetime.now(_dt.UTC).isoformat()
 
 
 def report_exit_code(outcome: str) -> int:

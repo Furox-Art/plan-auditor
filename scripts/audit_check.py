@@ -1255,7 +1255,7 @@ def maybe_rotate(base):
     archive_dir = os.path.join(base, PG_DIR, "archive")
     os.makedirs(archive_dir, exist_ok=True)
     anchor = {
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
         "mode": "archive_anchor",
         "plan": "default",
         "step": 0,
@@ -1609,7 +1609,7 @@ def make_snapshot(base, plan, label="snapshot"):
             if entry["type"] == "file":
                 archive.write(_snapshot_lexical_path(base, entry["path"]), entry["path"])
     append_evidence(base, {
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
         "mode": label,
         "step": 0,
         "results": [],
@@ -1820,7 +1820,7 @@ def restore_snapshot(base, zpath):
         else:
             raise ValueError("unsupported snapshot format: %r" % version)
     append_evidence(base, {
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
         "mode": "rollback",
         "step": 0,
         "results": [],
@@ -1946,7 +1946,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
             passed_this_run[sid] = False
             all_ok = False
             append_evidence(base, {
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+                "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
                 "mode": "audit_guard",
                 "plan": key,
                 "step": sid,
@@ -1964,7 +1964,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
             passed_this_run[sid] = False
             all_ok = False
             append_evidence(base, {
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+                "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
                 "mode": mode,
                 "plan": key,
                 "step": sid,
@@ -2022,7 +2022,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
         passed_this_run[sid] = ok_all
         all_ok = all_ok and ok_all
         rec = {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
             "mode": mode,
             "plan": key,
             "step": sid,
@@ -2055,7 +2055,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
         if final_fingerprint != audit_baseline:
             all_ok = False
             append_evidence(base, {
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+                "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
                 "mode": "audit_guard",
                 "plan": key,
                 "step": 0,
@@ -2066,7 +2066,7 @@ def audit_steps(base, plan, ids=None, mode="run", name=None, force=False):
                 "after": final_fingerprint,
             })
         append_evidence(base, {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
             "mode": "audit_complete",
             "plan": key,
             "step": 0,

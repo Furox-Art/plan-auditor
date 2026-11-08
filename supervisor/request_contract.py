@@ -12,7 +12,7 @@ import math
 import os
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
@@ -285,7 +285,7 @@ def initialize_request(root: str | Path, source: dict[str, Any]) -> RequestStatu
         "activated": True,
         "generation": 1,
         "request_sha256": digest,
-        "activated_at": datetime.now(timezone.utc).isoformat(),
+        "activated_at": datetime.now(UTC).isoformat(),
     }
     activation_value = _auth_value(workspace, key, ACTIVATION_DOMAIN, activation_payload)
     _atomic_write(rpath, request_value)

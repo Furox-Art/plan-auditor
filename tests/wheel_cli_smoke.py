@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 
@@ -119,7 +119,7 @@ def main() -> int:
 
     pg = workspace / ".plan-auditor"
     (pg / "plans").mkdir(parents=True)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     default_plan = {
         "task": "Verify installed wheel, dependency graph and CLI",
         "created": now,

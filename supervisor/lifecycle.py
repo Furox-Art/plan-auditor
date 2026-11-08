@@ -6,11 +6,11 @@ guarded transitions.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Dict, List, Set
 
 
-class States(str, Enum):
+class States(StrEnum):
     NEW = "new"
     DISCOVERED = "discovered"
     ANALYZING = "analyzing"

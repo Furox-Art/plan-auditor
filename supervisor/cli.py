@@ -469,7 +469,7 @@ def cmd_plan_verify(args: argparse.Namespace) -> int:
 
         plan_id = str(plan.get("id") or plan.get("task") or ref.key)
         new_seal = seal_plan(
-            plan, plan_id, _dt.datetime.now(_dt.timezone.utc).isoformat(), environment=env
+            plan, plan_id, _dt.datetime.now(_dt.UTC).isoformat(), environment=env
         )
         try:
             save_seal(new_seal, str(target))

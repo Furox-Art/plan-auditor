@@ -106,7 +106,7 @@ def migrate_one(root: Path, ref: PlanRef) -> dict[str, Any]:
     migrated = seal_plan(
         plan,
         seal.plan_id or str(plan.get("id") or plan.get("task") or ref.key),
-        dt.datetime.now(dt.timezone.utc).isoformat(),
+        dt.datetime.now(dt.UTC).isoformat(),
         environment=current_env,
     )
     save_seal(migrated, str(target))
