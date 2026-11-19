@@ -154,3 +154,21 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 ignore = ["E501"]
+
+# Mutation testing is a contributor-only exercise (mutmut is NOT a runtime
+# dependency; dependencies = [] above stays empty). The targets are the
+# load-bearing core: the deterministic verifier, workspace path confinement,
+# plan addressing, the completion gate and registry ownership canonicalisation.
+# The runner reinstalls the mutated checkout before pytest because conftest.py
+# pins the suite to the installed distribution, not the source tree. See the
+# "Mutation testing" section of CONTRIBUTING.md for sample and full campaigns.
+[tool.mutmut]
+paths_to_mutate = [
+  "scripts/audit_check.py",
+  "supervisor/control_plane.py",
+  "supervisor/plans.py",
+  "supervisor/gate.py",
+  "supervisor/agents_hardening.py",
+]
+tests_dir = "tests/"
+runner = "python .github/scripts/mutation_runner.py"

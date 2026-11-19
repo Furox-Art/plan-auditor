@@ -2,6 +2,38 @@
 
 All notable changes to plan-auditor. Versions are published to PyPI and npm.
 
+## Unreleased
+
+### Fixed
+
+- `safe_relative` in `scripts/audit_check.py` and `canonical_owned_path` in
+  `supervisor/agents_hardening.py` reject absolute paths under both path
+  flavours on every host: POSIX-absolute `/tmp/...` paths no longer slip
+  through validation on Windows (ntpath calls them drive-relative), and
+  Windows drive/UNC paths no longer slip through on POSIX. The Windows-only
+  skip in the ownership-confinement test is removed; the contract is now
+  cross-platform, with new tests pinning both dialects.
+
+### Docs
+
+- The Python support floor in README, `docs/quickstart.md`, `package.json` and
+  CONTRIBUTING now says 3.11, matching `requires-python = ">=3.11"` (3.10 was
+  dropped in 2.6.4).
+
+### CI
+
+- The `windows-unit-tests` job runs the full suite on `windows-latest` across
+  the same 3.11/3.12/3.13 matrix as `python-compat`, plus the Fibonacci
+  regression. The documented registry-lock quarantine is unchanged and still
+  enforced by every Linux job.
+
+### Added
+
+- Mutation-testing configuration (`[tool.mutmut]`) targeting the core modules,
+  with a runner that reinstalls the mutated checkout to honour the
+  installed-distribution contract, and a contributor guide in CONTRIBUTING.md.
+  mutmut stays a development-only tool; runtime dependencies remain empty.
+
 ## 2.6.5 — 2026-11-08
 
 - The 2.6.4 tree failed every release gate for reasons the bump itself created:
