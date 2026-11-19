@@ -31,13 +31,18 @@ def test_valid_agent_ids_keep_an_exact_identity(identifier):
         ("", "non-empty"),
         (None, "non-empty"),
         ("/tmp/outside", "workspace-relative"),
+        ("\\tmp\\outside", "workspace-relative"),
+        ("C:/outside", "workspace-relative"),
+        ("C:outside", "workspace-relative"),
+        ("//server/share/outside", "workspace-relative"),
         ("../outside", "escapes workspace"),
         (".", "below the workspace"),
     ],
 )
 def test_file_ownership_must_be_workspace_confined(tmp_path, owned, message):
-    if os.name == "nt" and owned == "/tmp/outside":
-        pytest.skip("POSIX-absolute path; ntpath treats /tmp as drive-relative")
+    # No platform skip: POSIX-absolute, rooted-Windows, drive-relative and UNC
+    # paths must all be refused on every host, so the confinement contract is
+    # the same whether the registry is written on Linux or read on Windows.
     with pytest.raises(ValueError, match=message):
         hard.canonical_owned_path(tmp_path, owned)
 

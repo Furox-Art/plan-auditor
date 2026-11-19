@@ -15,6 +15,7 @@ import datetime
 import hashlib
 import json
 import math
+import ntpath
 import os
 import re
 import shlex
@@ -390,9 +391,18 @@ def validate_plan(data):
     def safe_relative(value):
         if not isinstance(value, str) or not value.strip():
             return False
-        if os.path.isabs(value) or os.path.splitdrive(value)[0]:
+        normalized = value.replace("\\", "/")
+        # Absolute paths are rejected under *both* path flavours on every host.
+        # ntpath.isabs() calls "/tmp/x" drive-relative (not absolute) on Windows,
+        # and posixpath never sees "C:/x", "C:x" or a UNC root, so a host-only
+        # check lets a plan authored on one OS slip an absolute path past
+        # validation on another. A leading "/" covers POSIX-absolute, rooted
+        # Windows and UNC paths alike once separators are normalised.
+        if normalized.startswith("/"):
             return False
-        parts = value.replace("\\", "/").split("/")
+        if ntpath.splitdrive(normalized)[0]:
+            return False
+        parts = normalized.split("/")
         return ".." not in parts
 
     def validate_runtime_fields(check, label):

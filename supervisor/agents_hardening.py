@@ -9,6 +9,7 @@ cannot lose ownership or heartbeat updates.
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 import re
 import time
@@ -72,8 +73,18 @@ def validate_agent_id(value: str) -> str:
 def canonical_owned_path(root: Path, value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("owned file path must be a non-empty string")
+    normalized = value.replace("\\", "/")
     raw = Path(value)
-    if raw.is_absolute():
+    # Absolute paths are refused under both path flavours on every host: on
+    # Windows Path("/tmp/x").is_absolute() is False (ntpath calls it
+    # drive-relative), and on POSIX a "C:/x", "C:x" or UNC root would otherwise
+    # canonicalise as an innocent relative name. Ownership must not depend on
+    # which OS the registry happens to be read on.
+    if (
+        raw.is_absolute()
+        or normalized.startswith("/")
+        or ntpath.splitdrive(normalized)[0]
+    ):
         raise ValueError("owned file path must be workspace-relative")
     target = (root / raw).resolve(strict=False)
     try:
