@@ -56,7 +56,7 @@ pipx install plan-auditor          # isolated CLI, recommended
 pip install plan-auditor           # into the current environment / virtualenv
 ```
 
-Python 3.10 or newer, no third-party runtime dependencies. The npm package is a thin Node
+Python 3.11 or newer, no third-party runtime dependencies. The npm package is a thin Node
 launcher for the same CLI and needs Python on `PATH`. The examples call the interpreter
 `python`; on a system that only ships `python3`, use a virtualenv that provides `python`.
 In CI, add `- uses: Furox-Art/plan-auditor@main` with `path: .` — see

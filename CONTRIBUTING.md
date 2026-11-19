@@ -30,7 +30,7 @@ cd plan-auditor
 python -m pip install . pytest pytest-cov
 ```
 
-Python 3.10 or newer. Install the distribution **non-editable and re-run that
+Python 3.11 or newer. Install the distribution **non-editable and re-run that
 command after you change source**, because `conftest.py` resolves `supervisor`
 and `scripts` from site-packages before any test module loads. That is
 deliberate: several test modules used to put the repository root on `sys.path`,
@@ -106,6 +106,48 @@ on the coverage step in
 Raise the floor as tests land; never lower it to make a run green. A number typed
 into a document instead of the workflow goes stale silently, which is why the
 documentation does not repeat it.
+
+### Mutation testing (contributor-only)
+
+`mutmut` probes whether the suite actually detects broken core logic. It is a
+development tool, not a runtime dependency: `dependencies = []` in
+`pyproject.toml` stays empty.
+
+```bash
+python -m pip install "mutmut==2.5.0"
+```
+
+`[tool.mutmut]` in `pyproject.toml` targets the load-bearing core:
+`scripts/audit_check.py`, `supervisor/control_plane.py`, `supervisor/plans.py`,
+`supervisor/gate.py` and `supervisor/agents_hardening.py`. Because `conftest.py`
+pins the suite to the installed distribution, the configured runner
+(`.github/scripts/mutation_runner.py`) reinstalls the mutated checkout
+non-editable before every pytest run. With no arguments the runner executes a
+focused subset covering those modules — fast, but an under-approximation of the
+full suite: a surviving mutant only proves the subset missed it, not that the
+whole suite would.
+
+Small sample (one small core module, focused runner):
+
+```bash
+python -m mutmut run supervisor/control_plane.py
+python -m mutmut results
+```
+
+Full campaign over every configured target with the whole suite (heavy: the
+suite runs once per mutant, and `scripts/audit_check.py` alone yields thousands
+of mutants — budget hours, not minutes):
+
+```bash
+python -m mutmut run --runner "python .github/scripts/mutation_runner.py tests/ -x -q"
+```
+
+mutmut mutates files in place and restores them after each run. Keep the tree
+clean (`git status`) before and after, and reinstall the unmutated source
+(`python -m pip install .`) when a campaign ends so the installed wheel matches
+the checkout again. Results live in `.mutmut-cache/` (gitignored);
+`python -m mutmut html -d .mutmut-html` renders a report. Report measured
+numbers only; an unrun campaign is not a result.
 
 ### The documentation gate
 

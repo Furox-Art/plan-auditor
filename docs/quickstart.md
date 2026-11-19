@@ -20,7 +20,7 @@ Prefer an isolated environment. If you must install into the current one:
 pip install plan-auditor
 ```
 
-Python 3.10 or newer. No third-party runtime dependencies.
+Python 3.11 or newer. No third-party runtime dependencies.
 
 The commands and transcripts on this page were written against a checkout of
 `main` and re-checked against the published `2.4.2` release. See the
